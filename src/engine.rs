@@ -3,6 +3,9 @@ use std::io;
 
 use crate::board::{Board, Move};
 
+const MIN: i32 = -99999;
+const MAX: i32 = 99999;
+
 // UCCI引擎
 pub struct UCCIEngine {
     pub board: Board,
@@ -74,7 +77,7 @@ impl UCCIEngine {
         }
     }
     pub fn go(&mut self) {
-        let (_, m) = self.board.minimax(4, self.board.turn, i32::MIN, i32::MAX);
+        let (_, m) = self.board.alpha_beta(5, MIN, MAX);
         if let Some(m) = m.last() {
             println!("bestmove {}{}", m.from.to_string(), m.to.to_string());
         } else {
@@ -93,9 +96,7 @@ fn test_ucci_engine() {
     // engine.position(
     //     "fen rnb1kabnr/4a4/1c5c1/p1p3p2/4N4/8p/P1P3P1P/2C4C1/9/RNBAKAB1R w - - 0 1 moves e5d7",
     // );
-    engine.position(
-        "start pos moves e5d7",
-    );
+    engine.position("startpos moves b0c2");
     let moves = engine.board.generate_move();
     println!("{:?}", moves);
     println!("{:?}", engine.board.chesses);

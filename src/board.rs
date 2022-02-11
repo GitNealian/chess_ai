@@ -1,10 +1,4 @@
-use regex::{Captures, Regex};
-use std::{
-    cmp::Ordering,
-    collections::HashMap,
-    io::{self, BufRead},
-    vec,
-};
+use std::{collections::HashMap, vec};
 
 pub const BOARD_WIDTH: i32 = 9;
 pub const BOARD_HEIGHT: i32 = 10;
@@ -129,6 +123,7 @@ impl Move {
         }
     }
 }
+
 impl From<&str> for Position {
     fn from(m: &str) -> Self {
         let mb = m.as_bytes();
@@ -711,10 +706,10 @@ impl Board {
                 }
             }
         }
-        moves.sort_by(|a, b| {
-            ((self.chess_at(a.to).value() << 3) - self.chess_at(a.from).value())
-                .cmp(&((self.chess_at(b.to).value() << 3) - self.chess_at(b.from).value()))
-        });
+        // moves.sort_by(|a, b| {
+        //     (self.chess_at(a.to).value() + self.chess_at(a.from).value())
+        //         .cmp(&(self.chess_at(b.to).value() + self.chess_at(b.from).value()))
+        // });
         moves
     }
     // 简单的评价，双方每个棋子的子力之和的差
@@ -755,64 +750,30 @@ impl Board {
             black_score - red_score + INITIATIVE_BONUS
         }
     }
-    pub fn minimax(
-        &mut self,
-        depth: i32,
-        player: Player,
-        mut alpha: i32,
-        mut beta: i32,
-    ) -> (i32, Vec<Move>) {
+    pub fn alpha_beta(&mut self, depth: i32, mut alpha: i32, beta: i32) -> (i32, Vec<Move>) {
         if depth == 0 {
             self.counter += 1;
-            return (self.evaluate(player), vec![]);
+            return (self.evaluate(self.turn), vec![]);
         }
-        // 已方，最大值
-        if self.turn == player {
-            let mut best_value = i32::MIN;
-            let mut best_move: Vec<Move> = vec![];
-            for m in self.generate_move() {
-                self.apply_move(&m);
-                if self.is_checked() {
-                    self.undo_move(&m);
-                    continue;
-                }
-                let (v, mut mn) = self.minimax(depth - 1, player, alpha, beta);
+        let mut best_move: Vec<Move> = vec![];
+        for m in self.generate_move() {
+            self.apply_move(&m);
+            if self.is_checked() {
                 self.undo_move(&m);
-                if best_value <= v {
-                    best_value = v;
-                    mn.push(m);
-                    best_move = mn;
-                    beta = beta.max(best_value);
-                }
-                if beta <= alpha {
-                    break;
-                }
+                continue;
             }
-            return (best_value, best_move);
-        } else {
-            // 对方，最小值
-            let mut best_value = i32::MAX;
-            let mut best_move: Vec<Move> = vec![];
-            for m in self.generate_move() {
-                self.apply_move(&m);
-                if self.is_checked() {
-                    self.undo_move(&m);
-                    continue;
-                }
-                let (v, mut mn) = self.minimax(depth - 1, player, alpha, beta);
-                self.undo_move(&m);
-                if best_value >= v {
-                    best_value = v;
-                    mn.push(m);
-                    best_move = mn;
-                    alpha = alpha.min(best_value);
-                }
-                if beta <= alpha {
-                    break;
-                }
+            let (v, mut mn) = self.alpha_beta(depth - 1, -beta, -alpha);
+            self.undo_move(&m);
+            if -v >= beta {
+                return (beta, vec![]);
             }
-            return (best_value, best_move);
+            if -v > alpha {
+                alpha = -v;
+                mn.push(m);
+                best_move = mn;
+            }
         }
+        return (alpha, best_move);
     }
 }
 
@@ -839,31 +800,20 @@ fn test_evaluate() {
 
 #[test]
 fn test_minimax() {
-    println!(
-        "{:?}",
-        Board::init().minimax(1, Player::Red, i32::MIN, i32::MAX)
-    ); // 炮吃马
-    println!(
-        "{:?}",
-        Board::init().minimax(2, Player::Red, i32::MIN, i32::MAX)
-    ); // 炮吃马
-    println!(
-        "{:?}",
-        Board::init().minimax(3, Player::Red, i32::MIN, i32::MAX)
-    ); // 炮吃马
-    println!(
-        "{:?}",
-        Board::init().minimax(4, Player::Red, i32::MIN, i32::MAX)
-    ); // 跳马
-       // let mut board = Board::init();
-       // let rst = board.minimax(5, Player::Red, i32::MIN, i32::MAX);
-       // let counter = board.counter;
-       // println!("{} \n {:?}", counter, rst); // 跳马
-       //                                       /* */
-       // println!(
-       //     "{:?}",
-       //     Board::init().minimax(6, Player::Red, i32::MIN, i32::MAX)
-       // ); // 跳马
+    println!("{:?}", Board::init().alpha_beta(1, i32::MIN, i32::MAX)); // 炮吃马
+    println!("{:?}", Board::init().alpha_beta(2, i32::MIN, i32::MAX)); // 炮吃马
+    println!("{:?}", Board::init().alpha_beta(3, i32::MIN, i32::MAX)); // 炮吃马
+    println!("{:?}", Board::init().alpha_beta(4, i32::MIN, i32::MAX)); // 跳马
+                                                                       /*  */
+    // let mut board = Board::init();
+    // let rst = board.minimax(5, Player::Red, i32::MIN, i32::MAX);
+    // let counter = board.counter;
+    // println!("{} \n {:?}", counter, rst); // 跳马
+    //                                       /* */
+    // println!(
+    //     "{:?}",
+    //     Board::init().minimax(6, Player::Red, i32::MIN, i32::MAX)
+    // ); // 跳马
 }
 
 #[test]

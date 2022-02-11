@@ -3,8 +3,6 @@
 use engine::UCCIEngine;
 
 mod board;
-mod search;
-mod zborist;
 mod engine;
 #[macro_use]
 extern crate lazy_static;
