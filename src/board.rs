@@ -509,13 +509,221 @@ impl Board {
             self.king_position(Player::Black).unwrap(),
         )
     }
-    pub fn is_checked(&self) -> bool {
-        let moves = self.generate_move();
-        moves.iter().any(|x| {
-            x.capture
-                .chess_type()
-                .map_or(false, |ct| ct == ChessType::King)
-        }) || self.king_eye_to_eye()
+    pub fn is_checked(&self, player: Player) -> bool {
+        let position_base = self.king_position(player).unwrap();
+
+        // 是否被炮将军
+        let targets = self.generate_move_for_chess_type(ChessType::Cannon, position_base);
+        for pos in targets {
+            if self.chess_at(pos).belong_to(player.next()) {
+                if let Some(ChessType::Cannon) = self.chess_at(pos).chess_type() {
+                    return true;
+                }
+            }
+        }
+        // 是否被车将军
+        let targets = self.generate_move_for_chess_type(ChessType::Rook, position_base);
+        for pos in targets {
+            if self.chess_at(pos).belong_to(player.next()) {
+                if let Some(ChessType::Rook) = self.chess_at(pos).chess_type() {
+                    return true;
+                }
+            }
+        }
+
+        // 是否被马将军
+        let mut targets = vec![];
+        if self.chess_at(position_base.up(1).left(1)) == Chess::None {
+            targets.push(position_base.up(2).left(1));
+            targets.push(position_base.up(1).left(2));
+        }
+        if self.chess_at(position_base.down(1).left(1)) == Chess::None {
+            targets.push(position_base.down(2).left(1));
+            targets.push(position_base.down(1).left(2));
+        }
+        if self.chess_at(position_base.up(1).right(1)) == Chess::None {
+            targets.push(position_base.up(2).right(1));
+            targets.push(position_base.up(1).right(2));
+        }
+        if self.chess_at(position_base.down(1).right(1)) == Chess::None {
+            targets.push(position_base.down(2).right(1));
+            targets.push(position_base.down(1).right(2));
+        }
+        for pos in targets {
+            if self.chess_at(pos).belong_to(player.next()) {
+                if let Some(ChessType::Knight) = self.chess_at(pos).chess_type() {
+                    return true;
+                }
+            }
+        }
+
+        // 是否被兵将军
+        for pos in vec![
+            position_base.left(1),
+            position_base.right(1),
+            if player == Player::Red {
+                position_base.up(1)
+            } else {
+                position_base.down(1)
+            },
+        ] {
+            if self.chess_at(pos).belong_to(player.next()) {
+                if let Some(ChessType::Pawn) = self.chess_at(pos).chess_type() {
+                    return true;
+                }
+            }
+        }
+        return self.king_eye_to_eye();
+    }
+    pub fn generate_move_for_chess_type(
+        &self,
+        ct: ChessType,
+        position_base: Position,
+    ) -> Vec<Position> {
+        let mut targets = vec![];
+        match ct {
+            ChessType::King => {
+                targets.append(&mut vec![
+                    position_base.up(1),
+                    position_base.down(1),
+                    position_base.left(1),
+                    position_base.right(1),
+                ]);
+            }
+            ChessType::Advisor => {
+                targets.append(&mut vec![
+                    position_base.up(1).left(1),
+                    position_base.up(1).right(1),
+                    position_base.down(1).left(1),
+                    position_base.down(1).right(1),
+                ]);
+            }
+            ChessType::Bishop => {
+                if self.chess_at(position_base.up(1).left(1)) == Chess::None {
+                    targets.push(position_base.up(2).left(2));
+                }
+                if self.chess_at(position_base.up(1).right(1)) == Chess::None {
+                    targets.push(position_base.up(2).right(2));
+                }
+                if self.chess_at(position_base.down(1).left(1)) == Chess::None {
+                    targets.push(position_base.down(2).left(2));
+                }
+                if self.chess_at(position_base.down(1).right(1)) == Chess::None {
+                    targets.push(position_base.down(2).right(2));
+                }
+            }
+            ChessType::Knight => {
+                if self.chess_at(position_base.up(1)) == Chess::None {
+                    targets.push(position_base.up(2).left(1));
+                    targets.push(position_base.up(2).right(1));
+                }
+                if self.chess_at(position_base.down(1)) == Chess::None {
+                    targets.push(position_base.down(2).left(1));
+                    targets.push(position_base.down(2).right(1));
+                }
+                if self.chess_at(position_base.left(1)) == Chess::None {
+                    targets.push(position_base.up(1).left(2));
+                    targets.push(position_base.down(1).left(2));
+                }
+                if self.chess_at(position_base.right(1)) == Chess::None {
+                    targets.push(position_base.up(1).right(2));
+                    targets.push(position_base.down(1).right(2));
+                }
+            }
+            ChessType::Rook => {
+                for delta in 1..(position_base.col + 1) {
+                    targets.push(position_base.left(delta));
+                    if self.chess_at(position_base.left(delta)) != Chess::None {
+                        break;
+                    }
+                }
+                for delta in 1..(BOARD_WIDTH - position_base.col) {
+                    targets.push(position_base.right(delta));
+                    if self.chess_at(position_base.right(delta)) != Chess::None {
+                        break;
+                    }
+                }
+                for delta in 1..(position_base.row + 1) {
+                    targets.push(position_base.up(delta));
+                    if self.chess_at(position_base.up(delta)) != Chess::None {
+                        break;
+                    }
+                }
+                for delta in 1..(BOARD_HEIGHT - position_base.row) {
+                    targets.push(position_base.down(delta));
+                    if self.chess_at(position_base.down(delta)) != Chess::None {
+                        break;
+                    }
+                }
+            }
+            ChessType::Cannon => {
+                let mut has_chess = false;
+                for delta in 1..(position_base.col + 1) {
+                    if !has_chess {
+                        if self.chess_at(position_base.left(delta)) != Chess::None {
+                            has_chess = true;
+                        } else {
+                            targets.push(position_base.left(delta));
+                        }
+                    } else if self.chess_at(position_base.left(delta)) != Chess::None {
+                        targets.push(position_base.left(delta));
+                        break;
+                    }
+                }
+                let mut has_chess = false;
+                for delta in 1..(BOARD_WIDTH - position_base.col) {
+                    if !has_chess {
+                        if self.chess_at(position_base.right(delta)) != Chess::None {
+                            has_chess = true;
+                        } else {
+                            targets.push(position_base.right(delta));
+                        }
+                    } else if self.chess_at(position_base.right(delta)) != Chess::None {
+                        targets.push(position_base.right(delta));
+                        break;
+                    }
+                }
+                let mut has_chess = false;
+                for delta in 1..(position_base.row + 1) {
+                    if !has_chess {
+                        if self.chess_at(position_base.up(delta)) != Chess::None {
+                            has_chess = true;
+                        } else {
+                            targets.push(position_base.up(delta));
+                        }
+                    } else if self.chess_at(position_base.up(delta)) != Chess::None {
+                        targets.push(position_base.up(delta));
+                        break;
+                    }
+                }
+                let mut has_chess = false;
+                for delta in 1..(BOARD_HEIGHT - position_base.row) {
+                    if !has_chess {
+                        if self.chess_at(position_base.down(delta)) != Chess::None {
+                            has_chess = true;
+                        } else {
+                            targets.push(position_base.down(delta));
+                        }
+                    } else if self.chess_at(position_base.down(delta)) != Chess::None {
+                        targets.push(position_base.down(delta));
+                        break;
+                    }
+                }
+            }
+            ChessType::Pawn => {
+                if self.turn == Player::Black {
+                    targets.push(position_base.down(1))
+                } else {
+                    targets.push(position_base.up(1));
+                }
+                // 过河兵可以左右走
+                if !in_country(position_base.row, self.turn) {
+                    targets.push(position_base.left(1));
+                    targets.push(position_base.right(1));
+                }
+            }
+        }
+        targets
     }
     pub fn generate_move(&self) -> Vec<Move> {
         let mut moves = vec![];
@@ -526,157 +734,7 @@ impl Board {
                 let chess = self.chess_at(position_base);
                 if chess.belong_to(self.turn) {
                     if let Some(ct) = chess.chess_type() {
-                        let mut targets = vec![];
-                        match ct {
-                            ChessType::King => {
-                                targets.append(&mut vec![
-                                    position_base.up(1),
-                                    position_base.down(1),
-                                    position_base.left(1),
-                                    position_base.right(1),
-                                ]);
-                            }
-                            ChessType::Advisor => {
-                                targets.append(&mut vec![
-                                    position_base.up(1).left(1),
-                                    position_base.up(1).right(1),
-                                    position_base.down(1).left(1),
-                                    position_base.down(1).right(1),
-                                ]);
-                            }
-                            ChessType::Bishop => {
-                                if self.chess_at(position_base.up(1).left(1)) == Chess::None {
-                                    targets.push(position_base.up(2).left(2));
-                                }
-                                if self.chess_at(position_base.up(1).right(1)) == Chess::None {
-                                    targets.push(position_base.up(2).right(2));
-                                }
-                                if self.chess_at(position_base.down(1).left(1)) == Chess::None {
-                                    targets.push(position_base.down(2).left(2));
-                                }
-                                if self.chess_at(position_base.down(1).right(1)) == Chess::None {
-                                    targets.push(position_base.down(2).right(2));
-                                }
-                            }
-                            ChessType::Knight => {
-                                if self.chess_at(position_base.up(1)) == Chess::None {
-                                    targets.push(position_base.up(2).left(1));
-                                    targets.push(position_base.up(2).right(1));
-                                }
-                                if self.chess_at(position_base.down(1)) == Chess::None {
-                                    targets.push(position_base.down(2).left(1));
-                                    targets.push(position_base.down(2).right(1));
-                                }
-                                if self.chess_at(position_base.left(1)) == Chess::None {
-                                    targets.push(position_base.up(1).left(2));
-                                    targets.push(position_base.down(1).left(2));
-                                }
-                                if self.chess_at(position_base.right(1)) == Chess::None {
-                                    targets.push(position_base.up(1).right(2));
-                                    targets.push(position_base.down(1).right(2));
-                                }
-                            }
-                            ChessType::Rook => {
-                                for delta in 1..(j + 1) {
-                                    targets.push(position_base.left(delta));
-                                    if self.chess_at(position_base.left(delta)) != Chess::None {
-                                        break;
-                                    }
-                                }
-                                for delta in 1..(BOARD_WIDTH - j) {
-                                    targets.push(position_base.right(delta));
-                                    if self.chess_at(position_base.right(delta)) != Chess::None {
-                                        break;
-                                    }
-                                }
-                                for delta in 1..(i + 1) {
-                                    targets.push(position_base.up(delta));
-                                    if self.chess_at(position_base.up(delta)) != Chess::None {
-                                        break;
-                                    }
-                                }
-                                for delta in 1..(BOARD_HEIGHT - i) {
-                                    targets.push(position_base.down(delta));
-                                    if self.chess_at(position_base.down(delta)) != Chess::None {
-                                        break;
-                                    }
-                                }
-                            }
-                            ChessType::Cannon => {
-                                let mut has_chess = false;
-                                for delta in 1..(j + 1) {
-                                    if !has_chess {
-                                        if self.chess_at(position_base.left(delta)) != Chess::None {
-                                            has_chess = true;
-                                        } else {
-                                            targets.push(position_base.left(delta));
-                                        }
-                                    } else if self.chess_at(position_base.left(delta))
-                                        != Chess::None
-                                    {
-                                        targets.push(position_base.left(delta));
-                                        break;
-                                    }
-                                }
-                                let mut has_chess = false;
-                                for delta in 1..(BOARD_WIDTH - j) {
-                                    if !has_chess {
-                                        if self.chess_at(position_base.right(delta)) != Chess::None
-                                        {
-                                            has_chess = true;
-                                        } else {
-                                            targets.push(position_base.right(delta));
-                                        }
-                                    } else if self.chess_at(position_base.right(delta))
-                                        != Chess::None
-                                    {
-                                        targets.push(position_base.right(delta));
-                                        break;
-                                    }
-                                }
-                                let mut has_chess = false;
-                                for delta in 1..(i + 1) {
-                                    if !has_chess {
-                                        if self.chess_at(position_base.up(delta)) != Chess::None {
-                                            has_chess = true;
-                                        } else {
-                                            targets.push(position_base.up(delta));
-                                        }
-                                    } else if self.chess_at(position_base.up(delta)) != Chess::None
-                                    {
-                                        targets.push(position_base.up(delta));
-                                        break;
-                                    }
-                                }
-                                let mut has_chess = false;
-                                for delta in 1..(BOARD_HEIGHT - i) {
-                                    if !has_chess {
-                                        if self.chess_at(position_base.down(delta)) != Chess::None {
-                                            has_chess = true;
-                                        } else {
-                                            targets.push(position_base.down(delta));
-                                        }
-                                    } else if self.chess_at(position_base.down(delta))
-                                        != Chess::None
-                                    {
-                                        targets.push(position_base.down(delta));
-                                        break;
-                                    }
-                                }
-                            }
-                            ChessType::Pawn => {
-                                if self.turn == Player::Black {
-                                    targets.push(position_base.down(1))
-                                } else {
-                                    targets.push(position_base.up(1));
-                                }
-                                // 过河兵可以左右走
-                                if !in_country(i as i32, self.turn) {
-                                    targets.push(position_base.left(1));
-                                    targets.push(position_base.right(1));
-                                }
-                            }
-                        }
+                        let targets = self.generate_move_for_chess_type(ct, position_base);
                         let move_base = Move {
                             player: self.turn,
                             from: position_base,
@@ -758,7 +816,7 @@ impl Board {
         let mut best_move: Vec<Move> = vec![];
         for m in self.generate_move() {
             self.apply_move(&m);
-            if self.is_checked() {
+            if self.is_checked(self.turn.next()) {
                 self.undo_move(&m);
                 continue;
             }
