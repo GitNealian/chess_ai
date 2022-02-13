@@ -1,4 +1,4 @@
-use std::{collections::HashMap, vec};
+use std::{collections::HashMap, slice::SliceIndex, vec};
 
 pub const BOARD_WIDTH: i32 = 9;
 pub const BOARD_HEIGHT: i32 = 10;
@@ -104,7 +104,7 @@ impl Position {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Move {
     pub player: Player, // 玩家
     pub from: Position, // 起手位置
@@ -148,6 +148,7 @@ pub struct Board {
     // 9×10的棋盘，红方在下，黑方在上
     pub chesses: [[Chess; BOARD_WIDTH as usize]; BOARD_HEIGHT as usize],
     pub turn: Player,
+    pub best_move: Vec<Move>,
     pub counter: i32,
 }
 
@@ -402,6 +403,7 @@ impl Board {
                 ],
             ],
             turn: Player::Red,
+            best_move: vec![],
             counter: 0,
         }
     }
@@ -409,6 +411,7 @@ impl Board {
         Board {
             chesses: [[Chess::None; BOARD_WIDTH as usize]; BOARD_HEIGHT as usize],
             turn: Player::Red,
+            best_move: vec![],
             counter: 0,
         }
     }
@@ -504,10 +507,13 @@ impl Board {
         None
     }
     pub fn king_eye_to_eye(&self) -> bool {
-        !self.has_chess_between(
-            self.king_position(Player::Red).unwrap(),
-            self.king_position(Player::Black).unwrap(),
-        )
+        let posa = self.king_position(Player::Red).unwrap();
+        let posb = self.king_position(Player::Black).unwrap();
+        if posa.col == posb.col {
+            !self.has_chess_between(posa, posb)
+        } else {
+            false
+        }
     }
     pub fn is_checked(&self, player: Player) -> bool {
         let position_base = self.king_position(player).unwrap();
@@ -808,30 +814,32 @@ impl Board {
             black_score - red_score + INITIATIVE_BONUS
         }
     }
-    pub fn alpha_beta(&mut self, depth: i32, mut alpha: i32, beta: i32) -> (i32, Vec<Move>) {
+    pub fn alpha_beta(&mut self, depth: i32, mut alpha: i32, beta: i32) -> i32 {
         if depth == 0 {
             self.counter += 1;
-            return (self.evaluate(self.turn), vec![]);
+            return self.evaluate(self.turn);
         }
-        let mut best_move: Vec<Move> = vec![];
         for m in self.generate_move() {
             self.apply_move(&m);
             if self.is_checked(self.turn.next()) {
                 self.undo_move(&m);
                 continue;
             }
-            let (v, mut mn) = self.alpha_beta(depth - 1, -beta, -alpha);
+            let v = -self.alpha_beta(depth - 1, -beta, -alpha);
             self.undo_move(&m);
-            if -v >= beta {
-                return (beta, vec![]);
+            if v >= beta {
+                return beta;
             }
-            if -v > alpha {
-                alpha = -v;
-                mn.push(m);
-                best_move = mn;
+            if v > alpha || (v == alpha && rand::random()){
+                alpha = v;
+                if self.best_move.get(depth as usize).is_some() {
+                    self.best_move[depth as usize] = m.clone();
+                } else {
+                    self.best_move.push(m.clone());
+                }
             }
         }
-        return (alpha, best_move);
+        return alpha;
     }
 }
 
