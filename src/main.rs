@@ -2,6 +2,7 @@
 
 use engine::UCCIEngine;
 
+mod constant;
 mod board;
 mod engine;
 mod zobrist;

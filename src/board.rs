@@ -1,4 +1,6 @@
-use std::{collections::HashMap, slice::SliceIndex, vec};
+use std::{collections::HashMap, vec};
+
+use crate::constant::KILL;
 
 pub const BOARD_WIDTH: i32 = 9;
 pub const BOARD_HEIGHT: i32 = 10;
@@ -113,6 +115,18 @@ pub struct Move {
     pub capture: Chess, // 这一步吃的子
 }
 impl Move {
+    pub fn stay() -> Move {
+        Move {
+            player: Player::Red,
+            from: Position::new(0, 0),
+            to: Position::new(0, 0),
+            chess: Chess::None,
+            capture: Chess::None,
+        }
+    }
+    pub fn is_valid(&self) -> bool {
+        self.chess != Chess::None && self.from != self.to
+    }
     pub fn with_target(&self, to: Position, capture: Chess) -> Move {
         Move {
             player: self.player,
@@ -148,7 +162,6 @@ pub struct Board {
     // 9×10的棋盘，红方在下，黑方在上
     pub chesses: [[Chess; BOARD_WIDTH as usize]; BOARD_HEIGHT as usize],
     pub turn: Player,
-    pub best_move: Vec<Move>,
     pub counter: i32,
 }
 
@@ -403,7 +416,6 @@ impl Board {
                 ],
             ],
             turn: Player::Red,
-            best_move: vec![],
             counter: 0,
         }
     }
@@ -411,7 +423,6 @@ impl Board {
         Board {
             chesses: [[Chess::None; BOARD_WIDTH as usize]; BOARD_HEIGHT as usize],
             turn: Player::Red,
-            best_move: vec![],
             counter: 0,
         }
     }
@@ -814,32 +825,34 @@ impl Board {
             black_score - red_score + INITIATIVE_BONUS
         }
     }
-    pub fn alpha_beta(&mut self, depth: i32, mut alpha: i32, beta: i32) -> i32 {
+    pub fn alpha_beta(&mut self, depth: i32, mut alpha: i32, beta: i32) -> (i32, Vec<Move>) {
         if depth == 0 {
             self.counter += 1;
-            return self.evaluate(self.turn);
+            return (self.evaluate(self.turn), vec![]);
         }
+        let mut count = 0; // 记录尝试了多少种着法
+        let mut best_moves = vec![];
         for m in self.generate_move() {
             self.apply_move(&m);
             if self.is_checked(self.turn.next()) {
                 self.undo_move(&m);
                 continue;
             }
-            let v = -self.alpha_beta(depth - 1, -beta, -alpha);
+            count = count + 1;
+            let (v, mut bm) = self.alpha_beta(depth - 1, -beta, -alpha);
+            let best_value = -v;
             self.undo_move(&m);
-            if v >= beta {
-                return beta;
+            if best_value >= beta {
+                return (best_value, vec![]);
             }
-            if v > alpha || (v == alpha && rand::random()){
-                alpha = v;
-                if self.best_move.get(depth as usize).is_some() {
-                    self.best_move[depth as usize] = m.clone();
-                } else {
-                    self.best_move.push(m.clone());
-                }
+            if best_value > alpha {
+                alpha = best_value;
+                bm.push(m);
+                best_moves = bm;
             }
         }
-        return alpha;
+        // 如果尝试的着法数为0,说明已经被绝杀
+        return (if count == 0 { KILL } else { alpha }, best_moves);
     }
 }
 
