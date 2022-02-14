@@ -1,6 +1,6 @@
 use std::{collections::HashMap, vec};
 
-use crate::constant::KILL;
+use crate::constant::{KILL, MIN, MAX};
 
 pub const BOARD_WIDTH: i32 = 9;
 pub const BOARD_HEIGHT: i32 = 10;
@@ -461,7 +461,7 @@ impl Board {
         let chess = self.chess_at(m.to);
         self.set_chess(m.from, chess);
         self.set_chess(m.to, m.capture);
-        self.turn = m.player.next();
+        self.turn = m.player;
     }
     pub fn chess_at(&self, pos: Position) -> Chess {
         if in_board(pos) {
@@ -825,7 +825,7 @@ impl Board {
             black_score - red_score + INITIATIVE_BONUS
         }
     }
-    pub fn alpha_beta(&mut self, depth: i32, mut alpha: i32, beta: i32) -> (i32, Vec<Move>) {
+    pub fn alpha_beta_pvs(&mut self, depth: i32, mut alpha: i32, beta: i32) -> (i32, Vec<Move>) {
         if depth == 0 {
             self.counter += 1;
             return (self.evaluate(self.turn), vec![]);
@@ -839,8 +839,20 @@ impl Board {
                 continue;
             }
             count = count + 1;
-            let (v, mut bm) = self.alpha_beta(depth - 1, -beta, -alpha);
-            let best_value = -v;
+            // 先使用0宽窗口进行搜索
+            let (v, bmt) = self.alpha_beta_pvs(depth - 1, -(alpha + 1), -alpha);
+            let mut best_value = -v;
+            let mut bm = bmt;
+            if best_value == MIN || (best_value > alpha && best_value < beta) {
+                let (v, bmt) = self.alpha_beta_pvs(depth - 1, -beta, -alpha);
+                best_value = -v;
+                bm = bmt;
+            }
+
+            // let (v, bmt) = self.alpha_beta(depth - 1, -beta, -alpha);
+            // let mut best_value = -v;
+            // let mut bm = bmt;
+
             self.undo_move(&m);
             if best_value >= beta {
                 return (best_value, vec![]);
@@ -852,7 +864,9 @@ impl Board {
             }
         }
         // 如果尝试的着法数为0,说明已经被绝杀
-        return (if count == 0 { KILL } else { alpha }, best_moves);
+        // 深度减分，深度越小，说明越早被将死，局面分应该越低，由于depth是递减的，
+        // 所以深度越小，depth越大，减去depth的局面分就越低
+        return (if count == 0 { KILL - depth } else { alpha }, best_moves);
     }
 }
 
@@ -878,12 +892,11 @@ fn test_evaluate() {
 }
 
 #[test]
-fn test_minimax() {
-    println!("{:?}", Board::init().alpha_beta(1, i32::MIN, i32::MAX)); // 炮吃马
-    println!("{:?}", Board::init().alpha_beta(2, i32::MIN, i32::MAX)); // 炮吃马
-    println!("{:?}", Board::init().alpha_beta(3, i32::MIN, i32::MAX)); // 炮吃马
-    println!("{:?}", Board::init().alpha_beta(4, i32::MIN, i32::MAX)); // 跳马
-                                                                       /*  */
+fn test_alpha_beta_pvs() {
+    println!("{:?}", Board::init().alpha_beta_pvs(1, MIN, MAX));
+    println!("{:?}", Board::init().alpha_beta_pvs(2, MIN, MAX));
+    println!("{:?}", Board::init().alpha_beta_pvs(3, MIN, MAX));
+    println!("{:?}", Board::init().alpha_beta_pvs(4, MIN, MAX));
     // let mut board = Board::init();
     // let rst = board.minimax(5, Player::Red, i32::MIN, i32::MAX);
     // let counter = board.counter;
