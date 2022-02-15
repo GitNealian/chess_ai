@@ -1,6 +1,6 @@
 use std::{collections::HashMap, vec};
 
-use crate::constant::{KILL, MIN, MAX};
+use crate::constant::{KILL, MAX, MIN};
 
 pub const BOARD_WIDTH: i32 = 9;
 pub const BOARD_HEIGHT: i32 = 10;
@@ -61,6 +61,17 @@ impl ChessType {
             ChessType::Pawn => 2,
         }
     }
+    pub fn move_value(&self) -> i32 {
+        match self {
+            ChessType::King => 1,
+            ChessType::Advisor => 2,
+            ChessType::Bishop => 2,
+            ChessType::Knight => 5,
+            ChessType::Rook => 6,
+            ChessType::Cannon => 4,
+            ChessType::Pawn => 3,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -106,7 +117,7 @@ impl Position {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Move {
     pub player: Player, // 玩家
     pub from: Position, // 起手位置
@@ -163,6 +174,9 @@ pub struct Board {
     pub chesses: [[Chess; BOARD_WIDTH as usize]; BOARD_HEIGHT as usize],
     pub turn: Player,
     pub counter: i32,
+    pub gen_counter: i32,
+    pub move_history: Vec<Move>,
+    pub best_moves_last: Vec<Move>,
 }
 
 // 棋子是否在棋盘内
@@ -417,6 +431,9 @@ impl Board {
             ],
             turn: Player::Red,
             counter: 0,
+            gen_counter: 0,
+            move_history: vec![],
+            best_moves_last: vec![],
         }
     }
     pub fn empty() -> Self {
@@ -424,6 +441,9 @@ impl Board {
             chesses: [[Chess::None; BOARD_WIDTH as usize]; BOARD_HEIGHT as usize],
             turn: Player::Red,
             counter: 0,
+            gen_counter: 0,
+            move_history: vec![],
+            best_moves_last: vec![],
         }
     }
     pub fn from_fen(fen: &str) -> Self {
@@ -457,11 +477,16 @@ impl Board {
         self.set_chess(m.from, Chess::None);
         self.turn = m.player.next();
     }
+    pub fn do_move(&mut self, m: &Move){
+        self.apply_move(m);
+        self.move_history.push(m.clone());
+    }
     pub fn undo_move(&mut self, m: &Move) {
         let chess = self.chess_at(m.to);
         self.set_chess(m.from, chess);
         self.set_chess(m.to, m.capture);
         self.turn = m.player;
+        self.move_history.pop();
     }
     pub fn chess_at(&self, pos: Position) -> Chess {
         if in_board(pos) {
@@ -630,14 +655,26 @@ impl Board {
                 }
             }
             ChessType::Knight => {
-                if self.chess_at(position_base.up(1)) == Chess::None {
-                    targets.push(position_base.up(2).left(1));
-                    targets.push(position_base.up(2).right(1));
+                if self.turn == Player::Red {
+                    if self.chess_at(position_base.up(1)) == Chess::None {
+                        targets.push(position_base.up(2).left(1));
+                        targets.push(position_base.up(2).right(1));
+                    }
+                    if self.chess_at(position_base.down(1)) == Chess::None {
+                        targets.push(position_base.down(2).left(1));
+                        targets.push(position_base.down(2).right(1));
+                    }
+                } else {
+                    if self.chess_at(position_base.down(1)) == Chess::None {
+                        targets.push(position_base.down(2).left(1));
+                        targets.push(position_base.down(2).right(1));
+                    }
+                    if self.chess_at(position_base.up(1)) == Chess::None {
+                        targets.push(position_base.up(2).left(1));
+                        targets.push(position_base.up(2).right(1));
+                    }
                 }
-                if self.chess_at(position_base.down(1)) == Chess::None {
-                    targets.push(position_base.down(2).left(1));
-                    targets.push(position_base.down(2).right(1));
-                }
+
                 if self.chess_at(position_base.left(1)) == Chess::None {
                     targets.push(position_base.up(1).left(2));
                     targets.push(position_base.down(1).left(2));
@@ -648,6 +685,34 @@ impl Board {
                 }
             }
             ChessType::Rook => {
+                if self.turn == Player::Red {
+                    for delta in 1..(position_base.row + 1) {
+                        targets.push(position_base.up(delta));
+                        if self.chess_at(position_base.up(delta)) != Chess::None {
+                            break;
+                        }
+                    }
+                    for delta in 1..(BOARD_HEIGHT - position_base.row) {
+                        targets.push(position_base.down(delta));
+                        if self.chess_at(position_base.down(delta)) != Chess::None {
+                            break;
+                        }
+                    }
+                } else {
+                    for delta in 1..(position_base.row + 1) {
+                        targets.push(position_base.up(delta));
+                        if self.chess_at(position_base.up(delta)) != Chess::None {
+                            break;
+                        }
+                    }
+                    for delta in 1..(BOARD_HEIGHT - position_base.row) {
+                        targets.push(position_base.down(delta));
+                        if self.chess_at(position_base.down(delta)) != Chess::None {
+                            break;
+                        }
+                    }
+                }
+
                 for delta in 1..(position_base.col + 1) {
                     targets.push(position_base.left(delta));
                     if self.chess_at(position_base.left(delta)) != Chess::None {
@@ -660,46 +725,8 @@ impl Board {
                         break;
                     }
                 }
-                for delta in 1..(position_base.row + 1) {
-                    targets.push(position_base.up(delta));
-                    if self.chess_at(position_base.up(delta)) != Chess::None {
-                        break;
-                    }
-                }
-                for delta in 1..(BOARD_HEIGHT - position_base.row) {
-                    targets.push(position_base.down(delta));
-                    if self.chess_at(position_base.down(delta)) != Chess::None {
-                        break;
-                    }
-                }
             }
             ChessType::Cannon => {
-                let mut has_chess = false;
-                for delta in 1..(position_base.col + 1) {
-                    if !has_chess {
-                        if self.chess_at(position_base.left(delta)) != Chess::None {
-                            has_chess = true;
-                        } else {
-                            targets.push(position_base.left(delta));
-                        }
-                    } else if self.chess_at(position_base.left(delta)) != Chess::None {
-                        targets.push(position_base.left(delta));
-                        break;
-                    }
-                }
-                let mut has_chess = false;
-                for delta in 1..(BOARD_WIDTH - position_base.col) {
-                    if !has_chess {
-                        if self.chess_at(position_base.right(delta)) != Chess::None {
-                            has_chess = true;
-                        } else {
-                            targets.push(position_base.right(delta));
-                        }
-                    } else if self.chess_at(position_base.right(delta)) != Chess::None {
-                        targets.push(position_base.right(delta));
-                        break;
-                    }
-                }
                 let mut has_chess = false;
                 for delta in 1..(position_base.row + 1) {
                     if !has_chess {
@@ -726,23 +753,50 @@ impl Board {
                         break;
                     }
                 }
+                let mut has_chess = false;
+                for delta in 1..(position_base.col + 1) {
+                    if !has_chess {
+                        if self.chess_at(position_base.left(delta)) != Chess::None {
+                            has_chess = true;
+                        } else {
+                            targets.push(position_base.left(delta));
+                        }
+                    } else if self.chess_at(position_base.left(delta)) != Chess::None {
+                        targets.push(position_base.left(delta));
+                        break;
+                    }
+                }
+                let mut has_chess = false;
+                for delta in 1..(BOARD_WIDTH - position_base.col) {
+                    if !has_chess {
+                        if self.chess_at(position_base.right(delta)) != Chess::None {
+                            has_chess = true;
+                        } else {
+                            targets.push(position_base.right(delta));
+                        }
+                    } else if self.chess_at(position_base.right(delta)) != Chess::None {
+                        targets.push(position_base.right(delta));
+                        break;
+                    }
+                }
             }
             ChessType::Pawn => {
-                if self.turn == Player::Black {
-                    targets.push(position_base.down(1))
-                } else {
-                    targets.push(position_base.up(1));
-                }
                 // 过河兵可以左右走
                 if !in_country(position_base.row, self.turn) {
                     targets.push(position_base.left(1));
                     targets.push(position_base.right(1));
                 }
+                if self.turn == Player::Black {
+                    targets.push(position_base.down(1))
+                } else {
+                    targets.push(position_base.up(1));
+                }
             }
         }
         targets
     }
-    pub fn generate_move(&self) -> Vec<Move> {
+    pub fn generate_move(&mut self) -> Vec<Move> {
+        self.gen_counter += 1;
         let mut moves = vec![];
         for i in 0..BOARD_HEIGHT {
             for j in 0..BOARD_WIDTH {
@@ -781,10 +835,10 @@ impl Board {
                 }
             }
         }
-        // moves.sort_by(|a, b| {
-        //     (self.chess_at(a.to).value() + self.chess_at(a.from).value())
-        //         .cmp(&(self.chess_at(b.to).value() + self.chess_at(b.from).value()))
-        // });
+        moves.sort_by(|a, b| {
+            (self.chess_at(b.to).value() - self.chess_at(b.from).value())
+                .cmp(&(self.chess_at(a.to).value() - self.chess_at(a.from).value()))
+        });
         moves
     }
     // 简单的评价，双方每个棋子的子力之和的差
@@ -831,9 +885,23 @@ impl Board {
             return (self.evaluate(self.turn), vec![]);
         }
         let mut count = 0; // 记录尝试了多少种着法
+
+        // 优先尝试迭代深度搜索的上一层搜索结果
+        let mut moves = self.generate_move();
+        // 如果符合上次搜索的着法线路，那么优先按此线路搜索下去
+        for (i, m) in self.best_moves_last.iter().enumerate() {
+            if let Some(ml) = self.move_history.get(i) {
+                if m != ml {
+                    break;
+                }
+            } else {
+                moves.insert(0, m.clone());
+                break;
+            }
+        }
         let mut best_moves = vec![];
-        for m in self.generate_move() {
-            self.apply_move(&m);
+        for m in moves {
+            self.do_move(&m);
             if self.is_checked(self.turn.next()) {
                 self.undo_move(&m);
                 continue;
@@ -868,10 +936,57 @@ impl Board {
         // 所以深度越小，depth越大，减去depth的局面分就越低
         return (if count == 0 { KILL - depth } else { alpha }, best_moves);
     }
+    pub fn iterative_deepening(&mut self, max_depth: i32) -> (i32, Vec<Move>) {
+        for depth in 3..max_depth + 1 {
+            let (v, bm) = self.alpha_beta_pvs(depth, MIN, MAX);
+            if depth == max_depth {
+                println!("第{}层: {:?}", depth, bm);
+                return (v, bm);
+            }
+            self.best_moves_last = bm;
+            self.best_moves_last.reverse();
+            println!("第{}层: {:?}", depth, self.best_moves_last);
+        }
+        (0, vec![])
+    }
 }
 
 #[test]
 fn test_generate_move() {
+    let mut board = Board::init();
+    for i in 0..1000000 {
+        board.generate_move();
+    }
+    assert_eq!(
+        Board::init().generate_move().len(),
+        5 + 24 + 4 + 4 + 4 + 2 + 1
+    );
+}
+#[test]
+fn test_is_checked() {
+    let mut board = Board::init();
+    for i in 0..10000000 {
+        board.is_checked(Player::Red);
+    }
+    assert_eq!(
+        Board::init().generate_move().len(),
+        5 + 24 + 4 + 4 + 4 + 2 + 1
+    );
+}
+#[test]
+fn test_move_and_unmove() {
+    let mut board = Board::init();
+    for i in 0..800000 {
+        let m = Move {
+            player: Player::Red,
+            from: Position::new(0, 0),
+            to: Position::new(1, 0),
+            chess: Chess::Red(ChessType::Rook),
+            capture: Chess::None,
+        };
+        board.apply_move(&m);
+        board.undo_move(&m);
+    }
     assert_eq!(
         Board::init().generate_move().len(),
         5 + 24 + 4 + 4 + 4 + 2 + 1
@@ -888,24 +1003,24 @@ fn test_evaluate() {
         chess: Chess::Red(ChessType::Rook),
         capture: Chess::None,
     });
+    for i in 0..1000000 {
+        board.evaluate(Player::Red);
+    }
     assert_eq!(board.evaluate(Player::Red), 7);
 }
 
 #[test]
 fn test_alpha_beta_pvs() {
-    println!("{:?}", Board::init().alpha_beta_pvs(1, MIN, MAX));
-    println!("{:?}", Board::init().alpha_beta_pvs(2, MIN, MAX));
-    println!("{:?}", Board::init().alpha_beta_pvs(3, MIN, MAX));
-    println!("{:?}", Board::init().alpha_beta_pvs(4, MIN, MAX));
+    // println!("{:?}", Board::init().alpha_beta_pvs(1, MIN, MAX));
+    // println!("{:?}", Board::init().alpha_beta_pvs(2, MIN, MAX));
+    // println!("{:?}", Board::init().alpha_beta_pvs(3, MIN, MAX));
+    // println!("{:?}", Board::init().alpha_beta_pvs(4, MIN, MAX));
     // let mut board = Board::init();
     // let rst = board.minimax(5, Player::Red, i32::MIN, i32::MAX);
     // let counter = board.counter;
     // println!("{} \n {:?}", counter, rst); // 跳马
     //                                       /* */
-    // println!(
-    //     "{:?}",
-    //     Board::init().minimax(6, Player::Red, i32::MIN, i32::MAX)
-    // ); // 跳马
+    println!("{:?}", Board::init().alpha_beta_pvs(6, MIN, MAX)); // 跳马
 }
 
 #[test]
