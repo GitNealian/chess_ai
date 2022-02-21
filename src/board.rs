@@ -1,6 +1,9 @@
 use std::{collections::HashMap, vec};
 
-use crate::constant::{KILL, MAX, MIN};
+use crate::{
+    constant::{KILL, MAX, MIN, RECORD_SIZE, MAX_DEPTH},
+    zobrist::Zobristable,
+};
 
 pub const BOARD_WIDTH: i32 = 9;
 pub const BOARD_HEIGHT: i32 = 10;
@@ -15,7 +18,7 @@ pub enum Chess {
 impl Chess {
     pub fn value(&self) -> i32 {
         if let Some(ct) = self.chess_type() {
-            ct.value()
+            ct.type_value()
         } else {
             0x0
         }
@@ -36,6 +39,13 @@ impl Chess {
             Chess::None => None,
         }
     }
+    pub fn player(&self) -> Option<Player> {
+        match self {
+            Chess::Black(_) => Some(Player::Black),
+            Chess::Red(_) => Some(Player::Red),
+            Chess::None => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -51,6 +61,17 @@ pub enum ChessType {
 
 impl ChessType {
     pub fn value(&self) -> i32 {
+        match self {
+            ChessType::King => 1,
+            ChessType::Advisor => 2,
+            ChessType::Bishop => 3,
+            ChessType::Knight => 4,
+            ChessType::Rook => 5,
+            ChessType::Cannon => 6,
+            ChessType::Pawn => 0,
+        }
+    }
+    pub fn type_value(&self) -> i32 {
         match self {
             ChessType::King => 5,
             ChessType::Advisor => 1,
@@ -81,7 +102,14 @@ pub enum Player {
 }
 
 impl Player {
-    fn next(&self) -> Player {
+    pub fn value(&self) -> i32 {
+        if self == &Player::Red {
+            0
+        } else {
+            1
+        }
+    }
+    pub fn next(&self) -> Player {
         if self == &Player::Red {
             Player::Black
         } else {
@@ -92,8 +120,8 @@ impl Player {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Position {
-    row: i32,
-    col: i32,
+    pub row: i32,
+    pub col: i32,
 }
 
 impl Position {
@@ -168,7 +196,15 @@ impl ToString for Position {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+pub struct Record {
+    pub value: i32,
+    pub depth: i32,
+    pub best_move: Option<Move>,
+    pub zobrist_lock: u64,
+    pub turn: Player,
+}
+
 pub struct Board {
     // 9×10的棋盘，红方在下，黑方在上
     pub chesses: [[Chess; BOARD_WIDTH as usize]; BOARD_HEIGHT as usize],
@@ -177,6 +213,12 @@ pub struct Board {
     pub gen_counter: i32,
     pub move_history: Vec<Move>,
     pub best_moves_last: Vec<Move>,
+    pub records: Vec<Option<Record>>,
+    pub zobrist_table: Zobristable,
+    pub zobrist_table_lock: Zobristable, // 由于zobrist_table不一定唯一，所以加一个校验
+    pub zobrist_value: u64,
+    pub zobrist_value_lock: u64,
+    pub distance: i32,
 }
 
 // 棋子是否在棋盘内
@@ -313,10 +355,10 @@ lazy_static! {
         ('P', Chess::Red(ChessType::Pawn)),
     ]);
 }
-
+const RECORD_NONE: Option<Record> = None;
 impl Board {
     pub fn init() -> Self {
-        Board {
+        let mut board = Board {
             chesses: [
                 [
                     Chess::Black(ChessType::Rook),
@@ -434,7 +476,16 @@ impl Board {
             gen_counter: 0,
             move_history: vec![],
             best_moves_last: vec![],
-        }
+            records: vec![RECORD_NONE; RECORD_SIZE as usize],
+            zobrist_table: Zobristable::new(),
+            zobrist_table_lock: Zobristable::new(),
+            zobrist_value: 0,
+            zobrist_value_lock: 0,
+            distance: 0,
+        };
+        board.zobrist_value = board.zobrist_table.calc_chesses(&board.chesses);
+        board.zobrist_value_lock = board.zobrist_table_lock.calc_chesses(&board.chesses);
+        board
     }
     pub fn empty() -> Self {
         Board {
@@ -444,6 +495,12 @@ impl Board {
             gen_counter: 0,
             move_history: vec![],
             best_moves_last: vec![],
+            records: vec![RECORD_NONE; RECORD_SIZE as usize],
+            zobrist_table: Zobristable::new(),
+            zobrist_table_lock: Zobristable::new(),
+            zobrist_value: 0,
+            zobrist_value_lock: 0,
+            distance: 0,
         }
     }
     pub fn from_fen(fen: &str) -> Self {
@@ -465,6 +522,7 @@ impl Board {
             }
             i += 1;
         }
+        board.zobrist_value = board.zobrist_table.calc_chesses(&board.chesses);
         let turn = parts.next().unwrap();
         if turn == "b" {
             board.turn = Player::Black;
@@ -475,17 +533,27 @@ impl Board {
         let chess = self.chess_at(m.from);
         self.set_chess(m.to, chess);
         self.set_chess(m.from, Chess::None);
+        self.zobrist_value = self.zobrist_table.apply_move(self.zobrist_value, m);
+        self.zobrist_value_lock = self
+            .zobrist_table_lock
+            .apply_move(self.zobrist_value_lock, m);
         self.turn = m.player.next();
     }
-    pub fn do_move(&mut self, m: &Move){
+    pub fn do_move(&mut self, m: &Move) {
         self.apply_move(m);
+        self.distance += 1;
         self.move_history.push(m.clone());
     }
     pub fn undo_move(&mut self, m: &Move) {
         let chess = self.chess_at(m.to);
         self.set_chess(m.from, chess);
         self.set_chess(m.to, m.capture);
+        self.zobrist_value = self.zobrist_table.undo_move(self.zobrist_value, m);
+        self.zobrist_value_lock = self
+            .zobrist_table_lock
+            .undo_move(self.zobrist_value_lock, m);
         self.turn = m.player;
+        self.distance -= 1;
         self.move_history.pop();
     }
     pub fn chess_at(&self, pos: Position) -> Chess {
@@ -879,10 +947,41 @@ impl Board {
             black_score - red_score + INITIATIVE_BONUS
         }
     }
-    pub fn alpha_beta_pvs(&mut self, depth: i32, mut alpha: i32, beta: i32) -> (i32, Vec<Move>) {
+    pub fn find_record(&self) -> Option<Record> {
+        if let Some(record) =
+            &self.records[(self.zobrist_value & (RECORD_SIZE - 1) as u64) as usize]
+        {
+            if record.zobrist_lock == self.zobrist_value_lock && self.turn == record.turn {
+                Some(record.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+    pub fn add_record(&mut self, record: Record) {
+        if let Some(old_record) =
+            &self.records[(self.zobrist_value & (RECORD_SIZE - 1) as u64) as usize]
+        {
+            // 如果已存在，用深度较大的覆盖，depth越小，深度越大
+            if record.depth < old_record.depth {
+                self.records[(self.zobrist_value & (RECORD_SIZE - 1) as u64) as usize] =
+                    Some(record);
+            }
+        } else {
+            self.records[(self.zobrist_value & (RECORD_SIZE - 1) as u64) as usize] = Some(record);
+        }
+    }
+    pub fn alpha_beta_pvs(&mut self, depth: i32, mut alpha: i32, beta: i32) -> (i32, Option<Move>) {
+        // if let Some(record) = self.find_record() {
+        //     if record.depth <= depth {
+        //         return (record.value, record.best_move);
+        //     }
+        // }
         if depth == 0 {
             self.counter += 1;
-            return (self.evaluate(self.turn), vec![]);
+            return (self.quies(alpha, beta), None);
         }
         let mut count = 0; // 记录尝试了多少种着法
 
@@ -899,7 +998,7 @@ impl Board {
                 break;
             }
         }
-        let mut best_moves = vec![];
+        let mut best_move = None;
         for m in moves {
             self.do_move(&m);
             if self.is_checked(self.turn.next()) {
@@ -909,10 +1008,18 @@ impl Board {
             count = count + 1;
             // 先使用0宽窗口进行搜索
             let (v, bmt) = self.alpha_beta_pvs(depth - 1, -(alpha + 1), -alpha);
+
             let mut best_value = -v;
             let mut bm = bmt;
             if best_value == MIN || (best_value > alpha && best_value < beta) {
                 let (v, bmt) = self.alpha_beta_pvs(depth - 1, -beta, -alpha);
+                // self.add_record(Record {
+                //     value: -v,
+                //     depth,
+                //     best_move: bmt.clone(),
+                //     zobrist_lock: self.zobrist_value_lock,
+                //     turn: self.turn,
+                // });
                 best_value = -v;
                 bm = bmt;
             }
@@ -921,33 +1028,66 @@ impl Board {
             // let mut best_value = -v;
             // let mut bm = bmt;
 
-            self.undo_move(&m);
             if best_value >= beta {
-                return (best_value, vec![]);
+                self.undo_move(&m);
+                return (best_value, None);
             }
             if best_value > alpha {
                 alpha = best_value;
-                bm.push(m);
-                best_moves = bm;
+                best_move = Some(m.clone());
             }
+
+            self.undo_move(&m);
         }
+
         // 如果尝试的着法数为0,说明已经被绝杀
         // 深度减分，深度越小，说明越早被将死，局面分应该越低，由于depth是递减的，
         // 所以深度越小，depth越大，减去depth的局面分就越低
-        return (if count == 0 { KILL - depth } else { alpha }, best_moves);
+        return (if count == 0 { KILL - depth } else { alpha }, best_move);
     }
-    pub fn iterative_deepening(&mut self, max_depth: i32) -> (i32, Vec<Move>) {
-        for depth in 3..max_depth + 1 {
-            let (v, bm) = self.alpha_beta_pvs(depth, MIN, MAX);
-            if depth == max_depth {
-                println!("第{}层: {:?}", depth, bm);
-                return (v, bm);
-            }
-            self.best_moves_last = bm;
-            self.best_moves_last.reverse();
-            println!("第{}层: {:?}", depth, self.best_moves_last);
+    pub fn quies(&mut self, mut alpha: i32, beta: i32) -> i32 {
+        if self.distance > MAX_DEPTH {
+            return self.evaluate(self.turn);
         }
-        (0, vec![])
+        let v = self.evaluate(self.turn);
+        if v >= beta {
+            return beta;
+        }
+        if v > alpha {
+            alpha = v
+        }
+        let moves = self.generate_move();
+        for m in moves.iter().filter(|x|x.capture.chess_type().is_some()) {
+            self.do_move(&m);
+            let v = -self.quies(-beta, -alpha);
+            self.undo_move(&m);
+            if v >= beta {
+                return beta;
+            }
+            if v > alpha {
+                alpha = v;
+            }
+        }
+        return alpha;
+    }
+    pub fn iterative_deepening(&mut self, max_depth: i32) -> (i32, Option<Move>) {
+        if max_depth > 3 {
+            for depth in 3..max_depth + 1 {
+                // self.records = vec![RECORD_NONE; RECORD_SIZE as usize];
+                let (v, bm) = self.alpha_beta_pvs(depth, MIN, MAX);
+                if depth == max_depth {
+                    println!("第{}层: {:?}", depth, bm);
+                    return (v, bm);
+                }
+                self.best_moves_last = vec![];
+                self.best_moves_last.reverse();
+                println!("第{}层: {:?}", depth, self.best_moves_last);
+            }
+        } else {
+            // self.records = vec![RECORD_NONE; RECORD_SIZE as usize];
+            return self.alpha_beta_pvs(max_depth, MIN, MAX);
+        }
+        (0, None)
     }
 }
 

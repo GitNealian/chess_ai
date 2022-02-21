@@ -3,7 +3,6 @@ use std::io;
 
 use crate::{
     board::{Board, Move},
-    constant::{MAX, MIN},
 };
 
 // UCCI引擎
@@ -79,10 +78,10 @@ impl UCCIEngine {
         }
     }
     pub fn go(&mut self, depth: i32) {
-        let (_, best_moves) = self.board.iterative_deepening(depth);
-        if let Some(m) = best_moves.last() {
+        let (value, best_move) = self.board.iterative_deepening(depth);
+        if let Some(m) = best_move {
             if m.is_valid() {
-                println!("bestmove {}{}", m.from.to_string(), m.to.to_string(),);
+                println!("bestmove {}{} value {}", m.from.to_string(), m.to.to_string(), value);
                 return;
             }
         }
