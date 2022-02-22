@@ -9,5 +9,5 @@ mod zobrist;
 #[macro_use]
 extern crate lazy_static;
 fn main() {
-    UCCIEngine::new().start();
+    UCCIEngine::new(Some("/home/nealian/desktop_new/chess/chess_ai/BOOK.DAT")).start();
 }

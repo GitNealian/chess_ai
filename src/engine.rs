@@ -1,19 +1,66 @@
 use regex::Regex;
 use std::io;
 
-use crate::{
-    board::{Board, Move},
-};
+use crate::board::{Board, Move};
+
+#[derive(Debug)]
+pub struct PreLoad {
+    zobrist_value: u64,
+    zobrist_value_check: u64,
+    best_move: String,
+    weight: i32,
+}
 
 // UCCI引擎
 pub struct UCCIEngine {
     pub board: Board,
+    pub book: Vec<PreLoad>,
 }
 
 impl UCCIEngine {
-    pub fn new() -> Self {
+    pub fn new(book_path: Option<&str>) -> Self {
+        let mut book = vec![];
+        if let Some(path) = book_path {
+            for line in std::fs::read_to_string(path).unwrap().split("\n") {
+                if line.len() == 0 {
+                    continue;
+                }
+                let mut tokens = line.splitn(3, " ");
+                let m = tokens.next().unwrap();
+                let weight = tokens.next().unwrap();
+                let fen = tokens.next().unwrap();
+                let board = Board::from_fen(fen);
+                book.push(PreLoad {
+                    zobrist_value: board.zobrist_value,
+                    zobrist_value_check: board.zobrist_value_lock,
+                    best_move: m.to_owned(),
+                    weight: weight.parse::<i32>().unwrap(),
+                });
+            }
+            book.sort_by(|a, b| a.zobrist_value.cmp(&b.zobrist_value));
+            println!("加载开局库完成，共加载{}个局面", book.len());
+            println!("{:?}", book[1000]);
+        }
         UCCIEngine {
             board: Board::init(),
+            book,
+        }
+    }
+    pub fn search_in_book(&self) -> Option<String> {
+        let candidates = self
+            .book
+            .binary_search_by(|probe| probe.zobrist_value.cmp(&self.board.zobrist_value))
+            .map(|i| &self.book[i])
+            .into_iter()
+            .filter(|x| x.zobrist_value_check == self.board.zobrist_value_lock)
+            .collect::<Vec<&PreLoad>>();
+        if candidates.len() > 0 {
+            let mut buf = [0; 4];
+            getrandom::getrandom(&mut buf).unwrap();
+            let index = i32::from_be_bytes(buf) % candidates.len() as i32;
+            Some(candidates[index as usize].best_move.clone())
+        } else {
+            None
         }
     }
 
@@ -32,7 +79,14 @@ impl UCCIEngine {
                 "isready" => self.is_ready(),
                 "position" => self.position(token.next().unwrap()),
                 "go" => {
-                    self.go(token.next().unwrap().split(" ").last().unwrap().parse().unwrap());
+                    self.go(token
+                        .next()
+                        .unwrap()
+                        .split(" ")
+                        .last()
+                        .unwrap()
+                        .parse()
+                        .unwrap());
                 }
                 _ => println!("not support"),
             }
@@ -78,10 +132,19 @@ impl UCCIEngine {
         }
     }
     pub fn go(&mut self, depth: i32) {
+        if let Some(m) = self.search_in_book() {
+            println!("bestmove {}", m);
+            return;
+        }
         let (value, best_move) = self.board.iterative_deepening(depth);
         if let Some(m) = best_move {
             if m.is_valid() {
-                println!("bestmove {}{} value {}", m.from.to_string(), m.to.to_string(), value);
+                println!(
+                    "bestmove {}{} value {}",
+                    m.from.to_string(),
+                    m.to.to_string(),
+                    value
+                );
                 return;
             }
         }
@@ -93,7 +156,7 @@ impl UCCIEngine {
 }
 #[test]
 fn test_ucci_engine() {
-    let mut engine = UCCIEngine::new();
+    let mut engine = UCCIEngine::new(None);
     engine.info();
     engine.is_ready();
     engine.position(
@@ -107,12 +170,12 @@ fn test_ucci_engine() {
 
 #[test]
 fn test_kill() {
-    let mut engine = UCCIEngine::new();
+    let mut engine = UCCIEngine::new(None);
     engine.info();
     engine.is_ready();
     engine.position("fen 4k4/9/9/9/9/9/9/4p4/9/5K3 b - - 0 1");
     // engine.position("startpos moves b0c2");
-    let moves = engine.board.generate_move();
+    let moves = engine.board.generate_move(false);
     println!("{:?}", moves);
     println!("{:?}", engine.board.chesses);
     engine.go(8);

@@ -1,7 +1,9 @@
 use std::{collections::HashMap, vec};
 
 use crate::{
-    constant::{KILL, MAX, MIN, RECORD_SIZE, MAX_DEPTH},
+    constant::{
+        FEN_MAP, KILL, MAX, MAX_DEPTH, MIN, RECORD_SIZE, ZOBRIST_TABLE, ZOBRIST_TABLE_LOCK,
+    },
     zobrist::Zobristable,
 };
 
@@ -214,8 +216,6 @@ pub struct Board {
     pub move_history: Vec<Move>,
     pub best_moves_last: Vec<Move>,
     pub records: Vec<Option<Record>>,
-    pub zobrist_table: Zobristable,
-    pub zobrist_table_lock: Zobristable, // 由于zobrist_table不一定唯一，所以加一个校验
     pub zobrist_value: u64,
     pub zobrist_value_lock: u64,
     pub distance: i32,
@@ -337,24 +337,7 @@ const PAWN_VALUE_TABLE: [[i32; BOARD_WIDTH as usize]; BOARD_HEIGHT as usize] = [
 ];
 
 const INITIATIVE_BONUS: i32 = 3;
-lazy_static! {
-    static ref FEN_MAP: HashMap<char, Chess> = HashMap::from([
-        ('k', Chess::Black(ChessType::King)),
-        ('a', Chess::Black(ChessType::Advisor)),
-        ('b', Chess::Black(ChessType::Bishop)),
-        ('n', Chess::Black(ChessType::Knight)),
-        ('r', Chess::Black(ChessType::Rook)),
-        ('c', Chess::Black(ChessType::Cannon)),
-        ('p', Chess::Black(ChessType::Pawn)),
-        ('K', Chess::Red(ChessType::King)),
-        ('A', Chess::Red(ChessType::Advisor)),
-        ('B', Chess::Red(ChessType::Bishop)),
-        ('N', Chess::Red(ChessType::Knight)),
-        ('R', Chess::Red(ChessType::Rook)),
-        ('C', Chess::Red(ChessType::Cannon)),
-        ('P', Chess::Red(ChessType::Pawn)),
-    ]);
-}
+
 const RECORD_NONE: Option<Record> = None;
 impl Board {
     pub fn init() -> Self {
@@ -476,15 +459,13 @@ impl Board {
             gen_counter: 0,
             move_history: vec![],
             best_moves_last: vec![],
-            records: vec![RECORD_NONE; RECORD_SIZE as usize],
-            zobrist_table: Zobristable::new(),
-            zobrist_table_lock: Zobristable::new(),
+            records: vec![],
             zobrist_value: 0,
             zobrist_value_lock: 0,
             distance: 0,
         };
-        board.zobrist_value = board.zobrist_table.calc_chesses(&board.chesses);
-        board.zobrist_value_lock = board.zobrist_table_lock.calc_chesses(&board.chesses);
+        board.zobrist_value = ZOBRIST_TABLE.calc_chesses(&board.chesses);
+        board.zobrist_value_lock = ZOBRIST_TABLE_LOCK.calc_chesses(&board.chesses);
         board
     }
     pub fn empty() -> Self {
@@ -495,9 +476,7 @@ impl Board {
             gen_counter: 0,
             move_history: vec![],
             best_moves_last: vec![],
-            records: vec![RECORD_NONE; RECORD_SIZE as usize],
-            zobrist_table: Zobristable::new(),
-            zobrist_table_lock: Zobristable::new(),
+            records: vec![],
             zobrist_value: 0,
             zobrist_value_lock: 0,
             distance: 0,
@@ -514,7 +493,7 @@ impl Board {
                 if col.is_numeric() {
                     j += col.to_digit(10).unwrap() as i32;
                 } else {
-                    if let Some(chess) = FEN_MAP.get(&col) {
+                    if let Some(chess) = (*FEN_MAP).get(&col) {
                         board.set_chess(Position::new(i, j), chess.to_owned());
                     }
                     j += 1;
@@ -522,7 +501,8 @@ impl Board {
             }
             i += 1;
         }
-        board.zobrist_value = board.zobrist_table.calc_chesses(&board.chesses);
+        board.zobrist_value = ZOBRIST_TABLE.calc_chesses(&board.chesses);
+        board.zobrist_value_lock = ZOBRIST_TABLE_LOCK.calc_chesses(&board.chesses);
         let turn = parts.next().unwrap();
         if turn == "b" {
             board.turn = Player::Black;
@@ -533,10 +513,8 @@ impl Board {
         let chess = self.chess_at(m.from);
         self.set_chess(m.to, chess);
         self.set_chess(m.from, Chess::None);
-        self.zobrist_value = self.zobrist_table.apply_move(self.zobrist_value, m);
-        self.zobrist_value_lock = self
-            .zobrist_table_lock
-            .apply_move(self.zobrist_value_lock, m);
+        self.zobrist_value = ZOBRIST_TABLE.apply_move(self.zobrist_value, m);
+        self.zobrist_value_lock = ZOBRIST_TABLE_LOCK.apply_move(self.zobrist_value_lock, m);
         self.turn = m.player.next();
     }
     pub fn do_move(&mut self, m: &Move) {
@@ -548,9 +526,8 @@ impl Board {
         let chess = self.chess_at(m.to);
         self.set_chess(m.from, chess);
         self.set_chess(m.to, m.capture);
-        self.zobrist_value = self.zobrist_table.undo_move(self.zobrist_value, m);
-        self.zobrist_value_lock = self
-            .zobrist_table_lock
+        self.zobrist_value = ZOBRIST_TABLE.undo_move(self.zobrist_value, m);
+        self.zobrist_value_lock = ZOBRIST_TABLE_LOCK
             .undo_move(self.zobrist_value_lock, m);
         self.turn = m.player;
         self.distance -= 1;
@@ -863,7 +840,7 @@ impl Board {
         }
         targets
     }
-    pub fn generate_move(&mut self) -> Vec<Move> {
+    pub fn generate_move(&mut self, capture_only: bool) -> Vec<Move> {
         self.gen_counter += 1;
         let mut moves = vec![];
         for i in 0..BOARD_HEIGHT {
@@ -893,7 +870,10 @@ impl Board {
                             };
 
                             if valid {
-                                if !self.chess_at(target).belong_to(self.turn) {
+                                if !self.chess_at(target).belong_to(self.turn)
+                                    && (!capture_only
+                                        || self.chess_at(target).chess_type().is_some())
+                                {
                                     moves
                                         .push(move_base.with_target(target, self.chess_at(target)));
                                 }
@@ -986,7 +966,7 @@ impl Board {
         let mut count = 0; // 记录尝试了多少种着法
 
         // 优先尝试迭代深度搜索的上一层搜索结果
-        let mut moves = self.generate_move();
+        let mut moves = self.generate_move(false);
         // 如果符合上次搜索的着法线路，那么优先按此线路搜索下去
         for (i, m) in self.best_moves_last.iter().enumerate() {
             if let Some(ml) = self.move_history.get(i) {
@@ -1056,9 +1036,17 @@ impl Board {
         if v > alpha {
             alpha = v
         }
-        let moves = self.generate_move();
-        for m in moves.iter().filter(|x|x.capture.chess_type().is_some()) {
+        let moves = if self.is_checked(self.turn.next()) {
+            self.generate_move(false)
+        } else {
+            self.generate_move(true)
+        };
+        for m in moves {
             self.do_move(&m);
+            if self.is_checked(self.turn.next()) {
+                self.undo_move(&m);
+                continue;
+            }
             let v = -self.quies(-beta, -alpha);
             self.undo_move(&m);
             if v >= beta {
@@ -1095,10 +1083,10 @@ impl Board {
 fn test_generate_move() {
     let mut board = Board::init();
     for i in 0..1000000 {
-        board.generate_move();
+        board.generate_move(false);
     }
     assert_eq!(
-        Board::init().generate_move().len(),
+        Board::init().generate_move(false).len(),
         5 + 24 + 4 + 4 + 4 + 2 + 1
     );
 }
@@ -1109,7 +1097,7 @@ fn test_is_checked() {
         board.is_checked(Player::Red);
     }
     assert_eq!(
-        Board::init().generate_move().len(),
+        Board::init().generate_move(false).len(),
         5 + 24 + 4 + 4 + 4 + 2 + 1
     );
 }
@@ -1128,7 +1116,7 @@ fn test_move_and_unmove() {
         board.undo_move(&m);
     }
     assert_eq!(
-        Board::init().generate_move().len(),
+        Board::init().generate_move(false).len(),
         5 + 24 + 4 + 4 + 4 + 2 + 1
     );
 }
