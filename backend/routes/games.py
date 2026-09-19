@@ -61,11 +61,16 @@ def create_game():
 def parse_preview():
     data = request.get_json(silent=True) or {}
     text = data.get("text", "")
+    if not isinstance(text, str):
+        return _error("text 必须是字符串")
     if not text.strip():
         return _error("棋谱内容为空")
+    initial_fen = data.get("initial_fen", INITIAL_FEN)
+    if not isinstance(initial_fen, str):
+        return _error("initial_fen 必须是字符串")
     board = Board()
     try:
-        board.load_fen(data.get("initial_fen", INITIAL_FEN))
+        board.load_fen(initial_fen)
     except ValueError as exc:
         return _error("初始局面无效", detail=str(exc))
     try:
@@ -86,8 +91,12 @@ def parse_preview():
 def import_pgn():
     data = request.get_json(silent=True) or {}
     pgn = data.get("pgn", "")
+    if not isinstance(pgn, str):
+        return _error("pgn 必须是字符串")
     if not pgn.strip():
         return _error("PGN 内容为空")
+    if data.get("practice_side", "both") not in VALID_SIDES:
+        return _error("practice_side 只能是 red/black/both")
     try:
         parsed = parse_pgn(pgn)
     except ValueError as exc:
