@@ -22,7 +22,7 @@ def schedule(ease_factor, interval, repetitions, lapses, quality, today=None):
         elif repetitions == 1:
             new_interval = 6
         else:
-            new_interval = round(interval * ease)
+            new_interval = int(interval * ease + 0.5)
         new_repetitions = repetitions + 1
         new_lapses = lapses
     else:
