@@ -92,6 +92,17 @@ cd backend && .venv/bin/python app.py
 
 Flask 检测到 `frontend/dist` 后会托管静态资源，访问 `http://localhost:5000/` 即可；非 `/api/*` 的未知路径回退到 `index.html`（支持前端路由）。
 
+### 生产部署（WSGI 服务器）
+
+推荐用 gunicorn 托管，多 worker 且无调试器：
+
+```bash
+cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
+```
+
+`create_app()` 在应用工厂内自动建表（幂等），gunicorn 导入时即可完成初始化。
+调试器默认关闭；仅在本地需要时通过环境变量开启：`FLASK_DEBUG=1 .venv/bin/python app.py`（切勿在生产启用）。
+
 ## API 一览
 
 | 方法 | 路径 | 作用 |

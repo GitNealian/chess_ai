@@ -8,12 +8,14 @@ from srs import quality_from_result, schedule
 review_bp = Blueprint("review", __name__)
 
 
-def _parse_int(data, key, default=0):
+def _parse_int(data, key, default=0, minimum=None):
     if key not in data or data[key] is None:
         return default, None
     value = data[key]
     if isinstance(value, bool) or not isinstance(value, int):
         return None, f"{key} 必须是整数"
+    if minimum is not None and value < minimum:
+        return None, f"{key} 不能小于 {minimum}"
     return value, None
 
 
@@ -55,10 +57,10 @@ def submit_review(game_id):
     if game is None:
         return jsonify({"error": "棋谱不存在"}), 404
     data = request.get_json(silent=True) or {}
-    mistake_count, error = _parse_int(data, "mistake_count")
+    mistake_count, error = _parse_int(data, "mistake_count", minimum=0)
     if error:
         return jsonify({"error": error}), 400
-    duration_ms, error = _parse_int(data, "duration_ms")
+    duration_ms, error = _parse_int(data, "duration_ms", minimum=0)
     if error:
         return jsonify({"error": error}), 400
     revealed, error = _parse_bool(data, "revealed")

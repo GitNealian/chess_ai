@@ -44,11 +44,13 @@ def create_app(config_class=Config):
 
     _register_frontend(app)
 
+    with app.app_context():
+        db.create_all()
+
     return app
 
 
 if __name__ == "__main__":
     application = create_app()
-    with application.app_context():
-        db.create_all()
-    application.run(debug=True, port=5000)
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+    application.run(debug=debug, port=5000)

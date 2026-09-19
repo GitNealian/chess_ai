@@ -103,6 +103,18 @@ def test_submit_rejects_non_int_duration_ms(client):
     assert resp.status_code == 400
 
 
+def test_submit_rejects_negative_mistake_count(client):
+    game_id = _game(client)
+    resp = _submit(client, game_id, mistake_count=-1)
+    assert resp.status_code == 400
+
+
+def test_submit_rejects_negative_duration_ms(client):
+    game_id = _game(client)
+    resp = _submit(client, game_id, duration_ms=-1)
+    assert resp.status_code == 400
+
+
 def test_submit_unknown_game_returns_404(client):
     resp = _submit(client, 9999)
     assert resp.status_code == 404

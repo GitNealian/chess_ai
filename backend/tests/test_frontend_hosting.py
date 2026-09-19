@@ -1,6 +1,13 @@
 import app as app_module
 from app import create_app
 from config import TestConfig
+from models import Game
+
+
+def test_create_app_creates_tables():
+    application = create_app(TestConfig)
+    with application.app_context():
+        assert Game.query.count() == 0
 
 
 def _make_client(monkeypatch, dist_dir):
