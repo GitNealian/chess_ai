@@ -4,7 +4,6 @@
       <ChessBoard :position="{ pieces }" :selected="selected" @cell-click="onCellClick" />
       <div class="board-tools">
         <button @click="undo">悔棋</button>
-        <button @click="reset">清空</button>
         <button @click="startFromInitial">标准开局</button>
       </div>
       <ol class="moves">
@@ -94,6 +93,16 @@ function onCellClick(x, y) {
     if (pieces.value.some((p) => p.x === x && p.y === y)) selected.value = { x, y };
     return;
   }
+  if (selected.value.x === x && selected.value.y === y) {
+    selected.value = null;
+    return;
+  }
+  const target = pieces.value.find((p) => p.x === x && p.y === y);
+  const moving = pieces.value.find((p) => p.x === selected.value.x && p.y === selected.value.y);
+  if (target && moving && target.side === moving.side) {
+    selected.value = { x, y };
+    return;
+  }
   const move = { x1: selected.value.x, y1: selected.value.y, x2: x, y2: y };
   pieces.value = applyMove(pieces.value, move);
   moves.value.push(move);
@@ -105,12 +114,6 @@ function undo() {
   moves.value.pop();
   selected.value = null;
   rebuildBoard();
-}
-
-function reset() {
-  pieces.value = [];
-  moves.value = [];
-  selected.value = null;
 }
 
 function startFromInitial() {
@@ -162,7 +165,13 @@ onMounted(async () => {
   if (!gameId.value) return;
   try {
     const game = await api.getGame(gameId.value);
-    Object.assign(form, game);
+    form.name = game.name || "";
+    form.category = game.category || "";
+    form.red_player = game.red_player || "";
+    form.black_player = game.black_player || "";
+    form.event = game.event || "";
+    form.result = game.result || "";
+    form.practice_side = game.practice_side || "both";
     moves.value = game.moves || [];
     initialFen.value = game.initial_fen || INITIAL_FEN;
     selected.value = null;

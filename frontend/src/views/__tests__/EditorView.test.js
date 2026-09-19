@@ -79,6 +79,29 @@ describe("EditorView", () => {
     expect(wrapper.find(".moves").text()).toContain("(0,9)→(0,8)");
   });
 
+  it("选中后点击同一格取消选中且不产生着法", async () => {
+    const wrapper = mountView();
+    await clickCell(wrapper, 0, 9);
+    expect(wrapper.findComponent(BoardStub).props("selected")).toEqual({ x: 0, y: 9 });
+
+    await clickCell(wrapper, 0, 9);
+
+    expect(wrapper.findAll(".moves li")).toHaveLength(0);
+    expect(wrapper.findComponent(BoardStub).props("selected")).toBeNull();
+  });
+
+  it("选中后点击己方另一子改选而不吃子", async () => {
+    const wrapper = mountView();
+    const before = boardPieces(wrapper).length;
+
+    await clickCell(wrapper, 0, 9);
+    await clickCell(wrapper, 1, 9);
+
+    expect(wrapper.findAll(".moves li")).toHaveLength(0);
+    expect(boardPieces(wrapper)).toHaveLength(before);
+    expect(wrapper.findComponent(BoardStub).props("selected")).toEqual({ x: 1, y: 9 });
+  });
+
   it("悔棋后着法减少且被吃棋子恢复", async () => {
     const wrapper = mountView();
     await clickCell(wrapper, 1, 7);
@@ -140,12 +163,13 @@ describe("EditorView", () => {
 
   it("编辑模式加载棋谱并回放棋盘", async () => {
     route.params = { id: "7" };
+    const loadedFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
     api.getGame.mockResolvedValue({
       id: 7,
       name: "已存棋谱",
       category: "开局",
       practice_side: "red",
-      initial_fen: "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
+      initial_fen: loadedFen,
       moves: [
         { x1: 1, y: 7, x2: 4, y: 7 },
         { x1: 7, y: 2, x2: 4, y: 2 },
@@ -160,5 +184,42 @@ describe("EditorView", () => {
     expect(wrapper.find(".form-area input").element.value).toBe("已存棋谱");
     expect(wrapper.findAll(".moves li")).toHaveLength(2);
     expect(boardPieces(wrapper)).toHaveLength(32);
+
+    await wrapper.find("button.save").trigger("click");
+    await flushPromises();
+
+    expect(api.updateGame).toHaveBeenCalledWith(7, expect.objectContaining({ initial_fen: loadedFen }));
+  });
+
+  it("编辑模式不回填 id/时间戳等冗余字段", async () => {
+    route.params = { id: "7" };
+    api.getGame.mockResolvedValue({
+      id: 7,
+      name: "已存棋谱",
+      category: "开局",
+      red_player: "红方选手",
+      black_player: "黑方选手",
+      event: "测试赛事",
+      result: "red",
+      practice_side: "red",
+      created_at: "2024-01-01",
+      updated_at: "2024-01-02",
+      initial_fen: "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
+      moves: [],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find("button.save").trigger("click");
+    await flushPromises();
+
+    const payload = api.updateGame.mock.calls[0][1];
+    expect(payload).not.toHaveProperty("id");
+    expect(payload).not.toHaveProperty("created_at");
+    expect(payload).not.toHaveProperty("updated_at");
+    expect(payload.red_player).toBe("红方选手");
+    expect(payload.event).toBe("测试赛事");
+    expect(payload.result).toBe("red");
   });
 });
