@@ -201,3 +201,78 @@ class Board:
         if side == RED:
             return 0 <= y <= 2
         return 7 <= y <= 9
+
+    def apply_move(self, move):
+        piece = self.piece_at(move.x1, move.y1)
+        self.remove_piece(move.x2, move.y2)
+        self.remove_piece(move.x1, move.y1)
+        self.set_piece(move.x2, move.y2, piece)
+        self.side_to_move = BLACK if self.side_to_move == RED else RED
+        return self
+
+    def is_attacked(self, x, y, by_side):
+        for (px, py), piece in list(self.grid.items()):
+            if piece[0] != by_side:
+                continue
+            for move in self.pseudo_moves_from(px, py):
+                if move.x2 == x and move.y2 == y:
+                    return True
+        return False
+
+    def kings_facing(self):
+        red = self.find_king(RED)
+        black = self.find_king(BLACK)
+        if red is None or black is None:
+            return False
+        if red[0] != black[0]:
+            return False
+        x = red[0]
+        y_low, y_high = sorted((red[1], black[1]))
+        for y in range(y_low + 1, y_high):
+            if self.piece_at(x, y) is not None:
+                return False
+        return True
+
+    def in_check(self, side):
+        if self.kings_facing():
+            return True
+        king = self.find_king(side)
+        if king is None:
+            return True
+        enemy = BLACK if side == RED else RED
+        return self.is_attacked(king[0], king[1], enemy)
+
+    def is_legal(self, move):
+        piece = self.piece_at(move.x1, move.y1)
+        if piece is None:
+            return False
+        if piece[0] != self.side_to_move:
+            return False
+        if move not in self.pseudo_moves_from(move.x1, move.y1):
+            return False
+        probe = self.clone()
+        probe.apply_move(move)
+        return not probe.in_check(piece[0])
+
+    def legal_moves(self, side=None):
+        side = side or self.side_to_move
+        result = []
+        for (x, y), piece in list(self.grid.items()):
+            if piece[0] != side:
+                continue
+            for move in self.pseudo_moves_from(x, y):
+                probe = self.clone()
+                probe.side_to_move = side
+                probe.apply_move(move)
+                if not probe.in_check(side):
+                    result.append(move)
+        return result
+
+    def has_legal_move(self, side):
+        return len(self.legal_moves(side)) > 0
+
+    def is_checkmate(self, side):
+        return self.in_check(side) and not self.has_legal_move(side)
+
+    def is_stalemate(self, side):
+        return not self.in_check(side) and not self.has_legal_move(side)
