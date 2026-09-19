@@ -63,4 +63,27 @@ describe("practice session", () => {
     expect(session.state.ply).toBe(1);
     expect(session.state.expected).toEqual({ x1: 4, y1: 9, x2: 4, y2: 8 });
   });
+
+  it("未知 practice_side 退化为 both，红方仍需手动走", () => {
+    const game = {
+      id: 4,
+      initial_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1",
+      practice_side: "unknown",
+      moves: [
+        { x1: 4, y1: 0, x2: 4, y2: 1 }, // 红
+        { x1: 4, y1: 9, x2: 4, y2: 8 }, // 黑
+      ],
+    };
+    const session = createPracticeSession(game);
+    expect(session.state.ply).toBe(0);
+    expect(session.state.expected).toEqual({ x1: 4, y1: 0, x2: 4, y2: 1 });
+  });
+
+  it("已结束时 reveal 不再置为已看答案", () => {
+    const session = createPracticeSession(bothGame);
+    session.submitMove({ x1: 4, y1: 0, x2: 4, y2: 1 });
+    expect(session.isFinished()).toBe(true);
+    session.reveal();
+    expect(session.state.revealed).toBe(false);
+  });
 });

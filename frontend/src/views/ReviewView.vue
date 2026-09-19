@@ -67,7 +67,10 @@ function onCellClick(x, y) {
   if (!session.value || done.value) return;
   const board = pieces.value;
   if (!selected.value) {
-    if (board.some((p) => p.x === x && p.y === y)) selected.value = { x, y };
+    const piece = board.find((p) => p.x === x && p.y === y);
+    const isRedTurn = session.value.state.ply % 2 === 0;
+    const currentSide = isRedTurn ? "red" : "black";
+    if (piece && piece.side === currentSide) selected.value = { x, y };
     return;
   }
   if (selected.value.x === x && selected.value.y === y) {
@@ -108,6 +111,7 @@ async function onSubmit() {
 
 onMounted(async () => {
   timer = setInterval(() => {
+    if (done.value) return;
     elapsed.value += 1;
   }, 1000);
   try {

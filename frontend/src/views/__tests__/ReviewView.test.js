@@ -159,4 +159,118 @@ describe("ReviewView", () => {
       expect.objectContaining({ mistake_count: 1, revealed: false })
     );
   });
+
+  it("计时器随时间递增显示用时", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+      expect(wrapper.text()).toContain("用时 0 秒");
+
+      vi.advanceTimersByTime(3000);
+      await nextTick();
+      expect(wrapper.text()).toContain("用时 3 秒");
+
+      vi.advanceTimersByTime(2000);
+      await nextTick();
+      expect(wrapper.text()).toContain("用时 5 秒");
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("卸载后清除计时器且不再累加用时", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const clearSpy = vi.spyOn(globalThis, "clearInterval");
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+      vi.advanceTimersByTime(2000);
+      await nextTick();
+      expect(wrapper.text()).toContain("用时 2 秒");
+
+      wrapper.unmount();
+      expect(clearSpy).toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+
+      vi.advanceTimersByTime(5000);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      clearSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("第一题提交后进入第二题并重置错误与用时", async () => {
+    api.reviewQueue.mockResolvedValue({
+      items: [item({ id: 1, name: "第一题" }), item({ id: 2, name: "第二题" })],
+      count: 2,
+    });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+      expect(wrapper.text()).toContain("第一题");
+      expect(wrapper.find('[data-test="progress"]').text()).toContain("1 / 2");
+
+      const board = wrapper.findComponent(BoardStub);
+      vi.advanceTimersByTime(4000);
+      await nextTick();
+      expect(wrapper.text()).toContain("用时 4 秒");
+
+      await clickCells(board, [4, 0], [3, 0]);
+      await clickCells(board, [4, 0], [4, 1]);
+      await nextTick();
+      expect(wrapper.text()).toContain("错误 1 次");
+
+      await wrapper.find('[data-test="submit"]').trigger("click");
+      await flushPromises();
+
+      expect(wrapper.text()).toContain("第二题");
+      expect(wrapper.find('[data-test="progress"]').text()).toContain("2 / 2");
+      expect(wrapper.text()).toContain("错误 0 次");
+      expect(wrapper.text()).toContain("用时 0 秒");
+      expect(wrapper.find('[data-test="done"]').exists()).toBe(false);
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("both 模式下不能选中非当前方棋子", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const board = wrapper.findComponent(BoardStub);
+
+    await clickCells(board, [4, 9]);
+    expect(board.props("selected")).toBeNull();
+
+    await clickCells(board, [4, 0]);
+    expect(board.props("selected")).toEqual({ x: 4, y: 0 });
+  });
+
+  it("完成态冻结用时", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+      const board = wrapper.findComponent(BoardStub);
+
+      vi.advanceTimersByTime(2000);
+      await nextTick();
+      expect(wrapper.text()).toContain("用时 2 秒");
+
+      await clickCells(board, [4, 0], [4, 1]);
+      await nextTick();
+      expect(wrapper.find('[data-test="done"]').exists()).toBe(true);
+
+      vi.advanceTimersByTime(5000);
+      await nextTick();
+      expect(wrapper.text()).toContain("用时 2 秒");
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

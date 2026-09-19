@@ -8,7 +8,9 @@ function sameMove(a, b) {
 function isPracticeTurn(ply, practiceSide) {
   if (practiceSide === "both") return true;
   const isRedTurn = ply % 2 === 0;
-  return practiceSide === "red" ? isRedTurn : !isRedTurn;
+  if (practiceSide === "red") return isRedTurn;
+  if (practiceSide === "black") return !isRedTurn;
+  return true;
 }
 
 export function createPracticeSession(game) {
@@ -56,6 +58,7 @@ export function createPracticeSession(game) {
       return false;
     },
     reveal() {
+      if (state.ply >= game.moves.length) return;
       state.revealed = true;
       advance();
       advanceAuto();
