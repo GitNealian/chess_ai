@@ -207,12 +207,20 @@ function onSvgClick(event) {
 <style scoped>
 .chess-board {
   display: block;
+  width: 100%;
   max-width: 100%;
   height: auto;
+  margin: 0 auto;
 }
 
 .chess-board .selected {
   stroke: #d4a017;
   stroke-width: 4;
+}
+
+@media (min-width: 768px) {
+  .chess-board {
+    max-width: 540px;
+  }
 }
 </style>

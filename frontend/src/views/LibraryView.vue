@@ -18,12 +18,12 @@
       </thead>
       <tbody>
         <tr v-for="game in store.games" :key="game.id">
-          <td>{{ game.name }}</td>
-          <td>{{ game.category }}</td>
-          <td>{{ sideText(game.practice_side) }}</td>
-          <td>{{ masteryText(game) }}</td>
-          <td>{{ dueText(game) }}</td>
-          <td class="actions">
+          <td data-label="名称">{{ game.name }}</td>
+          <td data-label="分类">{{ game.category }}</td>
+          <td data-label="背谱阵营">{{ sideText(game.practice_side) }}</td>
+          <td data-label="掌握度">{{ masteryText(game) }}</td>
+          <td data-label="下次复习">{{ dueText(game) }}</td>
+          <td class="actions" data-label="操作">
             <router-link :to="`/practice/${game.id}`">打谱</router-link>
             <router-link :to="`/editor/${game.id}`">编辑</router-link>
             <router-link :to="`/review?game=${game.id}`">默写</router-link>
@@ -77,12 +77,73 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
-input { padding: 8px 10px; border: 1px solid #cbb89a; border-radius: 6px; }
-.btn { padding: 8px 16px; border-radius: 6px; text-decoration: none; background: #7a3b2e; color: #fff; }
-.stats { display: flex; gap: 20px; margin-bottom: 12px; color: #6b5a45; }
+.toolbar { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #cbb89a;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 16px;
+}
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  text-decoration: none;
+  background: #7a3b2e;
+  color: #fff;
+}
+.stats { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 12px; color: #6b5a45; }
 .list { width: 100%; border-collapse: collapse; background: #fff; }
 .list th, .list td { padding: 10px; border-bottom: 1px solid #eee; text-align: left; }
-.actions { display: flex; gap: 12px; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .actions button { border: none; background: none; color: #b32020; cursor: pointer; }
+
+@media (max-width: 767px) {
+  .list, .list tbody { display: block; width: 100%; }
+  .list thead { display: none; }
+  .list tr {
+    display: block;
+    margin-bottom: 12px;
+    border: 1px solid #e5dcc9;
+    border-radius: 8px;
+    padding: 8px;
+    background: #fff;
+  }
+  .list td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    border: none;
+    padding: 8px;
+    text-align: right;
+  }
+  .list td::before {
+    content: attr(data-label);
+    color: #6b5a45;
+    font-weight: 600;
+    text-align: left;
+  }
+  .list td.actions { justify-content: flex-end; }
+  .list td.actions::before { margin-right: auto; }
+  .actions a, .actions button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+}
+
+@media (min-width: 768px) {
+  .toolbar { flex-direction: row; }
+  input { width: auto; min-height: 0; padding: 8px 10px; }
+  .btn { display: inline-block; min-height: 0; padding: 8px 16px; }
+  .stats { gap: 20px; }
+}
 </style>

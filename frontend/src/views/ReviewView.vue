@@ -146,15 +146,15 @@ onUnmounted(() => {
 
 .layout {
   display: grid;
-  grid-template-columns: 528px 1fr;
-  gap: 24px;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 
 .side {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  align-items: flex-start;
+  align-items: stretch;
 }
 
 .prompt {
@@ -167,17 +167,35 @@ onUnmounted(() => {
 }
 
 .side button {
-  padding: 8px 16px;
+  min-height: 48px;
+  padding: 12px 20px;
   border: none;
   border-radius: 6px;
   background: #7a3b2e;
   color: #fff;
   cursor: pointer;
+  font-size: 16px;
 }
 
 .done {
   font-size: 18px;
   font-weight: 600;
   color: #2f7d32;
+}
+
+@media (min-width: 768px) {
+  .layout {
+    grid-template-columns: 528px 1fr;
+    gap: 24px;
+  }
+
+  .side {
+    align-items: flex-start;
+  }
+
+  .side button {
+    min-height: 0;
+    padding: 8px 16px;
+  }
 }
 </style>

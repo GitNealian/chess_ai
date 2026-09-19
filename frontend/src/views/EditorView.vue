@@ -185,24 +185,32 @@ onMounted(async () => {
 <style scoped>
 .editor {
   display: flex;
-  gap: 24px;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .board-area {
-  flex: 1 1 520px;
-  max-width: 560px;
+  width: 100%;
 }
 
 .board-tools {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   margin: 12px 0;
+}
+
+.board-tools button {
+  flex: 1 1 0;
+  min-height: 44px;
+  padding: 10px 16px;
+  font-size: 16px;
 }
 
 .moves {
   max-height: 220px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: #fff;
   border: 1px solid #e3d6c2;
   border-radius: 6px;
@@ -213,7 +221,6 @@ onMounted(async () => {
 }
 
 .form-area {
-  flex: 1 1 320px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -228,10 +235,13 @@ onMounted(async () => {
 .form-area input,
 .form-area select,
 .form-area textarea {
-  padding: 8px 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
   border: 1px solid #cbb89a;
   border-radius: 6px;
   font: inherit;
+  font-size: 16px;
 }
 
 .form-area fieldset {
@@ -244,17 +254,62 @@ onMounted(async () => {
 }
 
 .form-area button {
-  align-self: flex-start;
-  padding: 8px 16px;
+  min-height: 44px;
+  padding: 10px 16px;
   border: none;
   border-radius: 6px;
   background: #7a3b2e;
   color: #fff;
   cursor: pointer;
+  font-size: 16px;
 }
 
 .form-area .save {
-  align-self: stretch;
   background: #b32020;
+}
+
+@media (min-width: 768px) {
+  .editor {
+    flex-direction: row;
+    gap: 24px;
+    align-items: flex-start;
+  }
+
+  .board-area {
+    flex: 1 1 520px;
+    max-width: 560px;
+  }
+
+  .board-tools {
+    flex-wrap: nowrap;
+  }
+
+  .board-tools button {
+    flex: 0 0 auto;
+    min-height: 0;
+    padding: 1px 6px;
+  }
+
+  .form-area {
+    flex: 1 1 320px;
+  }
+
+  .form-area input,
+  .form-area select,
+  .form-area textarea {
+    width: auto;
+    min-height: 0;
+    padding: 8px 10px;
+  }
+
+  .form-area button {
+    align-self: flex-start;
+    min-height: 0;
+    padding: 8px 16px;
+  }
+
+  .form-area .save {
+    align-self: stretch;
+  }
 }
 </style>

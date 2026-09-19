@@ -81,22 +81,36 @@ onMounted(load);
 <style scoped>
 .layout {
   display: grid;
-  grid-template-columns: 528px 1fr;
-  gap: 24px;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 
 .controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin: 10px 0;
 }
 
+.controls button {
+  flex: 1 1 0;
+  min-height: 44px;
+  font-size: 16px;
+}
+
 .moves {
-  max-height: 420px;
+  max-height: 320px;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
   cursor: pointer;
   list-style: none;
   padding-left: 0;
+}
+
+.moves li {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
 }
 
 .moves .active {
@@ -105,5 +119,30 @@ onMounted(load);
 
 .hint {
   text-align: center;
+}
+
+@media (min-width: 768px) {
+  .layout {
+    grid-template-columns: 528px 1fr;
+    gap: 24px;
+  }
+
+  .controls {
+    flex-wrap: nowrap;
+  }
+
+  .controls button {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
+  .moves {
+    max-height: 420px;
+  }
+
+  .moves li {
+    min-height: 0;
+    display: list-item;
+  }
 }
 </style>
