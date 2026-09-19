@@ -14,6 +14,10 @@ def create_app(config_class=Config):
     def health():
         return jsonify({"status": "ok"})
 
+    from routes.games import games_bp
+
+    app.register_blueprint(games_bp, url_prefix="/api/games")
+
     return app
 
 
