@@ -37,7 +37,39 @@ describe("chess utils", () => {
     expect(blackKing.y).toBe(9);
   });
 
-  it("LABELS 覆盖全部 14 种棋子", () => {
-    expect(Object.keys(LABELS)).toHaveLength(14);
+  it("LABELS 覆盖全部 14 种棋子且标签非空", () => {
+    const expected = [
+      "red-K", "red-A", "red-B", "red-N", "red-R", "red-C", "red-P",
+      "black-K", "black-A", "black-B", "black-N", "black-R", "black-C", "black-P",
+    ];
+    expect(Object.keys(LABELS).sort()).toEqual([...expected].sort());
+    for (const key of expected) {
+      expect(LABELS[key]).toBeTruthy();
+    }
+  });
+
+  it("空棋盘 FEN 返回空数组", () => {
+    const pieces = fenToPieces("9/9/9/9/9/9/9/9/9/9 w - - 0 1");
+    expect(pieces).toEqual([]);
+  });
+
+  it("applyMove 起点无棋子时返回原数组且目标子仍在", () => {
+    const pieces = [
+      { x: 0, y: 5, side: "black", kind: "P", label: "卒" },
+    ];
+    const next = applyMove(pieces, { x1: 0, y1: 0, x2: 0, y2: 5 });
+    expect(next).toBe(pieces);
+    expect(next).toHaveLength(1);
+    expect(next[0].side).toBe("black");
+  });
+
+  it("applyMove 不修改入参（纯函数）", () => {
+    const pieces = [
+      { x: 0, y: 0, side: "red", kind: "R", label: "车" },
+      { x: 0, y: 5, side: "black", kind: "P", label: "卒" },
+    ];
+    const snapshot = JSON.stringify(pieces);
+    applyMove(pieces, { x1: 0, y1: 0, x2: 0, y2: 5 });
+    expect(JSON.stringify(pieces)).toBe(snapshot);
   });
 });

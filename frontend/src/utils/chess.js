@@ -27,9 +27,10 @@ export function fenToPieces(fen) {
 
 export function applyMove(pieces, move) {
   const moving = pieces.find((p) => p.x === move.x1 && p.y === move.y1);
+  if (!moving) return pieces;
   const next = pieces.filter(
     (p) => !(p.x === move.x2 && p.y === move.y2) && !(p.x === move.x1 && p.y === move.y1)
   );
-  if (moving) next.push({ ...moving, x: move.x2, y: move.y2 });
+  next.push({ ...moving, x: move.x2, y: move.y2 });
   return next;
 }
