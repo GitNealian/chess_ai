@@ -70,6 +70,7 @@ class Review(db.Model):
 
     def to_dict(self):
         return {
+            "id": self.id,
             "game_id": self.game_id,
             "due_date": self.due_date.isoformat(),
             "interval": self.interval,
