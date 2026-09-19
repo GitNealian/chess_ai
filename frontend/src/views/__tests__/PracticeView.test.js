@@ -131,4 +131,34 @@ describe("PracticeView", () => {
     await nextTick();
     expect(wrapper.find(".ply-info").text()).toContain("当前第 4 / 4 步");
   });
+
+  it("加载失败时显示错误提示与重试按钮", async () => {
+    api.getGame.mockRejectedValueOnce(new Error("boom"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("加载失败");
+    expect(wrapper.find('[data-test="retry"]').exists()).toBe(true);
+    expect(wrapper.find(".moves").exists()).toBe(false);
+  });
+
+  it("点击重试重新调用 getGame，成功后显示棋谱名", async () => {
+    api.getGame.mockRejectedValueOnce(new Error("boom"));
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain("加载失败");
+
+    api.getGame.mockResolvedValueOnce({
+      id: 1,
+      name: "重试成功棋谱",
+      initial_fen: INITIAL_FEN,
+      moves,
+    });
+    await wrapper.find('[data-test="retry"]').trigger("click");
+    await flushPromises();
+
+    expect(api.getGame).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("重试成功棋谱");
+    expect(wrapper.find('[data-test="retry"]').exists()).toBe(false);
+  });
 });

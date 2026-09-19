@@ -206,8 +206,10 @@ onMounted(async () => {
   background: #fff;
   border: 1px solid #e3d6c2;
   border-radius: 6px;
-  padding: 8px 8px 8px 28px;
+  padding: 8px;
   margin: 0;
+  list-style: none;
+  padding-left: 0;
 }
 
 .form-area {

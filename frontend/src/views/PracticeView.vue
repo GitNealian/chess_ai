@@ -1,28 +1,35 @@
 <template>
-  <section v-if="game" class="practice">
-    <h2>{{ game.name }}</h2>
-    <div class="layout">
-      <ChessBoard :position="{ pieces }" />
-      <div class="side">
-        <p class="ply-info">当前第 {{ ply }} / {{ game.moves.length }} 步</p>
-        <div class="controls">
-          <button data-test="first" @click="go(0)">|&lt;</button>
-          <button data-test="prev" @click="go(ply - 1)">&lt;</button>
-          <button data-test="next" @click="go(ply + 1)">&gt;</button>
-          <button data-test="last" @click="go(game.moves.length)">&gt;|</button>
-        </div>
-        <ol class="moves">
-          <li
-            v-for="(move, index) in game.moves"
-            :key="index"
-            :class="{ active: index === ply - 1 }"
-            @click="go(index + 1)"
-          >
-            {{ describe(move, index) }}
-          </li>
-        </ol>
-      </div>
+  <section class="practice">
+    <p v-if="loading" class="hint">加载中…</p>
+    <div v-else-if="error" class="hint">
+      <p>加载失败</p>
+      <button data-test="retry" @click="load">重试</button>
     </div>
+    <template v-else-if="game">
+      <h2>{{ game.name }}</h2>
+      <div class="layout">
+        <ChessBoard :position="{ pieces }" />
+        <div class="side">
+          <p class="ply-info">当前第 {{ ply }} / {{ game.moves.length }} 步</p>
+          <div class="controls">
+            <button data-test="first" @click="go(0)">|&lt;</button>
+            <button data-test="prev" @click="go(ply - 1)">&lt;</button>
+            <button data-test="next" @click="go(ply + 1)">&gt;</button>
+            <button data-test="last" @click="go(game.moves.length)">&gt;|</button>
+          </div>
+          <ol class="moves">
+            <li
+              v-for="(move, index) in game.moves"
+              :key="index"
+              :class="{ active: index === ply - 1 }"
+              @click="go(index + 1)"
+            >
+              {{ describe(move, index) }}
+            </li>
+          </ol>
+        </div>
+      </div>
+    </template>
   </section>
 </template>
 
@@ -35,6 +42,8 @@ import { applyMove, fenToPieces } from "../utils/chess";
 
 const route = useRoute();
 const game = ref(null);
+const loading = ref(true);
+const error = ref(false);
 const ply = ref(0);
 
 const pieces = computed(() => {
@@ -53,13 +62,20 @@ function go(target) {
   ply.value = Math.max(0, Math.min(target, game.value.moves.length));
 }
 
-onMounted(async () => {
+async function load() {
+  loading.value = true;
+  error.value = false;
   try {
     game.value = await api.getGame(route.params.id);
-  } catch (error) {
-    // api 拦截器已 toast，无需额外处理
+  } catch (err) {
+    game.value = null;
+    error.value = true;
+  } finally {
+    loading.value = false;
   }
-});
+}
+
+onMounted(load);
 </script>
 
 <style scoped>
@@ -79,9 +95,15 @@ onMounted(async () => {
   max-height: 420px;
   overflow: auto;
   cursor: pointer;
+  list-style: none;
+  padding-left: 0;
 }
 
 .moves .active {
   background: #f0d9a8;
+}
+
+.hint {
+  text-align: center;
 }
 </style>
