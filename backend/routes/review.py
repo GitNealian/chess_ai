@@ -29,19 +29,24 @@ def _parse_bool(data, key, default=False):
 @review_bp.get("/review/queue")
 def review_queue():
     today = date.today()
-    games = Game.query.order_by(Game.updated_at.asc()).all()
-    items = []
+    games = Game.query.all()
+    entries = []
     for game in games:
         review = game.review
         if review is None or review.due_date <= today:
-            items.append(
+            due = review.due_date if review else today
+            entries.append(
                 {
                     "game": game.to_dict(),
-                    "due_date": review.due_date.isoformat() if review else today.isoformat(),
+                    "due_date": due.isoformat(),
                     "is_new": review is None,
+                    "_due": due,
                 }
             )
-    return jsonify({"items": items, "count": len(items)})
+    entries.sort(key=lambda item: (item["_due"], item["game"]["id"]))
+    for item in entries:
+        item.pop("_due")
+    return jsonify({"items": entries, "count": len(entries)})
 
 
 @review_bp.post("/review/<int:game_id>/submit")
