@@ -19,6 +19,34 @@ def _error(message, detail=None, step=None, status=400):
     return jsonify(payload), status
 
 
+def _valid_move_dict(raw):
+    if not isinstance(raw, dict):
+        return False
+    keys = ("x1", "y1", "x2", "y2")
+    return all(
+        isinstance(raw.get(k), int) and not isinstance(raw.get(k), bool)
+        for k in keys
+    )
+
+
+def _validate_game_moves(initial_fen, moves):
+    if not isinstance(initial_fen, str):
+        return "initial_fen 必须是字符串"
+    board = Board()
+    try:
+        board.load_fen(initial_fen)
+    except ValueError as exc:
+        return f"initial_fen 无效：{exc}"
+    for index, raw in enumerate(moves, start=1):
+        if not _valid_move_dict(raw):
+            return f"第 {index} 步着法格式错误"
+        move = Move.from_dict(raw)
+        if move not in board.legal_moves(board.side_to_move):
+            return f"第 {index} 步不是合法着法"
+        board.apply_move(move)
+    return None
+
+
 @games_bp.get("")
 def list_games():
     query = Game.query
@@ -41,6 +69,10 @@ def create_game():
         return _error("practice_side 只能是 red/black/both")
     if "moves" in data and not isinstance(data["moves"], list):
         return _error("moves 必须是数组")
+    initial_fen = data.get("initial_fen", INITIAL_FEN)
+    error = _validate_game_moves(initial_fen, data.get("moves", []))
+    if error:
+        return _error("棋谱着法不合法", detail=error)
     game = Game(
         name=data["name"],
         category=data.get("category", ""),
@@ -48,7 +80,7 @@ def create_game():
         black_player=data.get("black_player", ""),
         event=data.get("event", ""),
         result=data.get("result", ""),
-        initial_fen=data.get("initial_fen", INITIAL_FEN),
+        initial_fen=initial_fen,
         practice_side=data.get("practice_side", "both"),
     )
     game.moves = data.get("moves", [])
@@ -136,6 +168,12 @@ def update_game(game_id):
         return _error("practice_side 只能是 red/black/both")
     if "moves" in data and not isinstance(data["moves"], list):
         return _error("moves 必须是数组")
+    if "moves" in data or "initial_fen" in data:
+        final_fen = data.get("initial_fen", game.initial_fen)
+        final_moves = data["moves"] if "moves" in data else game.moves
+        error = _validate_game_moves(final_fen, final_moves)
+        if error:
+            return _error("棋谱着法不合法", detail=error)
     for field in (
         "name",
         "category",
