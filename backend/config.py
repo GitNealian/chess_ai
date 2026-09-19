@@ -8,7 +8,6 @@ class Config:
         "DATABASE_URL", "sqlite:///" + os.path.join(BASE_DIR, "chess.db")
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    JSON_AS_ASCII = False
 
 
 class TestConfig(Config):
