@@ -37,6 +37,8 @@ def create_game():
         return _error("缺少棋谱名称")
     if data.get("practice_side", "both") not in VALID_SIDES:
         return _error("practice_side 只能是 red/black/both")
+    if "moves" in data and not isinstance(data["moves"], list):
+        return _error("moves 必须是数组")
     game = Game(
         name=data["name"],
         category=data.get("category", ""),
@@ -67,8 +69,12 @@ def update_game(game_id):
     if game is None:
         return _error("棋谱不存在", status=404)
     data = request.get_json(silent=True) or {}
+    if "name" in data and not data["name"]:
+        return _error("缺少棋谱名称")
     if "practice_side" in data and data["practice_side"] not in VALID_SIDES:
         return _error("practice_side 只能是 red/black/both")
+    if "moves" in data and not isinstance(data["moves"], list):
+        return _error("moves 必须是数组")
     for field in (
         "name",
         "category",
