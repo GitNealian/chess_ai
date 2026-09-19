@@ -18,7 +18,7 @@ def _register_frontend(app):
 
     @app.get("/<path:path>")
     def assets(path):
-        if path.startswith("api/"):
+        if path == "api" or path.startswith("api/"):
             abort(404)
         full = os.path.abspath(os.path.join(FRONTEND_DIST, path))
         if full.startswith(FRONTEND_DIST + os.sep) and os.path.isfile(full):

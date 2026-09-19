@@ -56,6 +56,14 @@ def test_unknown_api_returns_404(monkeypatch, tmp_path):
     assert "chess" not in resp.get_data(as_text=True)
 
 
+def test_bare_api_returns_404(monkeypatch, tmp_path):
+    (tmp_path / "index.html").write_text("<h1>chess</h1>", encoding="utf-8")
+    client = _make_client(monkeypatch, tmp_path)
+    resp = client.get("/api")
+    assert resp.status_code == 404
+    assert "chess" not in resp.get_data(as_text=True)
+
+
 def test_path_traversal_blocked(monkeypatch, tmp_path):
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -63,5 +71,6 @@ def test_path_traversal_blocked(monkeypatch, tmp_path):
     (tmp_path / "secret.txt").write_text("top-secret", encoding="utf-8")
     client = _make_client(monkeypatch, dist)
     resp = client.get("/../secret.txt")
-    assert resp.status_code in (200, 308, 404)
+    assert resp.status_code == 200
+    assert "chess" in resp.get_data(as_text=True)
     assert "top-secret" not in resp.get_data(as_text=True)
