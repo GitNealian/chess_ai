@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
+import { nextTick } from "vue";
 import LibraryView from "../LibraryView.vue";
+import { useLibraryStore } from "../../stores/library";
 import { api } from "../../api";
 
 vi.mock("../../api", () => ({
@@ -97,11 +99,61 @@ describe("LibraryView", () => {
     const wrapper = mountView();
     await flushPromises();
 
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await wrapper.findAll("tbody tr")[0].find("button").trigger("click");
     await flushPromises();
 
     expect(api.deleteGame).toHaveBeenCalledWith(1);
     expect(wrapper.findAll("tbody tr")).toHaveLength(2);
     expect(wrapper.text()).not.toContain("中炮对屏风马");
+  });
+
+  it("确认框取消时不调用删除接口", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    await wrapper.findAll("tbody tr")[0].find("button").trigger("click");
+    await flushPromises();
+
+    expect(api.deleteGame).not.toHaveBeenCalled();
+    expect(wrapper.findAll("tbody tr")).toHaveLength(3);
+  });
+
+  it("确认删除后刷新统计", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    api.stats.mockClear();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await wrapper.findAll("tbody tr")[0].find("button").trigger("click");
+    await flushPromises();
+
+    expect(api.deleteGame).toHaveBeenCalledWith(1);
+    expect(api.stats).toHaveBeenCalled();
+  });
+
+  it("删除失败时行仍保留", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    api.deleteGame.mockRejectedValue(new Error("boom"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await wrapper.findAll("tbody tr")[0].find("button").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll("tbody tr")).toHaveLength(3);
+    expect(wrapper.text()).toContain("中炮对屏风马");
+  });
+
+  it("加载中显示加载态文案", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const store = useLibraryStore();
+    store.loading = true;
+    await nextTick();
+
+    expect(wrapper.text()).toContain("加载中…");
   });
 });

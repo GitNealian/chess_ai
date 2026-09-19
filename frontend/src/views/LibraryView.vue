@@ -24,7 +24,7 @@
           <td class="actions">
             <router-link :to="`/practice/${game.id}`">打谱</router-link>
             <router-link :to="`/editor/${game.id}`">编辑</router-link>
-            <button @click="store.remove(game.id)">删除</button>
+            <button @click="onRemove(game.id)">删除</button>
           </td>
         </tr>
       </tbody>
@@ -46,6 +46,16 @@ function sideText(side) {
 
 function reload() {
   store.fetchGames({ keyword: keyword.value || undefined, category: category.value || undefined });
+}
+
+async function onRemove(id) {
+  if (!window.confirm("确定删除该棋谱？")) return;
+  try {
+    await store.remove(id);
+    await store.fetchStats();
+  } catch (error) {
+    // api 拦截器已 toast，无需额外处理
+  }
 }
 
 onMounted(async () => {
