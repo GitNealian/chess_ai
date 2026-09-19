@@ -68,6 +68,8 @@ def move_to_chinese(board, move):
     if prefix:
         head = prefix + name
     else:
+        if len(_same_file_pieces(board, side, kind, move.x1)) >= 3:
+            raise ValueError(f"{name}同列多子暂不支持生成记谱")
         head = name + _num_text(file_number(move.x1, side), side)
 
     dy = move.y2 - move.y1
@@ -96,21 +98,22 @@ def parse_chinese(board, text):
         kind = _NAME_TO_KIND.get(side, {}).get(name)
         if kind is None:
             raise ValueError(f"未知棋子：{name}")
-        chosen = None
         groups = {}
         for (x, y), piece in board.grid.items():
             if piece == (side, kind):
                 groups.setdefault(x, []).append(y)
+        candidates = []
         for x, ys in groups.items():
             if len(ys) < 2:
                 continue
             ordered = sorted(ys, reverse=(side == RED))
             pick = ordered[0] if prefix == "前" else ordered[-1]
-            chosen = (x, pick)
-            break
-        if chosen is None:
+            candidates.append((x, pick))
+        if not candidates:
             raise ValueError(f"找不到可区分前后的棋子：{text}")
-        x1, y1 = chosen
+        if len(candidates) > 1:
+            raise ValueError(f"{text}：存在多个可匹配的{name}，无法区分")
+        x1, y1 = candidates[0]
         rest = text[2:]
     else:
         name = text[0]
