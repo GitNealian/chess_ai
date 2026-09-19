@@ -17,6 +17,15 @@ def _parse_int(data, key, default=0):
     return value, None
 
 
+def _parse_bool(data, key, default=False):
+    if key not in data or data[key] is None:
+        return default, None
+    value = data[key]
+    if not isinstance(value, bool):
+        return None, f"{key} 必须是布尔值"
+    return value, None
+
+
 @review_bp.get("/review/queue")
 def review_queue():
     today = date.today()
@@ -47,7 +56,9 @@ def submit_review(game_id):
     duration_ms, error = _parse_int(data, "duration_ms")
     if error:
         return jsonify({"error": error}), 400
-    revealed = bool(data.get("revealed", False))
+    revealed, error = _parse_bool(data, "revealed")
+    if error:
+        return jsonify({"error": error}), 400
     quality = quality_from_result(mistake_count, revealed)
 
     review = game.review

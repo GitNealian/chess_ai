@@ -30,6 +30,44 @@ def test_submit_creates_review_and_schedules(client):
     assert queue == []
 
 
+def test_submit_rejects_string_revealed(client):
+    game_id = _game(client)
+    resp = client.post(
+        f"/api/review/{game_id}/submit",
+        json={"mistake_count": 0, "revealed": "false"},
+    )
+    assert resp.status_code == 400
+
+
+def test_submit_rejects_int_revealed(client):
+    game_id = _game(client)
+    resp = client.post(
+        f"/api/review/{game_id}/submit",
+        json={"mistake_count": 0, "revealed": 1},
+    )
+    assert resp.status_code == 400
+
+
+def test_submit_revealed_true_quality_is_2(client):
+    game_id = _game(client)
+    resp = client.post(
+        f"/api/review/{game_id}/submit",
+        json={"mistake_count": 0, "revealed": True},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["quality"] == 2
+
+
+def test_submit_default_revealed_quality_is_5(client):
+    game_id = _game(client)
+    resp = client.post(
+        f"/api/review/{game_id}/submit",
+        json={"mistake_count": 0},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["quality"] == 5
+
+
 def test_stats(client):
     game_id = _game(client)
     client.post(f"/api/review/{game_id}/submit", json={"mistake_count": 0, "revealed": False})
