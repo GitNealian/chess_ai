@@ -174,7 +174,6 @@ onUnmounted(() => {
   background: #7a3b2e;
   color: #fff;
   cursor: pointer;
-  font-size: 16px;
 }
 
 .done {

@@ -204,7 +204,6 @@ onMounted(async () => {
   flex: 1 1 0;
   min-height: 44px;
   padding: 10px 16px;
-  font-size: 16px;
 }
 
 .moves {
@@ -241,7 +240,6 @@ onMounted(async () => {
   border: 1px solid #cbb89a;
   border-radius: 6px;
   font: inherit;
-  font-size: 16px;
 }
 
 .form-area fieldset {
@@ -261,7 +259,6 @@ onMounted(async () => {
   background: #7a3b2e;
   color: #fff;
   cursor: pointer;
-  font-size: 16px;
 }
 
 .form-area .save {

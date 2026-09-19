@@ -85,7 +85,6 @@ input {
   border: 1px solid #cbb89a;
   border-radius: 6px;
   font: inherit;
-  font-size: 16px;
 }
 .btn {
   display: flex;
@@ -99,51 +98,61 @@ input {
   color: #fff;
 }
 .stats { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 12px; color: #6b5a45; }
+
+/* 移动端默认：表格卡片化 */
 .list { width: 100%; border-collapse: collapse; background: #fff; }
-.list th, .list td { padding: 10px; border-bottom: 1px solid #eee; text-align: left; }
+.list, .list tbody { display: block; }
+.list thead { display: none; }
+.list tr {
+  display: block;
+  margin-bottom: 12px;
+  border: 1px solid #e5dcc9;
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+.list td {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: none;
+  padding: 8px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.list td::before {
+  content: attr(data-label);
+  color: #6b5a45;
+  font-weight: 600;
+  text-align: left;
+}
+.list td.actions { justify-content: flex-end; }
+.list td.actions::before { margin-right: auto; }
 .actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .actions button { border: none; background: none; color: #b32020; cursor: pointer; }
-
-@media (max-width: 767px) {
-  .list, .list tbody { display: block; width: 100%; }
-  .list thead { display: none; }
-  .list tr {
-    display: block;
-    margin-bottom: 12px;
-    border: 1px solid #e5dcc9;
-    border-radius: 8px;
-    padding: 8px;
-    background: #fff;
-  }
-  .list td {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    border: none;
-    padding: 8px;
-    text-align: right;
-  }
-  .list td::before {
-    content: attr(data-label);
-    color: #6b5a45;
-    font-weight: 600;
-    text-align: left;
-  }
-  .list td.actions { justify-content: flex-end; }
-  .list td.actions::before { margin-right: auto; }
-  .actions a, .actions button {
-    display: inline-flex;
-    align-items: center;
-    min-height: 44px;
-    padding: 8px 12px;
-  }
+.actions a, .actions button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 12px;
 }
 
+/* 桌面端：恢复适配前的横向工具栏与表格布局 */
 @media (min-width: 768px) {
   .toolbar { flex-direction: row; }
-  input { width: auto; min-height: 0; padding: 8px 10px; }
+  input { width: auto; min-height: 0; padding: 8px 10px; font-size: 13.3333px; }
   .btn { display: inline-block; min-height: 0; padding: 8px 16px; }
   .stats { gap: 20px; }
+
+  .list { display: table; }
+  .list tbody { display: table-row-group; }
+  .list thead { display: table-header-group; }
+  .list tr { display: table-row; margin: 0; border: 0; border-radius: 0; padding: 0; }
+  .list th, .list td { display: table-cell; padding: 10px; border-bottom: 1px solid #eee; text-align: left; }
+  .list td::before { content: none; }
+  .list td.actions { display: flex; }
+  .actions { flex-wrap: nowrap; }
+  .actions a, .actions button { display: inline; min-height: 0; padding: 0; }
 }
 </style>

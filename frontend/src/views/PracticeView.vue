@@ -95,7 +95,6 @@ onMounted(load);
 .controls button {
   flex: 1 1 0;
   min-height: 44px;
-  font-size: 16px;
 }
 
 .moves {
@@ -121,6 +120,11 @@ onMounted(load);
   text-align: center;
 }
 
+.hint button {
+  min-height: 44px;
+  padding: 10px 16px;
+}
+
 @media (min-width: 768px) {
   .layout {
     grid-template-columns: 528px 1fr;
@@ -143,6 +147,11 @@ onMounted(load);
   .moves li {
     min-height: 0;
     display: list-item;
+  }
+
+  .hint button {
+    min-height: 0;
+    padding: 1px 6px;
   }
 }
 </style>

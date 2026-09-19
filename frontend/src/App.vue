@@ -49,6 +49,10 @@ body {
 }
 a, button, input, select, textarea { touch-action: manipulation; }
 
+@media (max-width: 767px) {
+  input, select, textarea, button { font-size: 16px; }
+}
+
 .topbar { display: flex; align-items: center; gap: 24px; padding: 12px 16px; background: #7a3b2e; color: #fff; }
 .topbar a { color: #f4e3c1; text-decoration: none; margin-right: 12px; }
 .brand { font-weight: 700; font-size: 18px; color: #fff !important; }
@@ -58,7 +62,7 @@ main {
   max-width: 1080px;
   margin: 0 auto;
   padding: 16px;
-  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
 .tabbar {
@@ -70,7 +74,7 @@ main {
   display: flex;
   background: #fff;
   border-top: 1px solid #e5dcc9;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .tab {
   flex: 1;
@@ -86,7 +90,7 @@ main {
 
 .toast {
   position: fixed;
-  bottom: calc(72px + env(safe-area-inset-bottom));
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 200;
