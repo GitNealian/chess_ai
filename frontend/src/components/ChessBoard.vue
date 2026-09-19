@@ -9,7 +9,7 @@ const props = defineProps({
 
 const emit = defineEmits(["cell-click"]);
 
-const margin = 40;
+const margin = 32;
 const gap = 56;
 const W = margin * 2 + 8 * gap;
 const H = margin * 2 + 9 * gap;
@@ -164,7 +164,7 @@ function onSvgClick(event) {
       <circle
         :cx="cellX(piece.x)"
         :cy="cellY(piece.y)"
-        r="20"
+        r="25"
         :fill="piece.side === 'red' ? '#fff4e0' : '#f7f7f2'"
         stroke="#7a3b2e"
         stroke-width="2"
@@ -172,9 +172,9 @@ function onSvgClick(event) {
       />
       <text
         :x="cellX(piece.x)"
-        :y="cellY(piece.y) + 8"
+        :y="cellY(piece.y) + 10"
         text-anchor="middle"
-        font-size="24"
+        font-size="28"
         :fill="piece.side === 'red' ? '#b32020' : '#1a1a1a'"
       >
         {{ piece.label }}
