@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date
 
 from srs import quality_from_result, schedule
 
