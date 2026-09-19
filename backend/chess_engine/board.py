@@ -204,6 +204,8 @@ class Board:
 
     def apply_move(self, move):
         piece = self.piece_at(move.x1, move.y1)
+        if piece is None:
+            raise ValueError("起点无棋子")
         self.remove_piece(move.x2, move.y2)
         self.remove_piece(move.x1, move.y1)
         self.set_piece(move.x2, move.y2, piece)

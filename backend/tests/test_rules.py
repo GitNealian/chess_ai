@@ -1,3 +1,5 @@
+import pytest
+
 from chess_engine.board import BLACK, RED, Board
 from chess_engine.move import Move
 
@@ -93,3 +95,10 @@ def test_stalemate_no_check_no_moves():
     assert board.legal_moves(RED) == []
     assert board.is_stalemate(RED) is True
     assert board.is_checkmate(RED) is False
+
+
+def test_apply_move_rejects_empty_origin():
+    board = Board.empty()
+    board.set_piece(4, 0, (RED, "K"))
+    with pytest.raises(ValueError):
+        board.apply_move(Move(3, 3, 4, 4))
