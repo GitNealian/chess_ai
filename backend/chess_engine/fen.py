@@ -2,8 +2,11 @@ from chess_engine.board import BLACK, RED, Board
 
 
 def _letter_to_piece(ch):
+    kind = ch.upper()
+    if kind not in "KABNRCP":
+        raise ValueError(f"FEN 含非法棋子字符：{ch}")
     side = RED if ch.isupper() else BLACK
-    return (side, ch.upper())
+    return (side, kind)
 
 
 def _piece_to_letter(piece):
@@ -13,6 +16,8 @@ def _piece_to_letter(piece):
 
 def parse_fen(fen):
     parts = fen.split()
+    if not parts:
+        raise ValueError("FEN 不能为空")
     rows = parts[0].split("/")
     if len(rows) != 10:
         raise ValueError("FEN 必须有 10 行")

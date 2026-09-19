@@ -1,3 +1,5 @@
+import pytest
+
 from chess_engine.board import BLACK, RED
 from chess_engine.fen import parse_fen, to_fen
 
@@ -23,3 +25,43 @@ def test_fen_round_trip():
 def test_parse_black_to_move():
     parsed = parse_fen("4k4/9/9/9/9/9/9/9/9/4K4 b - - 0 1")
     assert parsed.side_to_move == BLACK
+
+
+def test_parse_rejects_wrong_row_count():
+    with pytest.raises(ValueError):
+        parse_fen("9/9/9/9/9/9/9/9/9 w - - 0 1")
+
+
+def test_parse_rejects_too_many_columns():
+    with pytest.raises(ValueError):
+        parse_fen("rnbakabnrr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1")
+
+
+def test_parse_rejects_too_few_columns():
+    with pytest.raises(ValueError):
+        parse_fen("rnbakabn/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1")
+
+
+def test_parse_rejects_illegal_piece_char():
+    with pytest.raises(ValueError):
+        parse_fen("4x4/9/9/9/9/9/9/9/9/4K4 w - - 0 1")
+
+
+def test_parse_rejects_empty_fen():
+    with pytest.raises(ValueError):
+        parse_fen("")
+
+
+def test_parse_rejects_whitespace_fen():
+    with pytest.raises(ValueError):
+        parse_fen("   ")
+
+
+def test_empty_board_round_trip():
+    fen = "9/9/9/9/9/9/9/9/9/9 w - - 0 1"
+    assert to_fen(parse_fen(fen)) == fen
+
+
+def test_round_trip_black_to_move():
+    fen = "4k4/9/9/9/9/9/9/9/9/4K4 b - - 0 1"
+    assert to_fen(parse_fen(fen)) == fen
