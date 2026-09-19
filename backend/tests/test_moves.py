@@ -69,3 +69,63 @@ def test_cannon_moves_and_capture():
     assert (4, 6) not in targets
     assert (4, 8) in targets
     assert (4, 7) not in targets
+
+
+def test_black_pawn_before_and_after_river():
+    board = Board.empty()
+    board.set_piece(4, 6, (BLACK, "P"))
+    assert _targets(board, 4, 6) == [(4, 5)]
+    board.set_piece(4, 4, (BLACK, "P"))
+    assert _targets(board, 4, 4) == [(3, 4), (4, 3), (5, 4)]
+
+
+def test_black_bishop_flies_within_own_half():
+    board = Board.empty()
+    board.set_piece(2, 9, (BLACK, "B"))
+    assert _targets(board, 2, 9) == [(0, 7), (4, 7)]
+
+    board = Board.empty()
+    board.set_piece(2, 5, (BLACK, "B"))
+    targets = _targets(board, 2, 5)
+    assert targets == [(0, 7), (4, 7)]
+    assert (0, 3) not in targets
+    assert (4, 3) not in targets
+
+
+def test_black_king_in_palace():
+    board = Board.empty()
+    board.set_piece(4, 8, (BLACK, "K"))
+    assert _targets(board, 4, 8) == [(3, 8), (4, 7), (4, 9), (5, 8)]
+
+
+def test_red_bishop_cannot_cross_river():
+    board = Board.empty()
+    board.set_piece(2, 4, (RED, "B"))
+    targets = _targets(board, 2, 4)
+    assert targets == [(0, 2), (4, 2)]
+    assert (0, 6) not in targets
+    assert (4, 6) not in targets
+
+
+def test_knight_horizontal_leg_block():
+    board = Board.empty()
+    board.set_piece(4, 4, (RED, "N"))
+    board.set_piece(5, 4, (RED, "P"))
+    targets = _targets(board, 4, 4)
+    assert (6, 3) not in targets
+    assert (6, 5) not in targets
+    assert (2, 3) in targets
+    assert (2, 5) in targets
+
+
+def test_cannon_stops_after_capture():
+    board = Board.empty()
+    board.set_piece(4, 4, (RED, "C"))
+    board.set_piece(4, 6, (RED, "P"))
+    board.set_piece(4, 8, (BLACK, "P"))
+    board.set_piece(4, 9, (BLACK, "P"))
+    targets = _targets(board, 4, 4)
+    assert (4, 5) in targets
+    assert (4, 6) not in targets
+    assert (4, 8) in targets
+    assert (4, 9) not in targets

@@ -1,5 +1,7 @@
 from typing import Optional
 
+from chess_engine.move import Move
+
 RED = "red"
 BLACK = "black"
 
@@ -80,8 +82,6 @@ class Board:
         return method(x, y, side)
 
     def _add_slide(self, moves, x, y, side, dx, dy):
-        from chess_engine.move import Move
-
         cx, cy = x + dx, y + dy
         while self.in_board(cx, cy):
             target = self.piece_at(cx, cy)
@@ -101,8 +101,6 @@ class Board:
         return moves
 
     def _moves_c(self, x, y, side):
-        from chess_engine.move import Move
-
         moves = []
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             cx, cy = x + dx, y + dy
@@ -123,8 +121,6 @@ class Board:
         return moves
 
     def _moves_n(self, x, y, side):
-        from chess_engine.move import Move
-
         moves = []
         legs = {
             (1, 2): (0, 1), (-1, 2): (0, 1), (1, -2): (0, -1), (-1, -2): (0, -1),
@@ -144,8 +140,6 @@ class Board:
         return moves
 
     def _moves_b(self, x, y, side):
-        from chess_engine.move import Move
-
         moves = []
         for dx, dy in ((2, 2), (2, -2), (-2, 2), (-2, -2)):
             nx, ny = x + dx, y + dy
@@ -164,8 +158,6 @@ class Board:
         return moves
 
     def _moves_a(self, x, y, side):
-        from chess_engine.move import Move
-
         moves = []
         for dx, dy in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
             nx, ny = x + dx, y + dy
@@ -177,8 +169,6 @@ class Board:
         return moves
 
     def _moves_k(self, x, y, side):
-        from chess_engine.move import Move
-
         moves = []
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             nx, ny = x + dx, y + dy
@@ -190,8 +180,6 @@ class Board:
         return moves
 
     def _moves_p(self, x, y, side):
-        from chess_engine.move import Move
-
         moves = []
         forward = 1 if side == RED else -1
         candidates = [(x, y + forward)]
