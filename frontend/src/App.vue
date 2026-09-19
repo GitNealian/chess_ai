@@ -14,14 +14,21 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 
 const toast = ref("");
-onMounted(() => {
-  window.addEventListener("app-toast", (event) => {
-    toast.value = event.detail;
-    setTimeout(() => (toast.value = ""), 3000);
-  });
+let timer = null;
+
+function onToast(event) {
+  toast.value = event.detail;
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => (toast.value = ""), 3000);
+}
+
+onMounted(() => window.addEventListener("app-toast", onToast));
+onUnmounted(() => {
+  window.removeEventListener("app-toast", onToast);
+  if (timer) clearTimeout(timer);
 });
 </script>
 

@@ -17,7 +17,7 @@ export const api = {
   getGame: (id) => http.get(`/games/${id}`).then((r) => r.data),
   createGame: (data) => http.post("/games", data).then((r) => r.data),
   updateGame: (id, data) => http.put(`/games/${id}`, data).then((r) => r.data),
-  deleteGame: (id) => http.delete(`/games/${id}`),
+  deleteGame: (id) => http.delete(`/games/${id}`).then((r) => r.data),
   parse: (data) => http.post("/games/parse", data).then((r) => r.data),
   importPgn: (data) => http.post("/games/import-pgn", data).then((r) => r.data),
   checkMove: (id, data) => http.post(`/games/${id}/check-move`, data).then((r) => r.data),
