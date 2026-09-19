@@ -1,7 +1,29 @@
-from flask import Flask, jsonify
+import os
 
-from config import Config
+from flask import Flask, abort, jsonify, send_from_directory
+
+from config import BASE_DIR, Config
 from models import db
+
+FRONTEND_DIST = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "dist"))
+
+
+def _register_frontend(app):
+    if not os.path.isdir(FRONTEND_DIST):
+        return
+
+    @app.get("/")
+    def index():
+        return send_from_directory(FRONTEND_DIST, "index.html")
+
+    @app.get("/<path:path>")
+    def assets(path):
+        if path.startswith("api/"):
+            abort(404)
+        full = os.path.abspath(os.path.join(FRONTEND_DIST, path))
+        if full.startswith(FRONTEND_DIST + os.sep) and os.path.isfile(full):
+            return send_from_directory(FRONTEND_DIST, path)
+        return send_from_directory(FRONTEND_DIST, "index.html")
 
 
 def create_app(config_class=Config):
@@ -19,6 +41,8 @@ def create_app(config_class=Config):
 
     app.register_blueprint(games_bp, url_prefix="/api/games")
     app.register_blueprint(review_bp, url_prefix="/api")
+
+    _register_frontend(app)
 
     return app
 
