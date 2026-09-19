@@ -4,11 +4,18 @@ import { nextTick } from "vue";
 import ReviewView from "../ReviewView.vue";
 import { api } from "../../api";
 
+const { route } = vi.hoisted(() => ({ route: { query: {} } }));
+
 vi.mock("../../api", () => ({
   api: {
+    getGame: vi.fn(),
     reviewQueue: vi.fn(),
     submitReview: vi.fn(),
   },
+}));
+
+vi.mock("vue-router", () => ({
+  useRoute: () => route,
 }));
 
 const BoardStub = {
@@ -51,8 +58,28 @@ async function clickCells(board, ...coords) {
 describe("ReviewView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    route.query = {};
     api.reviewQueue.mockResolvedValue({ items: [item()], count: 1 });
     api.submitReview.mockResolvedValue({ quality: 1, review: {} });
+  });
+
+  it("query 指定 game 时从 getGame 加载单个棋谱", async () => {
+    route.query = { game: "1" };
+    api.getGame.mockResolvedValue({
+      id: 1,
+      name: "库内单谱",
+      initial_fen: INITIAL_FEN,
+      practice_side: "both",
+      moves: [{ x1: 4, y1: 0, x2: 4, y2: 1 }],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(api.getGame).toHaveBeenCalledWith("1");
+    expect(api.reviewQueue).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("库内单谱");
+    expect(wrapper.find('[data-test="progress"]').text()).toContain("1 / 1");
   });
 
   it("队列为空时显示完成文案", async () => {

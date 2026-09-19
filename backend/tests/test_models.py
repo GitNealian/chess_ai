@@ -76,6 +76,30 @@ def test_game_to_dict_keys(app):
         "practice_side",
         "created_at",
         "updated_at",
+        "review",
+    }
+
+
+def test_game_to_dict_review_none_without_review(app):
+    game = Game(name="无复习")
+    db.session.add(game)
+    db.session.commit()
+
+    assert game.to_dict()["review"] is None
+
+
+def test_game_to_dict_review_summary(app):
+    game = Game(name="有复习")
+    review = Review(game=game, due_date=date(2026, 3, 1), interval=6, repetitions=2, lapses=1)
+    db.session.add(game)
+    db.session.commit()
+
+    summary = game.to_dict()["review"]
+    assert summary == {
+        "due_date": "2026-03-01",
+        "interval": 6,
+        "repetitions": 2,
+        "lapses": 1,
     }
 
 

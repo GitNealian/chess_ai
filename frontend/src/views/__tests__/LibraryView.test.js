@@ -20,18 +20,21 @@ const games = [
     name: "中炮对屏风马",
     category: "开局",
     practice_side: "both",
+    review: null,
   },
   {
     id: 2,
     name: "顺炮直车",
     category: "开局",
     practice_side: "red",
+    review: { due_date: "2026-03-01", interval: 6, repetitions: 1, lapses: 0 },
   },
   {
     id: 3,
     name: "列手炮",
     category: "残局",
     practice_side: "black",
+    review: { due_date: "2026-04-01", interval: 16, repetitions: 3, lapses: 0 },
   },
 ];
 
@@ -39,7 +42,9 @@ function mountView() {
   return mount(LibraryView, {
     global: {
       plugins: [createPinia()],
-      stubs: { RouterLink: true },
+      stubs: {
+        RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' },
+      },
     },
   });
 }
@@ -64,6 +69,30 @@ describe("LibraryView", () => {
     expect(text).toContain("红方");
     expect(text).toContain("黑方");
     expect(wrapper.findAll("tbody tr")).toHaveLength(3);
+  });
+
+  it("按 review 展示掌握度与下次复习日期", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const rows = wrapper.findAll("tbody tr");
+    expect(rows[0].findAll("td")[3].text()).toBe("新");
+    expect(rows[0].findAll("td")[4].text()).toBe("今日");
+    expect(rows[1].findAll("td")[3].text()).toBe("学习中");
+    expect(rows[1].findAll("td")[4].text()).toBe("2026-03-01");
+    expect(rows[2].findAll("td")[3].text()).toBe("已掌握");
+    expect(rows[2].findAll("td")[4].text()).toBe("2026-04-01");
+  });
+
+  it("每行提供默写入口链接", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const rows = wrapper.findAll("tbody tr");
+    expect(rows[0].text()).toContain("默写");
+    expect(rows[0].find('a[href="/review?game=1"]').exists()).toBe(true);
+    expect(rows[1].find('a[href="/review?game=2"]').exists()).toBe(true);
+    expect(rows[2].find('a[href="/review?game=3"]').exists()).toBe(true);
   });
 
   it("渲染统计栏数字", async () => {

@@ -32,10 +32,12 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import ChessBoard from "../components/ChessBoard.vue";
 import { api } from "../api";
 import { createPracticeSession } from "../stores/practice";
 
+const route = useRoute();
 const queue = ref([]);
 const index = ref(0);
 const loading = ref(true);
@@ -115,8 +117,15 @@ onMounted(async () => {
     elapsed.value += 1;
   }, 1000);
   try {
-    const data = await api.reviewQueue();
-    queue.value = data.items || [];
+    const gameId = route.query.game;
+    if (gameId) {
+      const game = await api.getGame(gameId);
+      const today = new Date().toISOString().slice(0, 10);
+      queue.value = [{ game, due_date: today, is_new: !game.review }];
+    } else {
+      const data = await api.reviewQueue();
+      queue.value = data.items || [];
+    }
   } catch (error) {
     queue.value = [];
   } finally {
