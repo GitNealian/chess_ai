@@ -92,6 +92,18 @@ cd backend && .venv/bin/python app.py
 
 Flask 检测到 `frontend/dist` 后会托管静态资源，访问 `http://localhost:5000/` 即可；非 `/api/*` 的未知路径回退到 `index.html`（支持前端路由）。
 
+### 手机 / 局域网访问
+
+前端已做移动端适配（移动优先响应式，手机竖屏可用）。若要在同一局域网用手机访问，让后端监听所有网卡：
+
+```bash
+cd backend && HOST=0.0.0.0 .venv/bin/python app.py
+```
+
+然后在手机浏览器打开 `http://<电脑局域网IP>:5000`（如 `http://192.168.1.10:5000`）。查看 IP：Linux/macOS 用 `hostname -I` 或 `ip addr`，Windows 用 `ipconfig`。也可用环境变量 `PORT` 改端口（如 `PORT=8080`）。
+
+注意：`HOST=0.0.0.0` 会对局域网暴露服务，仅在可信网络中临时使用；默认仍为 `127.0.0.1`（仅本机）。
+
 ### 生产部署（WSGI 服务器）
 
 推荐用 gunicorn 托管，多 worker 且无调试器：

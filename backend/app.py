@@ -53,4 +53,6 @@ def create_app(config_class=Config):
 if __name__ == "__main__":
     application = create_app()
     debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
-    application.run(debug=debug, port=5000)
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "5000"))
+    application.run(host=host, port=port, debug=debug)
