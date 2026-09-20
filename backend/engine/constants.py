@@ -1,4 +1,5 @@
 import numpy as np
+from numba import njit
 
 SOLDIER = 1
 GUARD = 2
@@ -108,16 +109,19 @@ def site_to_xy(site):
     return site % 9, 9 - site // 9
 
 
+@njit(cache=True)
 def pack_move(src, dest):
-    return int(src) | (int(dest) << 7)
+    return np.int64(src) | (np.int64(dest) << np.int64(7))
 
 
+@njit(cache=True)
 def move_src(move):
-    return move & 127
+    return np.int64(move) & np.int64(127)
 
 
+@njit(cache=True)
 def move_dest(move):
-    return move >> 7
+    return np.int64(move) >> np.int64(7)
 
 
 def play_of_piece(idx):
