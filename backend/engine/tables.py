@@ -9,8 +9,10 @@ preKingCheckedSoldierBitBoards / preBitBoardAttack，以及 SearchEngine.java
 - 表为模块级 numpy 只读数组，导入时一次性构建；
 - 马/象腿位折叠键一律调用 bitboard.check_sum_knight / check_sum_elephant，
   禁止内联公式；
-- 马/象攻击限制表在 Java 枚举的非空空腿集之外，额外补充"全部腿位被占据"
-  （空腿集为空集）的边界情形，Java 在该情形会 NPE。
+- 马/象攻击限制表覆盖全部腿位组合，包括"全部腿位被占据"（空腿集为空集）
+  的边界：Java 的 getAllLegCombByLeg 只枚举非空腿位子集，该键在 Java 表中
+  没有条目（以此键查表会取到空引用），Python 侧显式补齐；
+- 折叠键碰撞时保持 Java 的后写覆盖语义（实测马 0 次、象 4 次碰撞）。
 """
 
 import itertools
@@ -22,6 +24,7 @@ from . import bitboard
 from . import constants as C
 
 __all__ = [
+    "BUILD_SECONDS",
     "DANGER_MARGIN_HI",
     "DANGER_MARGIN_LO",
     "ELEPHANT_ATTACK_LIMIT_HI",
@@ -30,6 +33,8 @@ __all__ = [
     "ELEPHANT_LEG_LO",
     "ELEPHANT_TARGET_HI",
     "ELEPHANT_TARGET_LO",
+    "FOLD_CHECKED",
+    "FOLD_COLLISIONS",
     "GUARD_TARGET_HI",
     "GUARD_TARGET_LO",
     "KING_CHECKED_SOLDIER_HI",
@@ -208,7 +213,7 @@ def _store(lo_arr, hi_arr, index, sites):
 def _fill_attack_limit(limit_lo, limit_hi, moves_fn, fold_fn, mobility):
     """按 Java preBitBoardAttack 语义填充 [site][legKey] → 攻击位。
 
-    返回 (折叠键碰撞次数, 校验条目数)；碰撞时保持后写覆盖。
+    返回 (折叠键碰撞次数, 覆盖的组合总数)；碰撞时保持后写覆盖。
     """
     collisions = 0
     checked = 0
@@ -240,121 +245,161 @@ def _fill_attack_limit(limit_lo, limit_hi, moves_fn, fold_fn, mobility):
         for key, (want_lo, want_hi) in expected.items():
             assert int(limit_lo[site, key]) == want_lo
             assert int(limit_hi[site, key]) == want_hi
-            checked += 1
+        checked += len(combos)
     return collisions, checked
 
 
-_BUILD_START = time.perf_counter()
+def _build_basic_tables():
+    """构建全部基础表并自检，返回 (表字典, 折叠键碰撞数, 覆盖组合总数)。"""
+    mask_site_lo = np.zeros(90, dtype=np.int64)
+    mask_site_hi = np.zeros(90, dtype=np.int64)
+    knight_target_lo = np.zeros(90, dtype=np.int64)
+    knight_target_hi = np.zeros(90, dtype=np.int64)
+    knight_leg_lo = np.zeros(90, dtype=np.int64)
+    knight_leg_hi = np.zeros(90, dtype=np.int64)
+    elephant_target_lo = np.zeros(90, dtype=np.int64)
+    elephant_target_hi = np.zeros(90, dtype=np.int64)
+    elephant_leg_lo = np.zeros(90, dtype=np.int64)
+    elephant_leg_hi = np.zeros(90, dtype=np.int64)
+    king_target_lo = np.zeros(90, dtype=np.int64)
+    king_target_hi = np.zeros(90, dtype=np.int64)
+    guard_target_lo = np.zeros(90, dtype=np.int64)
+    guard_target_hi = np.zeros(90, dtype=np.int64)
+    soldier_target_lo = np.zeros((2, 90), dtype=np.int64)
+    soldier_target_hi = np.zeros((2, 90), dtype=np.int64)
+    king_checked_soldier_lo = np.zeros(90, dtype=np.int64)
+    king_checked_soldier_hi = np.zeros(90, dtype=np.int64)
+    danger_margin_lo = np.zeros(2, dtype=np.int64)
+    danger_margin_hi = np.zeros(2, dtype=np.int64)
+    knight_attack_limit_lo = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int64)
+    knight_attack_limit_hi = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int64)
+    knight_mobility = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int16)
+    elephant_attack_limit_lo = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int64)
+    elephant_attack_limit_hi = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int64)
 
-MASK_SITE_LO = np.zeros(90, dtype=np.int64)
-MASK_SITE_HI = np.zeros(90, dtype=np.int64)
-KNIGHT_TARGET_LO = np.zeros(90, dtype=np.int64)
-KNIGHT_TARGET_HI = np.zeros(90, dtype=np.int64)
-KNIGHT_LEG_LO = np.zeros(90, dtype=np.int64)
-KNIGHT_LEG_HI = np.zeros(90, dtype=np.int64)
-ELEPHANT_TARGET_LO = np.zeros(90, dtype=np.int64)
-ELEPHANT_TARGET_HI = np.zeros(90, dtype=np.int64)
-ELEPHANT_LEG_LO = np.zeros(90, dtype=np.int64)
-ELEPHANT_LEG_HI = np.zeros(90, dtype=np.int64)
-KING_TARGET_LO = np.zeros(90, dtype=np.int64)
-KING_TARGET_HI = np.zeros(90, dtype=np.int64)
-GUARD_TARGET_LO = np.zeros(90, dtype=np.int64)
-GUARD_TARGET_HI = np.zeros(90, dtype=np.int64)
-SOLDIER_TARGET_LO = np.zeros((2, 90), dtype=np.int64)
-SOLDIER_TARGET_HI = np.zeros((2, 90), dtype=np.int64)
-KING_CHECKED_SOLDIER_LO = np.zeros(90, dtype=np.int64)
-KING_CHECKED_SOLDIER_HI = np.zeros(90, dtype=np.int64)
-DANGER_MARGIN_LO = np.zeros(2, dtype=np.int64)
-DANGER_MARGIN_HI = np.zeros(2, dtype=np.int64)
-KNIGHT_ATTACK_LIMIT_LO = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int64)
-KNIGHT_ATTACK_LIMIT_HI = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int64)
-KNIGHT_MOBILITY = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int16)
-ELEPHANT_ATTACK_LIMIT_LO = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int64)
-ELEPHANT_ATTACK_LIMIT_HI = np.zeros((90, _ATTACK_LIMIT_KEYS), dtype=np.int64)
+    for site in range(90):
+        mask_lo, mask_hi = bitboard.site_mask(site)
+        mask_site_lo[site] = mask_lo
+        mask_site_hi[site] = mask_hi
 
-for _site in range(90):
-    _mask_lo, _mask_hi = bitboard.site_mask(_site)
-    MASK_SITE_LO[_site] = _mask_lo
-    MASK_SITE_HI[_site] = _mask_hi
+        moves = _knight_moves(site)
+        _store(knight_target_lo, knight_target_hi, site, [t for t, _ in moves])
+        _store(knight_leg_lo, knight_leg_hi, site, [leg for _, leg in moves])
 
-    _moves = _knight_moves(_site)
-    _store(KNIGHT_TARGET_LO, KNIGHT_TARGET_HI, _site, [t for t, _ in _moves])
-    _store(KNIGHT_LEG_LO, KNIGHT_LEG_HI, _site, [leg for _, leg in _moves])
+        moves = _elephant_moves(site)
+        _store(elephant_target_lo, elephant_target_hi, site, [t for t, _ in moves])
+        _store(elephant_leg_lo, elephant_leg_hi, site, [eye for _, eye in moves])
 
-    _moves = _elephant_moves(_site)
-    _store(ELEPHANT_TARGET_LO, ELEPHANT_TARGET_HI, _site, [t for t, _ in _moves])
-    _store(ELEPHANT_LEG_LO, ELEPHANT_LEG_HI, _site, [eye for _, eye in _moves])
+        _store(king_target_lo, king_target_hi, site, _king_moves(site))
+        _store(guard_target_lo, guard_target_hi, site, _guard_moves(site))
 
-    _store(KING_TARGET_LO, KING_TARGET_HI, _site, _king_moves(_site))
-    _store(GUARD_TARGET_LO, GUARD_TARGET_HI, _site, _guard_moves(_site))
+        # Java preKingCheckedSoldierBitBoards：正交邻格，Count==4 时去掉背向邻格
+        legs = _ordered_unique([leg for _, leg in _knight_moves(site)])
+        if len(legs) == 4:
+            drop = site - 9 if site < 45 else site + 9
+            legs = [leg for leg in legs if leg != drop]
+        _store(king_checked_soldier_lo, king_checked_soldier_hi, site, legs)
 
-    # Java preKingCheckedSoldierBitBoards：正交邻格，Count==4 时去掉背向邻格
-    _legs = _ordered_unique([leg for _, leg in _knight_moves(_site)])
-    if len(_legs) == 4:
-        _drop = _site - 9 if _site < 45 else _site + 9
-        _legs = [leg for leg in _legs if leg != _drop]
-    _store(KING_CHECKED_SOLDIER_LO, KING_CHECKED_SOLDIER_HI, _site, _legs)
+    for play in (C.BLACK, C.RED):
+        for site in range(90):
+            _store(
+                soldier_target_lo,
+                soldier_target_hi,
+                (play, site),
+                _soldier_moves(play, site),
+            )
 
-for _play in (C.BLACK, C.RED):
-    for _site in range(90):
-        _store(
-            SOLDIER_TARGET_LO,
-            SOLDIER_TARGET_HI,
-            (_play, _site),
-            _soldier_moves(_play, _site),
-        )
+    _store(danger_margin_lo, danger_margin_hi, C.BLACK, _BLACK_DANGER_SITES)
+    _store(danger_margin_lo, danger_margin_hi, C.RED, _RED_DANGER_SITES)
 
-_store(DANGER_MARGIN_LO, DANGER_MARGIN_HI, C.BLACK, _BLACK_DANGER_SITES)
-_store(DANGER_MARGIN_LO, DANGER_MARGIN_HI, C.RED, _RED_DANGER_SITES)
+    knight_collisions, knight_checked = _fill_attack_limit(
+        knight_attack_limit_lo,
+        knight_attack_limit_hi,
+        _knight_moves,
+        bitboard.check_sum_knight,
+        knight_mobility,
+    )
+    elephant_collisions, elephant_checked = _fill_attack_limit(
+        elephant_attack_limit_lo,
+        elephant_attack_limit_hi,
+        _elephant_moves,
+        bitboard.check_sum_elephant,
+        None,
+    )
 
-_FOLD_COLLISIONS, _FOLD_CHECKED = _fill_attack_limit(
-    KNIGHT_ATTACK_LIMIT_LO,
-    KNIGHT_ATTACK_LIMIT_HI,
-    _knight_moves,
-    bitboard.check_sum_knight,
-    KNIGHT_MOBILITY,
-)
-_fill_attack_limit(
-    ELEPHANT_ATTACK_LIMIT_LO,
-    ELEPHANT_ATTACK_LIMIT_HI,
-    _elephant_moves,
-    bitboard.check_sum_elephant,
-    None,
-)
+    tables = {
+        "MASK_SITE_LO": mask_site_lo,
+        "MASK_SITE_HI": mask_site_hi,
+        "KNIGHT_TARGET_LO": knight_target_lo,
+        "KNIGHT_TARGET_HI": knight_target_hi,
+        "KNIGHT_LEG_LO": knight_leg_lo,
+        "KNIGHT_LEG_HI": knight_leg_hi,
+        "ELEPHANT_TARGET_LO": elephant_target_lo,
+        "ELEPHANT_TARGET_HI": elephant_target_hi,
+        "ELEPHANT_LEG_LO": elephant_leg_lo,
+        "ELEPHANT_LEG_HI": elephant_leg_hi,
+        "KING_TARGET_LO": king_target_lo,
+        "KING_TARGET_HI": king_target_hi,
+        "GUARD_TARGET_LO": guard_target_lo,
+        "GUARD_TARGET_HI": guard_target_hi,
+        "SOLDIER_TARGET_LO": soldier_target_lo,
+        "SOLDIER_TARGET_HI": soldier_target_hi,
+        "KING_CHECKED_SOLDIER_LO": king_checked_soldier_lo,
+        "KING_CHECKED_SOLDIER_HI": king_checked_soldier_hi,
+        "DANGER_MARGIN_LO": danger_margin_lo,
+        "DANGER_MARGIN_HI": danger_margin_hi,
+        "KNIGHT_ATTACK_LIMIT_LO": knight_attack_limit_lo,
+        "KNIGHT_ATTACK_LIMIT_HI": knight_attack_limit_hi,
+        "KNIGHT_MOBILITY": knight_mobility,
+        "ELEPHANT_ATTACK_LIMIT_LO": elephant_attack_limit_lo,
+        "ELEPHANT_ATTACK_LIMIT_HI": elephant_attack_limit_hi,
+    }
+    folds = {
+        "knight": (knight_collisions, knight_checked),
+        "elephant": (elephant_collisions, elephant_checked),
+    }
+    return tables, folds
 
-_READONLY_TABLES = (
-    MASK_SITE_LO,
-    MASK_SITE_HI,
-    KNIGHT_TARGET_LO,
-    KNIGHT_TARGET_HI,
-    KNIGHT_LEG_LO,
-    KNIGHT_LEG_HI,
-    ELEPHANT_TARGET_LO,
-    ELEPHANT_TARGET_HI,
-    ELEPHANT_LEG_LO,
-    ELEPHANT_LEG_HI,
-    KING_TARGET_LO,
-    KING_TARGET_HI,
-    GUARD_TARGET_LO,
-    GUARD_TARGET_HI,
-    SOLDIER_TARGET_LO,
-    SOLDIER_TARGET_HI,
-    KING_CHECKED_SOLDIER_LO,
-    KING_CHECKED_SOLDIER_HI,
-    DANGER_MARGIN_LO,
-    DANGER_MARGIN_HI,
-    KNIGHT_ATTACK_LIMIT_LO,
-    KNIGHT_ATTACK_LIMIT_HI,
-    KNIGHT_MOBILITY,
-    ELEPHANT_ATTACK_LIMIT_LO,
-    ELEPHANT_ATTACK_LIMIT_HI,
-)
-for _table in _READONLY_TABLES:
-    _table.setflags(write=False)
 
-BUILD_SECONDS = time.perf_counter() - _BUILD_START
+def _build_and_freeze():
+    start = time.perf_counter()
+    tables, folds = _build_basic_tables()
+    for table in tables.values():
+        table.setflags(write=False)
+    return tables, folds, time.perf_counter() - start
 
-del _table, _site, _play, _moves, _legs, _drop, _mask_lo, _mask_hi
+
+_TABLES, _FOLDS, BUILD_SECONDS = _build_and_freeze()
+
+FOLD_COLLISIONS = {name: collisions for name, (collisions, _) in _FOLDS.items()}
+FOLD_CHECKED = {name: checked for name, (_, checked) in _FOLDS.items()}
+assert FOLD_COLLISIONS["knight"] == 0, "马腿位折叠键不应碰撞"
+
+MASK_SITE_LO = _TABLES["MASK_SITE_LO"]
+MASK_SITE_HI = _TABLES["MASK_SITE_HI"]
+KNIGHT_TARGET_LO = _TABLES["KNIGHT_TARGET_LO"]
+KNIGHT_TARGET_HI = _TABLES["KNIGHT_TARGET_HI"]
+KNIGHT_LEG_LO = _TABLES["KNIGHT_LEG_LO"]
+KNIGHT_LEG_HI = _TABLES["KNIGHT_LEG_HI"]
+ELEPHANT_TARGET_LO = _TABLES["ELEPHANT_TARGET_LO"]
+ELEPHANT_TARGET_HI = _TABLES["ELEPHANT_TARGET_HI"]
+ELEPHANT_LEG_LO = _TABLES["ELEPHANT_LEG_LO"]
+ELEPHANT_LEG_HI = _TABLES["ELEPHANT_LEG_HI"]
+KING_TARGET_LO = _TABLES["KING_TARGET_LO"]
+KING_TARGET_HI = _TABLES["KING_TARGET_HI"]
+GUARD_TARGET_LO = _TABLES["GUARD_TARGET_LO"]
+GUARD_TARGET_HI = _TABLES["GUARD_TARGET_HI"]
+SOLDIER_TARGET_LO = _TABLES["SOLDIER_TARGET_LO"]
+SOLDIER_TARGET_HI = _TABLES["SOLDIER_TARGET_HI"]
+KING_CHECKED_SOLDIER_LO = _TABLES["KING_CHECKED_SOLDIER_LO"]
+KING_CHECKED_SOLDIER_HI = _TABLES["KING_CHECKED_SOLDIER_HI"]
+DANGER_MARGIN_LO = _TABLES["DANGER_MARGIN_LO"]
+DANGER_MARGIN_HI = _TABLES["DANGER_MARGIN_HI"]
+KNIGHT_ATTACK_LIMIT_LO = _TABLES["KNIGHT_ATTACK_LIMIT_LO"]
+KNIGHT_ATTACK_LIMIT_HI = _TABLES["KNIGHT_ATTACK_LIMIT_HI"]
+KNIGHT_MOBILITY = _TABLES["KNIGHT_MOBILITY"]
+ELEPHANT_ATTACK_LIMIT_LO = _TABLES["ELEPHANT_ATTACK_LIMIT_LO"]
+ELEPHANT_ATTACK_LIMIT_HI = _TABLES["ELEPHANT_ATTACK_LIMIT_HI"]
 
 
 def unpack_sites(lo, hi):
