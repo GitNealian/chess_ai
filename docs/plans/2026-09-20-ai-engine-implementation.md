@@ -356,10 +356,7 @@ def ref_knight_targets(site):
 
 def test_knight_targets_match_reference():
     for site in range(90):
-        lo, hi = T.knight_targets(site)
-        got = sorted(s for s in range(90) if (lo >> s) & 1 or (hi >> (s - 64)) & 1 if s >= 64 else (lo >> s) & 1)
-        # 简化写法：使用 tables 提供的解包辅助
-        got = sorted(T.unpack_sites(lo, hi))
+        got = sorted(T.unpack_sites(*T.knight_targets(site)))
         assert got == sorted(ref_knight_targets(site)), site
 
 
@@ -399,27 +396,25 @@ def test_guard_and_king_inside_palace():
 
 
 def test_soldier_moves_and_king_checked_soldier_sites():
-    # 红兵(row=6, y=3 过河) 应向 row-1 及左右走
-    site = site_of(6, 4)
-    targets = set(T.unpack_sites(*T.soldier_targets(C.RED, site)))
-    assert targets == {site_of(5, 4), site_of(6, 3), site_of(6, 5)}
-    # 未过河红兵(row=7) 只能向 row-1
-    site = site_of(7, 4)
-    assert set(T.unpack_sites(*T.soldier_targets(C.RED, site))) == {site_of(6, 4)}
-    # 黑卒(row=3) 向下 row+1 及左右
-    site = site_of(3, 4)
-    assert set(T.unpack_sites(*T.soldier_targets(C.BLACK, site))) == {site_of(4, 4), site_of(3, 3), site_of(3, 5)}
-    # KingCheckedSoldierBitBoards：能吃到 site 的兵位
-    site = site_of(9, 4)   # 红方九宫底
-    sites = set(T.unpack_sites(*T.king_checked_soldier_sites(site)))
-    assert sites == {site_of(8, 4), site_of(9, 3), site_of(9, 5)}
+    # 过河判定：红兵 row<=4 可横走（初始 row6，前进方向 row-1）
+    assert set(T.unpack_sites(*T.soldier_targets(C.RED, site_of(4, 4)))) == {site_of(3, 4), site_of(4, 3), site_of(4, 5)}
+    # 红兵未过河（row5）：只能前进
+    assert set(T.unpack_sites(*T.soldier_targets(C.RED, site_of(5, 4)))) == {site_of(4, 4)}
+    # 黑卒未过河（row4）：只能前进（row+1）
+    assert set(T.unpack_sites(*T.soldier_targets(C.BLACK, site_of(4, 4)))) == {site_of(5, 4)}
+    # 黑卒过河（row5）：可前进与横走
+    assert set(T.unpack_sites(*T.soldier_targets(C.BLACK, site_of(5, 4)))) == {site_of(6, 4), site_of(5, 3), site_of(5, 5)}
+    # KingCheckedSoldierBitBoards：能攻击 site 的对方兵位置
+    # 红方半场（row>=5）站点 → 黑卒攻击位 {site-9, site-1, site+1}
+    assert set(T.unpack_sites(*T.king_checked_soldier_sites(site_of(9, 4)))) == {site_of(8, 4), site_of(9, 3), site_of(9, 5)}
+    # 黑方半场（row<5）中央站点 → 红兵攻击位 {site+9, site-1, site+1}
+    assert set(T.unpack_sites(*T.king_checked_soldier_sites(site_of(4, 4)))) == {site_of(5, 4), site_of(4, 3), site_of(4, 5)}
 
 
 def test_danger_margin_masks():
-    # DangerMarginBit[BLACK] 覆盖上半区近九宫，[RED] 覆盖下半区；可用面积/格子数做冒烟
-    lo_b, hi_b = T.danger_margin(C.BLACK)
-    lo_r, hi_r = T.danger_margin(C.RED)
-    assert T.count(lo_b, hi_b) > 0 and T.count(lo_r, hi_r) > 0
+    # 黑方危险区（Java blackDangerMarginArray）= site 0-26 + 30-32；红方 = site 57-59 + 63-89（row6 col3-5）
+    assert set(T.unpack_sites(*T.danger_margin(C.BLACK))) == set(range(0, 27)) | {30, 31, 32}
+    assert set(T.unpack_sites(*T.danger_margin(C.RED))) == {57, 58, 59} | set(range(63, 90))
 ```
 
 > 说明：`T.unpack_sites(lo, hi)` 为普通 Python 辅助函数（返回 site 列表）；`T.knight_leg_keys(site)` 返回该站点所有可能的腿位折叠键（供遍历）。
