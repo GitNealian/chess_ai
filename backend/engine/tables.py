@@ -1,8 +1,9 @@
-"""基础预生成表：马/象/士/将/兵、危险区与攻击限制表。
+"""基础预生成表：马/象/士/将/兵、危险区、攻击限制表与车炮行列表。
 
 Java 参考：ChessInitialize.java 的 initKnightMove / initElephantMove /
 initSoldier / preBitBoardKingMove / preBitBoardGuardMove /
-preKingCheckedSoldierBitBoards / preBitBoardAttack，以及 SearchEngine.java
+preKingCheckedSoldierBitBoards / preBitBoardAttack / initChariotGunVariedMove /
+initGunFackEatMove / preGunAndChariotBitBoardAttack，以及 SearchEngine.java
 的 DangerMarginBit。
 
 约定：
@@ -12,7 +13,10 @@ preKingCheckedSoldierBitBoards / preBitBoardAttack，以及 SearchEngine.java
 - 马/象攻击限制表覆盖全部腿位组合，包括"全部腿位被占据"（空腿集为空集）
   的边界：Java 的 getAllLegCombByLeg 只枚举非空腿位子集，该键在 Java 表中
   没有条目（以此键查表会取到空引用），Python 侧显式补齐；
-- 折叠键碰撞时保持 Java 的后写覆盖语义（实测马 0 次、象 4 次碰撞）。
+- 折叠键碰撞时保持 Java 的后写覆盖语义（实测马 0 次、象 4 次碰撞）；
+- 车炮行/列表第二维是行/列占据掩码：行掩码 boardBitRow 的 bit k 对应列 8-k
+  （棋子自身位 = 1<<(8-col)），列掩码 boardBitCol 的 bit k 对应行 9-k
+  （棋子自身位 = 1<<(9-row)）；掩码不含棋子自身位时该组合为空掩码。
 """
 
 import itertools
@@ -25,6 +29,12 @@ from . import constants as C
 
 __all__ = [
     "BUILD_SECONDS",
+    "CHARIOT_ATTACK_COL_HI",
+    "CHARIOT_ATTACK_COL_LO",
+    "CHARIOT_ATTACK_ROW_HI",
+    "CHARIOT_ATTACK_ROW_LO",
+    "CHARIOT_GUN_MOBILITY_COL",
+    "CHARIOT_GUN_MOBILITY_ROW",
     "DANGER_MARGIN_HI",
     "DANGER_MARGIN_LO",
     "ELEPHANT_ATTACK_LIMIT_HI",
@@ -37,6 +47,18 @@ __all__ = [
     "FOLD_COLLISIONS",
     "GUARD_TARGET_HI",
     "GUARD_TARGET_LO",
+    "GUN_ATTACK_COL_HI",
+    "GUN_ATTACK_COL_LO",
+    "GUN_ATTACK_ROW_HI",
+    "GUN_ATTACK_ROW_LO",
+    "GUN_FAKE_ATTACK_COL_HI",
+    "GUN_FAKE_ATTACK_COL_LO",
+    "GUN_FAKE_ATTACK_ROW_HI",
+    "GUN_FAKE_ATTACK_ROW_LO",
+    "GUN_MORE_REST_ATTACK_COL_HI",
+    "GUN_MORE_REST_ATTACK_COL_LO",
+    "GUN_MORE_REST_ATTACK_ROW_HI",
+    "GUN_MORE_REST_ATTACK_ROW_LO",
     "KING_CHECKED_SOLDIER_HI",
     "KING_CHECKED_SOLDIER_LO",
     "KING_TARGET_HI",
@@ -50,8 +72,16 @@ __all__ = [
     "KNIGHT_TARGET_LO",
     "MASK_SITE_HI",
     "MASK_SITE_LO",
+    "MOVE_CHARIOT_GUN_COL_HI",
+    "MOVE_CHARIOT_GUN_COL_LO",
+    "MOVE_CHARIOT_GUN_ROW_HI",
+    "MOVE_CHARIOT_GUN_ROW_LO",
     "SOLDIER_TARGET_HI",
     "SOLDIER_TARGET_LO",
+    "chariot_attack_col",
+    "chariot_attack_row",
+    "chariot_gun_mobility_col",
+    "chariot_gun_mobility_row",
     "count",
     "danger_margin",
     "elephant_leg_keys",
@@ -61,12 +91,20 @@ __all__ = [
     "fold_elephant_key",
     "fold_knight_key",
     "guard_targets",
+    "gun_attack_col",
+    "gun_attack_row",
+    "gun_fake_attack_col",
+    "gun_fake_attack_row",
+    "gun_more_rest_attack_col",
+    "gun_more_rest_attack_row",
     "king_checked_soldier_sites",
     "king_targets",
     "knight_leg_keys",
     "knight_targets",
     "knight_targets_limit",
     "lowest_site",
+    "move_chariot_gun_col",
+    "move_chariot_gun_row",
     "soldier_targets",
     "unpack_sites",
 ]
@@ -249,8 +287,221 @@ def _fill_attack_limit(limit_lo, limit_hi, moves_fn, fold_fn, mobility):
     return collisions, checked
 
 
+# ---- 车炮行/列预生成表（Java initChariotGunVariedMove / initGunFackEatMove）----
+#
+# 第二维是"该行/该列的占据掩码"，与 Java 一致：
+# - 行：boardBitRow 的 bit k 对应真实列 8-k，共 2^9 = 512 种；
+# - 列：boardBitCol 的 bit k 对应真实行 9-k，共 2^10 = 1024 种。
+# Java 先生成"按棋子所在列/行索引的本地相对偏移表"，再由
+# preGunAndChariotBitBoardAttack 展开为 90 坐标；此处直接输出 (lo, hi)。
+
+_ROW_MASK_BITS = 9
+_COL_MASK_BITS = 10
+_ROW_MASK_COUNT = 1 << _ROW_MASK_BITS
+_COL_MASK_COUNT = 1 << _COL_MASK_BITS
+
+_MODES = ("chariot", "move", "gun", "fake", "more")
+_ROW_TABLE_NAMES = {
+    "chariot": "CHARIOT_ATTACK_ROW",
+    "move": "MOVE_CHARIOT_GUN_ROW",
+    "gun": "GUN_ATTACK_ROW",
+    "fake": "GUN_FAKE_ATTACK_ROW",
+    "more": "GUN_MORE_REST_ATTACK_ROW",
+}
+_COL_TABLE_NAMES = {
+    mode: name.replace("_ROW", "_COL") for mode, name in _ROW_TABLE_NAMES.items()
+}
+
+_POW2_TO_BIT = [0] * (_COL_MASK_COUNT + 1)
+for _k in range(_COL_MASK_BITS + 1):
+    _POW2_TO_BIT[1 << _k] = _k
+del _k
+
+
+def _scan_local_bits(mask, index, size, mode):
+    """局部掩码扫描（对应 Java 沿 i±1 两个方向的循环）。
+
+    mask：行/列占据掩码；index：棋子自身位索引；size：位宽（行 9 / 列 10）。
+    返回落点的局部位掩码：方向 A = 位索引增大（行向左 / 列向上），
+    方向 B = 位索引减小（行向右 / 列向下），两方向结果取并集。
+    """
+    s = 1 << index
+    full = (1 << size) - 1
+    above = mask & ~((s << 1) - 1)
+    below = mask & (s - 1)
+    first_up = above & -above
+    first_down = 0 if below == 0 else 1 << (below.bit_length() - 1)
+    out = 0
+    if mode == "move":
+        # 平移：记录空格，遇第一个阻挡停（不含阻挡格）
+        out |= (
+            (full ^ ((s << 1) - 1))
+            if first_up == 0
+            else ((first_up - 1) ^ ((s << 1) - 1))
+        )
+    elif mode == "chariot":
+        # 车吃子：记录第一个阻挡并停
+        out |= first_up
+    elif mode == "gun":
+        # 炮吃子：跳过第一个阻挡（炮架），记录第二个阻挡
+        if first_up:
+            rest = above & ~((first_up << 1) - 1)
+            out |= rest & -rest
+    elif mode == "fake":
+        # 压制位：炮架之后的空位，直到第二个阻挡
+        if first_up:
+            rest = above & ~((first_up << 1) - 1)
+            second_up = rest & -rest
+            out |= (
+                (full ^ ((first_up << 1) - 1))
+                if second_up == 0
+                else ((second_up - 1) ^ ((first_up << 1) - 1))
+            )
+    elif first_up:
+        # 隔两子：跳过前两个阻挡，记录第三个阻挡
+        rest = above & ~((first_up << 1) - 1)
+        second_up = rest & -rest
+        if second_up:
+            rest2 = rest & ~((second_up << 1) - 1)
+            out |= rest2 & -rest2
+    if mode == "move":
+        out |= (
+            (s - 1)
+            if first_down == 0
+            else ((s - 1) ^ ((first_down << 1) - 1))
+        )
+    elif mode == "chariot":
+        out |= first_down
+    elif mode == "gun":
+        if first_down:
+            rest = below & (first_down - 1)
+            if rest:
+                out |= 1 << (rest.bit_length() - 1)
+    elif mode == "fake":
+        if first_down:
+            rest = below & (first_down - 1)
+            second_down = 0 if rest == 0 else 1 << (rest.bit_length() - 1)
+            out |= (
+                (first_down - 1)
+                if second_down == 0
+                else ((first_down - 1) ^ ((second_down << 1) - 1))
+            )
+    elif first_down:
+        rest = below & (first_down - 1)
+        second_down = 0 if rest == 0 else 1 << (rest.bit_length() - 1)
+        if second_down:
+            rest2 = rest & (second_down - 1)
+            if rest2:
+                out |= 1 << (rest2.bit_length() - 1)
+    return out
+
+
+def _local_bits_to_mask(bits, site, axis):
+    """局部位掩码 → 90 坐标 (lo, hi)。
+
+    axis 0（行）：bit k ↔ 列 8-k；axis 1（列）：bit k ↔ 行 9-k。
+    lo 的 bit63（site 63）按 int64 位模式以负数存储，与 bitboard.site_mask 一致。
+    """
+    lo = 0
+    hi = 0
+    if axis == 0:
+        row = site // 9
+        while bits:
+            bit = bits & -bits
+            dest = row * 9 + (8 - _POW2_TO_BIT[bit])
+            bits ^= bit
+            if dest < 64:
+                lo |= 1 << dest
+            else:
+                hi |= 1 << (dest - 64)
+    else:
+        col = site % 9
+        while bits:
+            bit = bits & -bits
+            dest = (9 - _POW2_TO_BIT[bit]) * 9 + col
+            bits ^= bit
+            if dest < 64:
+                lo |= 1 << dest
+            else:
+                hi |= 1 << (dest - 64)
+    if lo >= 1 << 63:
+        lo -= 1 << 64
+    return lo, hi
+
+
+def _build_chariot_gun_tables():
+    """构建全部 [site][mask] 组合的车炮行列表，返回 {表名: ndarray}。"""
+    row_lo = {mode: [0] * (90 * _ROW_MASK_COUNT) for mode in _MODES}
+    row_hi = {mode: [0] * (90 * _ROW_MASK_COUNT) for mode in _MODES}
+    col_lo = {mode: [0] * (90 * _COL_MASK_COUNT) for mode in _MODES}
+    col_hi = {mode: [0] * (90 * _COL_MASK_COUNT) for mode in _MODES}
+    row_mobility = [0] * (90 * _ROW_MASK_COUNT)
+    col_mobility = [0] * (90 * _COL_MASK_COUNT)
+
+    for site in range(90):
+        row, col = divmod(site, 9)
+        index_row = 8 - col
+        index_col = 9 - row
+        own_row = 1 << index_row
+        own_col = 1 << index_col
+        base_row = site * _ROW_MASK_COUNT
+        base_col = site * _COL_MASK_COUNT
+        for mask in range(_ROW_MASK_COUNT):
+            if not mask & own_row:
+                continue
+            move_bits = _scan_local_bits(mask, index_row, _ROW_MASK_BITS, "move")
+            row_mobility[base_row + mask] = move_bits.bit_count()
+            for mode in _MODES:
+                bits = (
+                    move_bits
+                    if mode == "move"
+                    else _scan_local_bits(mask, index_row, _ROW_MASK_BITS, mode)
+                )
+                lo, hi = _local_bits_to_mask(bits, site, 0)
+                row_lo[mode][base_row + mask] = lo
+                row_hi[mode][base_row + mask] = hi
+        for mask in range(_COL_MASK_COUNT):
+            if not mask & own_col:
+                continue
+            move_bits = _scan_local_bits(mask, index_col, _COL_MASK_BITS, "move")
+            col_mobility[base_col + mask] = move_bits.bit_count()
+            for mode in _MODES:
+                bits = (
+                    move_bits
+                    if mode == "move"
+                    else _scan_local_bits(mask, index_col, _COL_MASK_BITS, mode)
+                )
+                lo, hi = _local_bits_to_mask(bits, site, 1)
+                col_lo[mode][base_col + mask] = lo
+                col_hi[mode][base_col + mask] = hi
+
+    tables = {}
+    for mode in _MODES:
+        row_name = _ROW_TABLE_NAMES[mode]
+        col_name = _COL_TABLE_NAMES[mode]
+        tables[f"{row_name}_LO"] = np.array(
+            row_lo[mode], dtype=np.int64
+        ).reshape(90, _ROW_MASK_COUNT)
+        tables[f"{row_name}_HI"] = np.array(
+            row_hi[mode], dtype=np.int64
+        ).reshape(90, _ROW_MASK_COUNT)
+        tables[f"{col_name}_LO"] = np.array(
+            col_lo[mode], dtype=np.int64
+        ).reshape(90, _COL_MASK_COUNT)
+        tables[f"{col_name}_HI"] = np.array(
+            col_hi[mode], dtype=np.int64
+        ).reshape(90, _COL_MASK_COUNT)
+    tables["CHARIOT_GUN_MOBILITY_ROW"] = np.array(
+        row_mobility, dtype=np.int16
+    ).reshape(90, _ROW_MASK_COUNT)
+    tables["CHARIOT_GUN_MOBILITY_COL"] = np.array(
+        col_mobility, dtype=np.int16
+    ).reshape(90, _COL_MASK_COUNT)
+    return tables
+
+
 def _build_basic_tables():
-    """构建全部基础表并自检，返回 (表字典, 折叠键碰撞数, 覆盖组合总数)。"""
+    """构建全部预生成表并自检，返回 (表字典, 折叠键碰撞数, 覆盖组合总数)。"""
     mask_site_lo = np.zeros(90, dtype=np.int64)
     mask_site_hi = np.zeros(90, dtype=np.int64)
     knight_target_lo = np.zeros(90, dtype=np.int64)
@@ -354,6 +605,7 @@ def _build_basic_tables():
         "ELEPHANT_ATTACK_LIMIT_LO": elephant_attack_limit_lo,
         "ELEPHANT_ATTACK_LIMIT_HI": elephant_attack_limit_hi,
     }
+    tables.update(_build_chariot_gun_tables())
     folds = {
         "knight": (knight_collisions, knight_checked),
         "elephant": (elephant_collisions, elephant_checked),
@@ -400,6 +652,28 @@ KNIGHT_ATTACK_LIMIT_HI = _TABLES["KNIGHT_ATTACK_LIMIT_HI"]
 KNIGHT_MOBILITY = _TABLES["KNIGHT_MOBILITY"]
 ELEPHANT_ATTACK_LIMIT_LO = _TABLES["ELEPHANT_ATTACK_LIMIT_LO"]
 ELEPHANT_ATTACK_LIMIT_HI = _TABLES["ELEPHANT_ATTACK_LIMIT_HI"]
+CHARIOT_ATTACK_ROW_LO = _TABLES["CHARIOT_ATTACK_ROW_LO"]
+CHARIOT_ATTACK_ROW_HI = _TABLES["CHARIOT_ATTACK_ROW_HI"]
+MOVE_CHARIOT_GUN_ROW_LO = _TABLES["MOVE_CHARIOT_GUN_ROW_LO"]
+MOVE_CHARIOT_GUN_ROW_HI = _TABLES["MOVE_CHARIOT_GUN_ROW_HI"]
+GUN_ATTACK_ROW_LO = _TABLES["GUN_ATTACK_ROW_LO"]
+GUN_ATTACK_ROW_HI = _TABLES["GUN_ATTACK_ROW_HI"]
+GUN_FAKE_ATTACK_ROW_LO = _TABLES["GUN_FAKE_ATTACK_ROW_LO"]
+GUN_FAKE_ATTACK_ROW_HI = _TABLES["GUN_FAKE_ATTACK_ROW_HI"]
+GUN_MORE_REST_ATTACK_ROW_LO = _TABLES["GUN_MORE_REST_ATTACK_ROW_LO"]
+GUN_MORE_REST_ATTACK_ROW_HI = _TABLES["GUN_MORE_REST_ATTACK_ROW_HI"]
+CHARIOT_GUN_MOBILITY_ROW = _TABLES["CHARIOT_GUN_MOBILITY_ROW"]
+CHARIOT_ATTACK_COL_LO = _TABLES["CHARIOT_ATTACK_COL_LO"]
+CHARIOT_ATTACK_COL_HI = _TABLES["CHARIOT_ATTACK_COL_HI"]
+MOVE_CHARIOT_GUN_COL_LO = _TABLES["MOVE_CHARIOT_GUN_COL_LO"]
+MOVE_CHARIOT_GUN_COL_HI = _TABLES["MOVE_CHARIOT_GUN_COL_HI"]
+GUN_ATTACK_COL_LO = _TABLES["GUN_ATTACK_COL_LO"]
+GUN_ATTACK_COL_HI = _TABLES["GUN_ATTACK_COL_HI"]
+GUN_FAKE_ATTACK_COL_LO = _TABLES["GUN_FAKE_ATTACK_COL_LO"]
+GUN_FAKE_ATTACK_COL_HI = _TABLES["GUN_FAKE_ATTACK_COL_HI"]
+GUN_MORE_REST_ATTACK_COL_LO = _TABLES["GUN_MORE_REST_ATTACK_COL_LO"]
+GUN_MORE_REST_ATTACK_COL_HI = _TABLES["GUN_MORE_REST_ATTACK_COL_HI"]
+CHARIOT_GUN_MOBILITY_COL = _TABLES["CHARIOT_GUN_MOBILITY_COL"]
 
 
 def unpack_sites(lo, hi):
@@ -463,6 +737,58 @@ def king_checked_soldier_sites(site):
 
 def danger_margin(play):
     return int(DANGER_MARGIN_LO[play]), int(DANGER_MARGIN_HI[play])
+
+
+def chariot_attack_row(site, mask):
+    return int(CHARIOT_ATTACK_ROW_LO[site, mask]), int(CHARIOT_ATTACK_ROW_HI[site, mask])
+
+
+def move_chariot_gun_row(site, mask):
+    return int(MOVE_CHARIOT_GUN_ROW_LO[site, mask]), int(MOVE_CHARIOT_GUN_ROW_HI[site, mask])
+
+
+def gun_attack_row(site, mask):
+    return int(GUN_ATTACK_ROW_LO[site, mask]), int(GUN_ATTACK_ROW_HI[site, mask])
+
+
+def gun_fake_attack_row(site, mask):
+    return int(GUN_FAKE_ATTACK_ROW_LO[site, mask]), int(GUN_FAKE_ATTACK_ROW_HI[site, mask])
+
+
+def gun_more_rest_attack_row(site, mask):
+    return int(GUN_MORE_REST_ATTACK_ROW_LO[site, mask]), int(
+        GUN_MORE_REST_ATTACK_ROW_HI[site, mask]
+    )
+
+
+def chariot_gun_mobility_row(site, mask):
+    return int(CHARIOT_GUN_MOBILITY_ROW[site, mask])
+
+
+def chariot_attack_col(site, mask):
+    return int(CHARIOT_ATTACK_COL_LO[site, mask]), int(CHARIOT_ATTACK_COL_HI[site, mask])
+
+
+def move_chariot_gun_col(site, mask):
+    return int(MOVE_CHARIOT_GUN_COL_LO[site, mask]), int(MOVE_CHARIOT_GUN_COL_HI[site, mask])
+
+
+def gun_attack_col(site, mask):
+    return int(GUN_ATTACK_COL_LO[site, mask]), int(GUN_ATTACK_COL_HI[site, mask])
+
+
+def gun_fake_attack_col(site, mask):
+    return int(GUN_FAKE_ATTACK_COL_LO[site, mask]), int(GUN_FAKE_ATTACK_COL_HI[site, mask])
+
+
+def gun_more_rest_attack_col(site, mask):
+    return int(GUN_MORE_REST_ATTACK_COL_LO[site, mask]), int(
+        GUN_MORE_REST_ATTACK_COL_HI[site, mask]
+    )
+
+
+def chariot_gun_mobility_col(site, mask):
+    return int(CHARIOT_GUN_MOBILITY_COL[site, mask])
 
 
 def _leg_keys(site, moves, fold_fn):

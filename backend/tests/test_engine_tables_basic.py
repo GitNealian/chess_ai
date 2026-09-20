@@ -222,6 +222,7 @@ def test_mask_site_one_bit_each():
 
 def test_all_tables_readonly():
     names = [name for name in T.__all__ if isinstance(getattr(T, name), np.ndarray)]
-    assert len(names) == 25
+    # 25 张基础表 + Task 4 的 22 张车炮行列表
+    assert len(names) == 47
     for name in names:
         assert not getattr(T, name).flags.writeable, name
