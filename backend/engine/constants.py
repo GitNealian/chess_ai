@@ -30,6 +30,8 @@ BLACK_KING = KING + 7
 BLACK_PIECES_START = 16
 RED_PIECES_START = 32
 
+PIECE_STARTS = (BLACK_PIECES_START, RED_PIECES_START)
+
 EMPTY = 0
 NOTHING = -1
 
@@ -80,6 +82,10 @@ ATTACK_DEFENSE_INDEX = np.array(
 _BASE_SCORES = [0, 100, 200, 200, 610, 490, 1300, 3000]
 PIECE_SCORES = np.array(_BASE_SCORES + _BASE_SCORES[1:], dtype=np.int32)
 
+for _table in (PIECE_ROLES, PIECE_KINDS, ATTACK_DEFENSE_INDEX, PIECE_SCORES):
+    _table.setflags(write=False)
+del _table
+
 MAX_SCORE = 9999
 LONG_CHECK_SCORE = 8888
 DRAW_SCORE = 0
@@ -103,7 +109,7 @@ def site_to_xy(site):
 
 
 def pack_move(src, dest):
-    return src | (dest << 7)
+    return int(src) | (int(dest) << 7)
 
 
 def move_src(move):
@@ -116,3 +122,7 @@ def move_dest(move):
 
 def play_of_piece(idx):
     return RED if idx >= RED_PIECES_START else BLACK
+
+
+def play_of_site(site):
+    return RED if site >= 45 else BLACK
