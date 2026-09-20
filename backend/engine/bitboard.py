@@ -97,16 +97,18 @@ def _words(lo, hi):
 
 @njit(cache=True)
 def check_sum_knight(lo, hi):
+    """对应 BitBoard.java:90-94，位移 0/7/14/21。"""
     low, mid1, mid2, him = _words(lo, hi)
     t = low ^ mid1 ^ mid2 ^ him
-    return (t & 0x7F) + ((t >> 6) & 0x7F) + ((t >> 13) & 0x7F) + ((t >> 19) & 0x7F)
+    return (t & 0x7F) + ((t >> 7) & 0x7F) + ((t >> 14) & 0x7F) + ((t >> 21) & 0x7F)
 
 
 @njit(cache=True)
 def check_sum_elephant(lo, hi):
+    """对应 BitBoard.java:83-88，位移 0/6/13/19。"""
     low, mid1, mid2, him = _words(lo, hi)
     t = low ^ mid1 ^ mid2 ^ him
-    return (t & 0x7F) + ((t >> 7) & 0x7F) + ((t >> 14) & 0x7F) + ((t >> 21) & 0x7F)
+    return (t & 0x7F) + ((t >> 6) & 0x7F) + ((t >> 13) & 0x7F) + ((t >> 19) & 0x7F)
 
 
 def iter_sites(lo, hi):

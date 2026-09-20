@@ -68,8 +68,8 @@ def test_check_sum_matches_java_words():
         lo, hi = bb.site_mask(site)
         low, mid1, mid2, him = bb._words(lo, hi)
         t = low ^ mid1 ^ mid2 ^ him
-        expected_knight = (t & 0x7F) + ((t >> 6) & 0x7F) + ((t >> 13) & 0x7F) + ((t >> 19) & 0x7F)
-        expected_elephant = (t & 0x7F) + ((t >> 7) & 0x7F) + ((t >> 14) & 0x7F) + ((t >> 21) & 0x7F)
+        expected_knight = (t & 0x7F) + ((t >> 7) & 0x7F) + ((t >> 14) & 0x7F) + ((t >> 21) & 0x7F)
+        expected_elephant = (t & 0x7F) + ((t >> 6) & 0x7F) + ((t >> 13) & 0x7F) + ((t >> 19) & 0x7F)
         assert bb.check_sum_knight(lo, hi) == expected_knight
         assert bb.check_sum_elephant(lo, hi) == expected_elephant
     # 90 站点单独掩码的最大键应远小于 200（原 Java 表维度）
@@ -83,3 +83,53 @@ def test_iter_sites_ascending():
     assert list(bb.iter_sites(lo, hi)) == [2, 10, 65]
     # 负数 lo（site 63 置位）不得因 Python 补码语义死循环
     assert list(bb.iter_sites(np.int64(-(1 << 63)), np.int64(0))) == [63]
+
+
+def _java_site_words(site):
+    # BitBoard.java L67-77 单站点 4×int 拆分，独立参考实现
+    if site < 27:
+        return 1 << site, 0, 0, 0
+    if site < 54:
+        return 0, 1 << (site - 27), 0, 0
+    if site < 81:
+        return 0, 0, 1 << (site - 54), 0
+    return 0, 0, 0, 1 << (site - 81)
+
+
+def _java_check_sum_elephant(low, mid1, mid2, him):
+    # BitBoard.java L83-88：位移 0/6/13/19
+    t = low ^ mid1 ^ mid2 ^ him
+    return (t & 0x7F) + ((t >> 6) & 0x7F) + ((t >> 13) & 0x7F) + ((t >> 19) & 0x7F)
+
+
+def _java_check_sum_knight(low, mid1, mid2, him):
+    # BitBoard.java L90-94：位移 0/7/14/21
+    t = low ^ mid1 ^ mid2 ^ him
+    return (t & 0x7F) + ((t >> 7) & 0x7F) + ((t >> 14) & 0x7F) + ((t >> 21) & 0x7F)
+
+
+def _pack_site(site):
+    # 手工构造 (lo, hi) 位模式，不调用 bitboard 任何函数
+    if site < 64:
+        v = 1 << site
+        if v >= 1 << 63:
+            v -= 1 << 64
+        return np.int64(v), np.int64(0)
+    return np.int64(0), np.int64(1 << (site - 64))
+
+
+def test_check_sum_independent_java_reference():
+    knight_keys = []
+    elephant_keys = []
+    for site in range(90):
+        ref_knight = _java_check_sum_knight(*_java_site_words(site))
+        ref_elephant = _java_check_sum_elephant(*_java_site_words(site))
+        lo, hi = _pack_site(site)
+        assert bb.check_sum_knight(lo, hi) == ref_knight, site
+        assert bb.check_sum_elephant(lo, hi) == ref_elephant, site
+        knight_keys.append(ref_knight)
+        elephant_keys.append(ref_elephant)
+    # Java 语义下 90 个单站点掩码的键值上界（马窗口步长 7 不重叠、象步长 6 重叠）
+    assert max(knight_keys) == 64
+    assert max(elephant_keys) == 65
+    assert max(knight_keys) < 200 and max(elephant_keys) < 200
