@@ -1,10 +1,11 @@
-"""局面状态（State）、伪着法生成与 make/unmake 增量维护。
+"""局面状态（State）、伪着法委托与 make/unmake 增量维护。
 
 Java 参考：
 - `Tools.parseFEN`（L59-105）：棋子索引按 FEN 字符扫描顺序分配；
 - `ChessParam`：board/allChess/位图/剩余计数/攻击防御计数/三方掩码；
 - `ChessMoveAbs.genEatMoveList/genNopMoveList`（L452-481）与
-  `chessEatMove/chessNopMove`（L574-704）：查表生成伪着法；
+  `chessEatMove/chessNopMove`（L574-704）：查表生成伪着法，
+  具体实现见 `movegen.py`（`pseudo_moves` 委托其 `gen_moves`）；
 - `ChessMoveAbs.moveOperate/unMoveOperate`（L82-178）与
   `TranspositionTable.moveOperate/unMoveOperate`：baseScore、位图、掩码与
   Zobrist 的增量维护。
@@ -23,7 +24,6 @@ from numba import njit
 
 from . import bitboard
 from . import constants as C
-from . import tables
 from . import zobrist as _zobrist
 from .zobrist import ZOB32, ZOB64
 
@@ -61,17 +61,6 @@ _FEN_PIECE_STARTS = {
     "C": 37,
     "P": 43,
 }
-
-# Java BitBoard.MSB(BLACKPLAYSIGN) 的扫描顺序：Hi→Mid2→Mid1→Low。
-# 掩码统一转 Python int：empty_lo 可达 2^64-1，与 np.int64 混合运算会溢出。
-_BLACK_SCAN_SEGMENTS = tuple(
-    (start, end, int(lo), int(hi))
-    for start, end, (lo, hi) in (
-        (start, end, bitboard.mask_from_sites(range(start, end)))
-        for start, end in ((81, 90), (54, 81), (27, 54), (0, 27))
-    )
-)
-
 
 def _parse_board_layout(layout):
     """按 Java Tools.parseFEN 语义把 FEN 棋盘段扫成 board[90]（site→棋子索引）。
@@ -183,104 +172,16 @@ def full_zobrist(st):
     return _zobrist.full_zobrist(st.board)
 
 
-def _sites_in_scan_order(lo, hi, play):
-    """按 Java BitBoard.MSB(play) 的 site 顺序迭代掩码中的位。
-
-    红方（REDPLAYSIGN=1）：Low→Mid1→Mid2→Hi，即 site 升序 0..89；
-    黑方（BLACKPLAYSIGN=0）：Hi→Mid2→Mid1→Low，即 81..89、54..80、
-    27..53、0..26。
-    """
-    if play == C.RED:
-        yield from bitboard.iter_sites(lo, hi)
-        return
-    for _start, _end, seg_lo, seg_hi in _BLACK_SCAN_SEGMENTS:
-        yield from bitboard.iter_sites(lo & seg_lo, hi & seg_hi)
-
-
-def _xor_pair(first, second):
-    return first[0] ^ second[0], first[1] ^ second[1]
-
-
-def _emit_piece_moves(st, piece, play, opp_lo, opp_hi, empty_lo, empty_hi, out):
-    """把单个棋子的伪着法（先吃子后平移/空格）追加到 out。"""
-    site = int(st.all_chess[piece])
-    if site < 0:
-        return
-    role = int(C.PIECE_ROLES[piece])
-    row, col = divmod(site, 9)
-    if role in (C.RED_CHARIOT, C.BLACK_CHARIOT):
-        attack = _xor_pair(
-            tables.chariot_attack_row(site, int(st.bit_row[row])),
-            tables.chariot_attack_col(site, int(st.bit_col[col])),
-        )
-        quiet = _xor_pair(
-            tables.move_chariot_gun_row(site, int(st.bit_row[row])),
-            tables.move_chariot_gun_col(site, int(st.bit_col[col])),
-        )
-    elif role in (C.RED_GUN, C.BLACK_GUN):
-        attack = _xor_pair(
-            tables.gun_attack_row(site, int(st.bit_row[row])),
-            tables.gun_attack_col(site, int(st.bit_col[col])),
-        )
-        quiet = _xor_pair(
-            tables.move_chariot_gun_row(site, int(st.bit_row[row])),
-            tables.move_chariot_gun_col(site, int(st.bit_col[col])),
-        )
-    elif role in (C.RED_KNIGHT, C.BLACK_KNIGHT):
-        key = int(
-            bitboard.check_sum_knight(
-                int(tables.KNIGHT_LEG_LO[site]) & int(st.mask_all[0]),
-                int(tables.KNIGHT_LEG_HI[site]) & int(st.mask_all[1]),
-            )
-        )
-        attack = tables.knight_targets_limit(site, key)
-        quiet = attack
-    elif role in (C.RED_ELEPHANT, C.BLACK_ELEPHANT):
-        key = int(
-            bitboard.check_sum_elephant(
-                int(tables.ELEPHANT_LEG_LO[site]) & int(st.mask_all[0]),
-                int(tables.ELEPHANT_LEG_HI[site]) & int(st.mask_all[1]),
-            )
-        )
-        attack = tables.elephant_targets_limit(site, key)
-        quiet = attack
-    elif role in (C.RED_KING, C.BLACK_KING):
-        attack = tables.king_targets(site)
-        quiet = attack
-    elif role in (C.RED_GUARD, C.BLACK_GUARD):
-        attack = tables.guard_targets(site)
-        quiet = attack
-    else:
-        attack = tables.soldier_targets(play, site)
-        quiet = attack
-
-    capture_lo = attack[0] & opp_lo
-    capture_hi = attack[1] & opp_hi
-    empty_move_lo = quiet[0] & empty_lo
-    empty_move_hi = quiet[1] & empty_hi
-    for lo, hi in ((capture_lo, capture_hi), (empty_move_lo, empty_move_hi)):
-        for dest in _sites_in_scan_order(lo, hi, play):
-            out.append(C.pack_move(site, dest))
-
-
 def pseudo_moves(st, play):
     """生成 play 方全部伪合法着法（查预生成表；不排序、不过滤自将）。
 
-    棋子遍历顺序同 Java genEatMoveList/genNopMoveList：先 chessPlay[play]+1
-    起的 15 个，最后是 chessPlay[play]（将/帅）。
+    委托给 `movegen.gen_moves`（两阶段顺序与 Java 一致）；返回 Python list
+    以保持既有调用方的向后兼容。
     """
-    opp_lo = int(st.mask_personal[1 - play, 0])
-    opp_hi = int(st.mask_personal[1 - play, 1])
-    empty_lo = ~int(st.mask_all[0]) & bitboard.LO_MASK
-    empty_hi = ~int(st.mask_all[1]) & bitboard.HI_MASK
-    out = []
-    start = C.PIECE_STARTS[play]
-    for offset in range(1, 16):
-        _emit_piece_moves(
-            st, start + offset, play, opp_lo, opp_hi, empty_lo, empty_hi, out
-        )
-    _emit_piece_moves(st, start, play, opp_lo, opp_hi, empty_lo, empty_hi, out)
-    return out
+    from . import movegen
+
+    buf, count = movegen.gen_moves(st, play)
+    return [int(m) for m in buf[:count]]
 
 
 @njit(cache=True)
