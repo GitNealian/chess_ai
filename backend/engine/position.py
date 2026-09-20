@@ -24,19 +24,20 @@ from numba import njit
 
 from . import bitboard
 from . import constants as C
+from . import eval_tables as _eval_tables
 from . import zobrist as _zobrist
 from .zobrist import ZOB32, ZOB64
 
 __all__ = [
     "State",
-    "load_position",
+    "attach_score",
     "full_base_score",
     "full_zobrist",
-    "attach_score",
-    "pseudo_moves",
+    "load_position",
     "make_move",
-    "unmake_move",
     "move_is_capture",
+    "pseudo_moves",
+    "unmake_move",
 ]
 
 State = collections.namedtuple(
@@ -61,6 +62,7 @@ _FEN_PIECE_STARTS = {
     "C": 37,
     "P": 43,
 }
+
 
 def _parse_board_layout(layout):
     """按 Java Tools.parseFEN 语义把 FEN 棋盘段扫成 board[90]（site→棋子索引）。
@@ -139,15 +141,22 @@ def load_position(fen):
         side_to_move=np.array([side_to_move], dtype=np.int8),
     )
     # 与 Java Tools.parseFEN 一致：baseScore 在解析时即初始化为"子力 + 位置"分。
-    # 位置分待 Task 7 接入，此处先与 full_base_score 保持同一全量语义。
+    # 位置分来自 eval_tables 的中局表（Task 7），与 Java SearchEngine 构造
+    # 函数 getChessBaseScore 的全量重算语义相同。
     st.base_score[C.RED], st.base_score[C.BLACK] = full_base_score(st)
     return st
 
 
 @njit(cache=True)
 def attach_score(role, site):
-    """棋子位置价值分；Task 7 引入具体表，本任务恒为 0。"""
-    return 0
+    """棋子位置价值分（中局位置表，Task 7）。
+
+    对应 Java `EvaluateComputeMiddleGame.chessAttachScore`；role 1-7 红方、
+    8-14 黑方，红表 = 黑表行镜像。搜索阶段的残局切换由 Task 8 处理。
+    """
+    if role <= 7:
+        return _eval_tables.MIDDLE_RED[role - 1, site]
+    return _eval_tables.MIDDLE_BLACK[role - 8, site]
 
 
 def full_base_score(st):
@@ -159,7 +168,7 @@ def full_base_score(st):
         if piece == 0:
             continue
         role = int(C.PIECE_ROLES[piece])
-        value = int(C.PIECE_SCORES[role]) + attach_score(role, site)
+        value = int(C.PIECE_SCORES[role]) + int(attach_score(role, site))
         if piece < C.RED_PIECES_START:
             black += value
         else:
