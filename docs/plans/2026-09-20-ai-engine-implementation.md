@@ -249,23 +249,36 @@ def test_popcount_and_empty():
     assert not bb.empty(lo, 0)
 
 
-def test_king_leg_checksum_matches_java_formula():
-    # Java: temp1 = Low ^ Mid1 ^ Mid2 ^ Hi;
-    # r = (t & 0x7f) + ((t>>>6) & 0x7f) + ((t>>>13) & 0x7f) + ((t>>>19) & 0x7f)
-    lo = np.int64(0b1011)
-    hi = np.int64(0)
-    key = bb.check_sum_knight(lo, hi)
-    t = lo ^ hi
-    expected = (int(t) & 0x7F) + ((int(t) >> 6) & 0x7F) + ((int(t) >> 13) & 0x7F) + ((int(t) >> 19) & 0x7F)
-    assert key == expected
+def test_word_reconstruction():
+    # 4 字重建：Low site0-26、Mid1 27-53、Mid2 54-80、Hi 81-89
+    assert bb._words(*bb.site_mask(0))[0] == 1
+    assert bb._words(*bb.site_mask(27))[1] == 1
+    assert bb._words(*bb.site_mask(54))[2] == 1
+    assert bb._words(*bb.site_mask(80))[2] == 1 << 26
+    assert bb._words(*bb.site_mask(81))[3] == 1
 
 
-def test_elephant_checksum_shifts():
-    lo = np.int64(0b1000001)
-    key = bb.check_sum_elephant(lo, 0)
-    t = int(lo)
-    expected = (t & 0x7F) + ((t >> 7) & 0x7F) + ((t >> 14) & 0x7F) + ((t >> 21) & 0x7F)
-    assert key == expected
+def test_check_sum_matches_java_independent_reference():
+    # 独立参考（不调用 bb._words）：对照 BitBoard.java L83-88 / L90-94
+    # elephant = (t&0x7f)+((t>>>6)&0x7f)+((t>>>13)&0x7f)+((t>>>19)&0x7f)
+    # knight   = (t&0x7f)+((t>>>7)&0x7f)+((t>>>14)&0x7f)+((t>>>21)&0x7f)
+    # 其中 t = Low ^ Mid1 ^ Mid2 ^ Hi（4 字布局见上）
+    def java_word_bit(site):
+        if site < 27:
+            return 0, 1 << site
+        if site < 54:
+            return 1, 1 << (site - 27)
+        if site < 81:
+            return 2, 1 << (site - 54)
+        return 3, 1 << (site - 81)
+
+    for site in range(90):
+        lo, hi = bb.site_mask(site)
+        word, bit = java_word_bit(site)
+        t = bit if word == 0 else 0
+        # 单站点掩码时 t 即该字的值（其余字为 0）
+        assert bb.check_sum_knight(lo, hi) == (t & 0x7F) + ((t >> 7) & 0x7F) + ((t >> 14) & 0x7F) + ((t >> 21) & 0x7F)
+        assert bb.check_sum_elephant(lo, hi) == (t & 0x7F) + ((t >> 6) & 0x7F) + ((t >> 13) & 0x7F) + ((t >> 19) & 0x7F)
 
 
 def test_iter_sites_ascending():
@@ -287,7 +300,10 @@ Expected: FAIL（ModuleNotFoundError）
 - `has_site / empty / count`（SWAR popcount，见 Java `BitBoard.Count` L128-138，可换成 `bin(x).count("1")` 的手写循环版）
 - `lowest_site(lo, hi) -> int`（无位返回 -1；实现顺序：lo 低位 → hi 低位，即统一 **site 升序**）
 - `pop_lowest(lo, hi) -> (lo, hi, site)`（取最低位并从掩码移除，等价 Java 的 `MSB` + `assignXor`）
-- `check_sum_knight(lo, hi)` / `check_sum_elephant(lo, hi)`：**逐字复刻** Java `BitBoard.checkSumOfKnight/Elephant`（L83-94）的移位 0/6/13/19 与 0/7/14/21
+- `check_sum_knight(lo, hi)` / `check_sum_elephant(lo, hi)`：**逐字复刻** Java（BitBoard.java）：
+  - `checkSumOfElephant`（L83-88）移位 **0/6/13/19**
+  - `checkSumOfKnight`（L90-94）移位 **0/7/14/21**
+  - 4 字布局：Low site0-26、Mid1 27-53、Mid2 54-80、Hi 81-89；**后续 Task 3/4 必须调用本模块函数，禁止内联公式**
 - `iter_sites(lo, hi)`：生成器形式供测试使用（非 njit，或 njit 版另写）
 
 **Step 4: 运行确认通过**

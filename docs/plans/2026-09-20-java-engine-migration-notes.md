@@ -285,12 +285,21 @@ else        { rowOrCol=col; moveSiteTemp=moveSite[row]; site = 目标行*9 + col
 **马/象的腿位折叠键**（L83-94）：
 
 ```java
-checkSumOfKnight: temp1 = Low^Mid1^Mid2^Hi;
-    r = (temp1&0x7f) + ((temp1>>>6)&0x7f) + ((temp1>>>13)&0x7f) + ((temp1>>>19)&0x7f);
-checkSumOfElephant 同上但移位 0/7/14/21
+// BitBoard.java L83-88  checkSumOfElephant
+temp1 = (Low) ^ (Mid1) ^ (Mid2) ^ (Hi);
+r = (temp1&0x7f) + (temp1>>>6&0x7f) + (temp1>>>13&0x7f) + (temp1>>>19&0x7f);
+
+// BitBoard.java L90-94  checkSumOfKnight
+temp1 = (Low) ^ (Mid1) ^ (Mid2) ^ (Hi);
+r = (temp1&0x7f) + (temp1>>>7&0x7f) + (temp1>>>14&0x7f) + (temp1>>>21&0x7f);
 ```
 
-我用脚本模拟了全部 90 个站点：马的 key 最大 **149**，象 key 最大 **149**，都小于表维度 200，因此原表不会越界（这是几何约束导致的，不是巧合可以忽略的）。Python 复刻可以保留 200 大小或放大到 512，但**键的计算公式必须完全一致**，否则查表结果不同。
+> **更正（2026-09-20）**：本文早期版本把两者的移位写反（误记 knight=0/6/13/19、elephant=0/7/14/21）。
+> 以 BitBoard.java 源码为准：**elephant=6/13/19、knight=7/14/21**。Python 侧必须直接调用
+> `engine.bitboard.check_sum_knight/check_sum_elephant`，禁止内联公式（Task 2 曾因此出错）。
+
+
+实测（2026-09-20 复核）：全部 90 站点、全部腿位子集的折叠键上界为 **马 108、象 149**（单站点掩码时为马 64、象 65），都小于表维度 200，因此原表不会越界（这是几何约束导致的，不是巧合可以忽略的）。Python 复刻可以保留 200 大小或放大到 512，但**键的计算公式必须完全一致**（直接调用 bitboard 的折叠函数），否则查表结果不同。
 
 `preBitBoardAttack`（L461-519）的生成算法：对某站点 i，取其腿位（去重）的所有非空子集（`getAllLegCombByLeg` L544-564 + `computCombination` L572-586），对每个子集构造"这些腿位被占据"的腿位位棋盘 `siteLegBit`，其折叠键即查表键；然后遍历该站点的 8 个（象 4 个）走法，腿位不在子集里的走法目标并入 `siteAttBit`。注意存在键碰撞时**后写覆盖**，复刻时保持覆盖语义即可。
 
@@ -1085,7 +1094,7 @@ def evaluate(play):
 
 1. **完全没有着法 int 编码**，不要发明；MoveNode 就是 5 int 对象。
 2. **BitBoard 的 4 字切分**影响两处：`MSB` 的扫描顺序（红升序、黑按字降序）、`checkSum` 折叠键。若用 Python 单一大整数，务必单独实现这两个语义。
-3. `checkSumOfKnight/Elephant` 的移位与掩码必须逐字保留（0/6/13/19 与 0/7/14/21），表 200 维足够（实测最大 149），但保留 200 或扩大均可。
+3. `checkSumOfElephant` 位移 0/6/13/19（BitBoard.java L85）、`checkSumOfKnight` 位移 0/7/14/21（BitBoard.java L92）——不要记反；表 200 维足够（全体腿位组合实测上界：马 108、象 149），但保留 200 或扩大均可。Python 侧直接调用 `engine.bitboard` 的折叠函数。
 4. **行/列表的第一维是"列 col/行 row"而不是坐标**（`ChariotBitBoardOfAttackRow[col][rowMask]`），且 `rowMask` 是 `boardBitRow` 原始 int（bit(8-col) 编码）；列同理（bit(9-row)）。
 5. **`if (isEat && j==site) continue`** 只跳过"该行/列仅车自身"的状态；因该状态下无阻挡可吃，不产生行为差异（炮同理正确）。
 6. 炮的攻击表只把"越过第一个阻挡后的第二个阻挡格"作为吃子落点；空格移动用 MoveChariotOrGun 表；压制位（FakeAttack）是炮架后的空位；隔两子表用于沉底炮检测。
