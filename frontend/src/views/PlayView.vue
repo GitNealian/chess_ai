@@ -14,7 +14,7 @@
         @cell-click="onCellClick"
       />
       <div class="side">
-        <p class="turn" data-test="turn">{{ turnText }}</p>
+        <p v-if="!session.state.gameOver" class="turn" data-test="turn">{{ turnText }}</p>
         <p v-if="session.state.hint" class="warn" data-test="hint">{{ session.state.hint }}</p>
         <p v-if="session.state.gameOver" class="result" data-test="game-over">{{ resultText }}</p>
         <div class="controls">
@@ -50,11 +50,13 @@ const turnText = computed(() => {
   return session.state.check ? `${side}走棋（被将军）` : `${side}走棋`;
 });
 
+const RESULT_REASONS = { checkmate: "绝杀", stalemate: "困毙" };
+
 const resultText = computed(() => {
   const over = session.state.gameOver;
   if (!over) return "";
   const winner = over.winner === "red" ? "红方" : "黑方";
-  return over.reason === "checkmate" ? `${winner}胜（绝杀）` : `${winner}胜（困毙）`;
+  return `${winner}胜（${RESULT_REASONS[over.reason] || "终局"}）`;
 });
 
 function describe(move, index) {
@@ -70,17 +72,35 @@ function undo() {
   session.undo();
 }
 
+async function probePositionState(game, ply) {
+  try {
+    const data = await api.validateMove({
+      initial_fen: game.initial_fen,
+      moves: game.moves.slice(0, ply - 1),
+      move: game.moves[ply - 1],
+    });
+    if (data.legal) {
+      session.applyState({ check: data.check, gameOver: data.game_over || null });
+    }
+  } catch {
+    // 探测失败不阻塞对局，保持未判定状态
+  }
+}
+
 async function load() {
   loading.value = true;
   error.value = false;
   try {
     if (route.query.game) {
       const game = await api.getGame(route.query.game);
-      const ply = Math.max(
-        0,
-        Math.min(Number(route.query.ply) || 0, game.moves.length)
-      );
+      const rawPly = route.query.ply;
+      const requested =
+        rawPly === undefined || rawPly === "" ? game.moves.length : Number(rawPly) || 0;
+      const ply = Math.max(0, Math.min(requested, game.moves.length));
       session.reset({ initial_fen: game.initial_fen, moves: game.moves.slice(0, ply) });
+      if (ply > 0 && ply === game.moves.length) {
+        await probePositionState(game, ply);
+      }
     } else {
       session.reset({});
     }

@@ -143,6 +143,82 @@ describe("PlayView", () => {
     expect(api.validateMove).toHaveBeenCalledTimes(1);
   });
 
+  it("从棋谱终局步载入时显示结果并锁定棋盘", async () => {
+    route.query = { game: "7" };
+    api.getGame.mockResolvedValue({
+      id: 7,
+      name: "终局棋谱",
+      initial_fen: INITIAL_FEN,
+      moves: [
+        { x1: 1, y1: 2, x2: 4, y2: 2 },
+        { x1: 7, y1: 9, x2: 6, y2: 7 },
+      ],
+    });
+    api.validateMove.mockResolvedValue({
+      legal: true,
+      fen: INITIAL_FEN,
+      side_to_move: "red",
+      chinese: "马8进7",
+      check: true,
+      game_over: { winner: "red", reason: "checkmate" },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(api.validateMove).toHaveBeenCalledWith({
+      initial_fen: INITIAL_FEN,
+      moves: [{ x1: 1, y1: 2, x2: 4, y2: 2 }],
+      move: { x1: 7, y1: 9, x2: 6, y2: 7 },
+    });
+    expect(wrapper.find('[data-test="game-over"]').text()).toContain("红方胜");
+    await clickCells(wrapper, [0, 0]);
+    expect(api.validateMove).toHaveBeenCalledTimes(1);
+  });
+
+  it("加载失败显示错误并可重试", async () => {
+    route.query = { game: "7" };
+    api.getGame.mockRejectedValueOnce(new Error("boom"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("加载失败");
+    expect(board(wrapper).exists()).toBe(false);
+
+    api.getGame.mockResolvedValue({
+      id: 7,
+      name: "恢复",
+      initial_fen: INITIAL_FEN,
+      moves: [],
+    });
+    await button(wrapper, "retry").trigger("click");
+    await flushPromises();
+    expect(board(wrapper).exists()).toBe(true);
+  });
+
+  it("初始悔棋按钮禁用", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    expect(button(wrapper, "undo").attributes("disabled")).toBeDefined();
+  });
+
+  it("ply 非数字或超界时安全截断", async () => {
+    const moves = [
+      { x1: 1, y1: 2, x2: 4, y2: 2 },
+      { x1: 7, y1: 9, x2: 6, y2: 7 },
+      { x1: 0, y1: 9, x2: 0, y2: 8 },
+    ];
+    route.query = { game: "7", ply: "abc" };
+    api.getGame.mockResolvedValue({ id: 7, name: "x", initial_fen: INITIAL_FEN, moves });
+    const first = mountView();
+    await flushPromises();
+    expect(first.findAll('[data-test="move-list"] li')).toHaveLength(0);
+
+    route.query = { game: "7", ply: "99" };
+    const second = mountView();
+    await flushPromises();
+    expect(second.findAll('[data-test="move-list"] li')).toHaveLength(3);
+  });
+
   it("URL 带 game/ply 时载入棋谱前 N 步", async () => {
     route.query = { game: "7", ply: "2" };
     api.getGame.mockResolvedValue({

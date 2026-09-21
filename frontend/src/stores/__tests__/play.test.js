@@ -227,6 +227,20 @@ describe("createPlaySession", () => {
     expect(session.state.moves).toHaveLength(0);
   });
 
+  it("applyState 标注末步状态且悔棋后回退", () => {
+    const moves = [{ x1: 1, y1: 2, x2: 4, y2: 2 }];
+    const session = createPlaySession({ initial_fen: INITIAL_FEN, moves });
+    session.applyState({ check: true, gameOver: null });
+    expect(session.state.check).toBe(true);
+    expect(session.state.gameOver).toBeNull();
+    expect(session.state.moves[0].check).toBe(true);
+    expect(session.state.moves[0].gameOver).toBeNull();
+
+    session.undo();
+    expect(session.state.check).toBe(false);
+    expect(session.state.gameOver).toBeNull();
+  });
+
   it("切换选中时清除非法提示", async () => {
     api.validateMove.mockResolvedValue({ legal: false, reason: "该棋子不能这样走" });
     const session = createPlaySession({});

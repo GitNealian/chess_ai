@@ -109,7 +109,17 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
     rebuild();
   }
 
+  function applyState({ check = false, gameOver = null } = {}) {
+    const last = state.moves[state.moves.length - 1];
+    if (last) {
+      last.check = Boolean(check);
+      last.gameOver = gameOver || null;
+    }
+    state.check = Boolean(check);
+    state.gameOver = gameOver || null;
+  }
+
   reset({ initial_fen: initialFen, moves: initialMoves });
 
-  return { state, click, undo, reset };
+  return { state, click, undo, reset, applyState };
 }
