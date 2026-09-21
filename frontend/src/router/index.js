@@ -5,6 +5,7 @@ const routes = [
   { path: "/library", component: () => import("../views/LibraryView.vue") },
   { path: "/editor/:id?", component: () => import("../views/EditorView.vue") },
   { path: "/practice/:id", component: () => import("../views/PracticeView.vue") },
+  { path: "/play", component: () => import("../views/PlayView.vue") },
   { path: "/review", component: () => import("../views/ReviewView.vue") },
 ];
 
