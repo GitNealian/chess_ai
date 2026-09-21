@@ -1,8 +1,10 @@
-"""阶段判定与动态子力价值（Task 8）。
+"""阶段判定与动态子力价值（Task 8）；对外分析接口（Task 12）。
 
 Java 参考：
 - `AICoreHandler.getPhase` L112-130：中局/残局判定；
-- `AICoreHandler.moveBegin` L132-142：兵/卒、马、炮的动态子力价值。
+- `AICoreHandler.moveBegin` L132-142：兵/卒、马、炮的动态子力价值；
+- `AICoreHandler.run` L42-65 的"迭代加深 + 时限/停旗"外层控制（Task 12 的
+  `analyze` 以生成器逐层产出，把时间控制上移到 Python 层）。
 
 约定与差异：
 - Java 的时序是"先用静态子力表算 baseScore、之后 moveBegin 才改动态子力表"，
@@ -16,20 +18,36 @@ Java 参考：
   （分别打包在 `base_score[_PIECE_SCORES_OFFSET:...]`、
   `side_to_move[_PHASE_SLOT]`），此处可直接读写；njit 热路径按索引或
   `position.get_phase` 访问，理由见 `position` 模块 docstring。
+
+Task 12（`analyze`/`warmup`）语义要点：
+- 逐层迭代加深：从 `constants.ROOT_START_DEPTH`（4）搜到 `max_depth`，
+  **只有 `depth >= start_depth` 的完成层才产出**（4/5 层是垫脚石，让首个
+  结果更快且复用 TT/PV 排序）；
+- 停旗与时限的检查在**层边界**：搜索进行中被其他线程置位 `stop` 的层结果
+  不可信（见 `search_depth` docstring），直接丢弃不产出；
+- 每次 `analyze` 新建 `Ctx`（默认 40MB 置换表），生成器结束时显式释放；
+- `warmup` 用初始局面触发全链 JIT 编译并计入日志，`_WARMED` 保证幂等。
 """
+
+import dataclasses
+import logging
+import time
 
 import numpy as np
 from numba import njit
 
 from . import constants as C
-from .position import full_base_score
+from .position import full_base_score, load_position
 
 __all__ = [
     "END_GAME",
     "MIDDLE_GAME",
+    "AnalysisResult",
+    "analyze",
     "dynamic_piece_scores",
     "phase_of",
     "prepare",
+    "warmup",
 ]
 
 # 与 position.State.phase / attach_score 的取值约定一致
@@ -106,3 +124,175 @@ def prepare(st):
     red, black = full_base_score(st)
     st.base_score[C.RED] = np.int32(red)
     st.base_score[C.BLACK] = np.int32(black)
+
+
+# --------------------------------------------------------------------------
+# Task 12：对外分析接口（渐进加深生成器）
+# --------------------------------------------------------------------------
+
+_log = logging.getLogger(__name__)
+
+# 分析深度硬上限（防外部传参失控；与 Java 最高难度 32 层一致）。
+MAX_ANALYSIS_DEPTH = 32
+
+# PV 对外拷贝的最大步数（不必把 68 长的三角表整行带走）。
+PV_LIMIT = 8
+
+# 将杀分阈值：`|score|` 超过它即视为将杀（与 `search.MATE_BOUND` 一致）。
+_MATE_THRESHOLD = C.MAX_SCORE - 100
+
+# warmup 使用的初始局面（红先），覆盖常规分析路径。
+_WARMUP_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
+
+_WARMED = False
+
+
+@dataclasses.dataclass
+class AnalysisResult:
+    """单层迭代加深完成后的分析快照。
+
+    - `depth`：已完成的搜索层数；
+    - `score_stm`：引擎原始分数（走子方视角）；
+    - `score_red`：红方视角分数（走子方为黑时取反）；
+    - `mate`：将杀步数（ply），`|score|` 未越过将杀阈值时为 `None`；
+    - `pv`：主变着法（packed int 的独立 Python 列表，最多 `PV_LIMIT` 步）；
+    - `nodes`：本层结束后的累计 leaf 节点数（`ctx.nodes[0]`）；
+    - `time_ms`：进入 `analyze` 到本层结束的累计耗时（毫秒）；
+    - `side_to_move`：走子方（`constants.RED`/`constants.BLACK`）。
+    """
+
+    depth: int
+    score_stm: int
+    score_red: int
+    mate: int | None
+    pv: list[int]
+    nodes: int
+    time_ms: int
+    side_to_move: int
+
+
+def _mate_of(score):
+    """由分数换算将杀步数：`MAX_SCORE - abs(score)`；非将杀分返回 `None`。"""
+    if score > _MATE_THRESHOLD or score < -_MATE_THRESHOLD:
+        return C.MAX_SCORE - abs(score)
+    return None
+
+
+def _copy_pv(stack):
+    """把 `stack.pv[0]` 的头段拷贝成独立 Python 列表（遇 0 或满 `PV_LIMIT` 止）。"""
+    pv = []
+    row = stack.pv[0]
+    for i in range(row.shape[0]):
+        move = int(row[i])
+        if move == 0 or len(pv) >= PV_LIMIT:
+            break
+        pv.append(move)
+    return pv
+
+
+def analyze(
+    fen,
+    *,
+    start_depth=C.DEFAULT_START_DEPTH,
+    max_depth=C.DEFAULT_MAX_DEPTH,
+    time_limit_ms=C.DEFAULT_TIME_LIMIT_MS,
+    stop=None,
+):
+    """逐层迭代加深分析生成器：每完成一层（且 `depth >= start_depth`）产出一个结果。
+
+    参数：
+    - `fen`：局面 FEN（棋盘段必填，其余段可省，默认红先）；
+    - `start_depth`：首个产出层；小于 `ROOT_START_DEPTH` 时按 4 处理；
+    - `max_depth`：搜索到的最深层，钳位到 `[0, MAX_ANALYSIS_DEPTH]`；
+      `start_depth > max_depth` 时无产出（参数校验由 API 层负责）；
+    - `time_limit_ms`：总时限；**首个产出层完成后才检查**，因此
+      `time_limit_ms <= 0` 时仍会搜到并产出 `start_depth` 层，然后立即停止；
+    - `stop`：可选的 `np.int8[1]` 停旗（与 `ctx.stop` 共享，可被其他线程
+      在 nogil 搜索中置位）。搜索中途被置位的层结果不可信，直接丢弃；
+      层边界置位则正常结束。该数组由调用方持有，`analyze` 只读不改。
+
+    产出：`AnalysisResult` 迭代器。`Ctx` 为生成器局部变量，提前关闭
+    （`break`/`GeneratorExit`）或耗尽时在 `finally` 中释放。
+    """
+    # 延迟导入：`search → evaluate → analysis` 构成环，顶层导入会循环。
+    from . import search as _search
+
+    if stop is None:
+        stop = np.zeros(1, dtype=np.int8)
+    else:
+        stop = np.asarray(stop)
+        if stop.shape != (1,) or stop.dtype != np.int8:
+            raise ValueError(
+                "stop 必须是 np.int8[1]，例如 np.zeros(1, dtype=np.int8)"
+            )
+
+    start_depth = max(int(start_depth), C.ROOT_START_DEPTH)
+    max_depth = max(0, min(int(max_depth), MAX_ANALYSIS_DEPTH))
+    time_limit_ms = int(time_limit_ms)
+
+    st = load_position(fen)
+    prepare(st)
+    # 让 ctx.stop 与外部停旗共享同一数组：搜索为 nogil，其他线程置位后
+    # 根节点循环与递归入口都能立刻观察到。
+    ctx = _search.new_context()._replace(stop=stop)
+    stack = _search.new_stack()
+    stack.zob32[0] = st.zob[0]
+    stack.zob64[0] = st.zob[1]
+
+    t0 = time.perf_counter()
+    try:
+        depth = C.ROOT_START_DEPTH
+        while depth <= max_depth:
+            if stop[0] != 0:
+                break
+            score, _ = _search.search_depth(st, ctx, stack, depth)
+            if stop[0] != 0:
+                break  # 中断层结果不可信，丢弃
+            score = int(score)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            if depth >= start_depth:
+                side = int(st.side_to_move[0])
+                yield AnalysisResult(
+                    depth=depth,
+                    score_stm=score,
+                    score_red=score if side == C.RED else -score,
+                    mate=_mate_of(score),
+                    pv=_copy_pv(stack),
+                    nodes=int(ctx.nodes[0]),
+                    time_ms=elapsed_ms,
+                    side_to_move=side,
+                )
+                if elapsed_ms >= time_limit_ms or depth >= max_depth:
+                    break
+            depth += 1
+    finally:
+        del ctx, stack, st
+
+
+def warmup():
+    """用初始局面触发全链 JIT 编译（幂等）。
+
+    覆盖 `search_depth` 链、`init_root` 的外部默认签名、`clean_tt` 与
+    `history_decay`。参数类型与正式调用保持一致（Python int），避免 numba
+    对 np 标量重新特化。完成后置 `_WARMED`，重复调用近似零开销。
+    """
+    global _WARMED
+    if _WARMED:
+        return
+    from . import search as _search
+
+    t0 = time.perf_counter()
+    st = load_position(_WARMUP_FEN)
+    prepare(st)
+    ctx = _search.new_context()
+    stack = _search.new_stack()
+    stack.zob32[0] = st.zob[0]
+    stack.zob64[0] = st.zob[1]
+    # 三参默认签名（外部 Python 调用）与内部调用会各自特化，都要触发。
+    _search.init_root(st, ctx, stack)
+    _search.search_depth(st, ctx, stack, C.ROOT_START_DEPTH)
+    _search.clean_tt(ctx)
+    _search.history_decay(ctx)
+    del ctx, stack, st
+    _WARMED = True
+    _log.debug("engine warmup 完成：%.2fs", time.perf_counter() - t0)
