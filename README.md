@@ -153,7 +153,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 
 错误统一返回 `{error, detail?, step?}`。
 
-`POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 2000，层边界软时限：按「上一层耗时 × 1.5」外推下一层预算，通常完成时间不超过其 ~1.5 倍）。流内依次可能出现：
+`POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 30000，范围 100–30000，层边界软时限：按「上一层耗时 × 1.5」外推下一层预算，通常完成时间不超过其 ~1.5 倍）。流内依次可能出现：
 
 - `{"type":"result", ...}`：每完成一层一条，含 `depth` / `score_red` / `score_stm` / `mate` / `pv`（每步含 `x1,y1,x2,y2` / `chinese` / `iccs`）/ `time_ms` / `nodes` / `side_to_move`；
 - `{"type":"ping", "elapsed_ms": ...}`：约每 0.3s 的保活行，客户端可忽略；

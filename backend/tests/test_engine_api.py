@@ -150,7 +150,7 @@ def test_analyze_requires_input(client):
 
 
 def test_analyze_clamps_parameters(client):
-    # start_depth=99 被钳到 16 并不超过 max_depth；time_limit=999999 钳到 10000。
+    # start_depth=99 被钳到 16 并不超过 max_depth；time_limit=999999 钳到 30000。
     # 用 max_depth=6 限制时长，done 由 max_depth 触发（而非 time_limit）。
     messages = read_stream(
         client,
