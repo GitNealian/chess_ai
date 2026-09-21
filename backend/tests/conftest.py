@@ -23,3 +23,9 @@ def app():
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+@pytest.fixture(autouse=True)
+def engine_threads_single(monkeypatch):
+    """测试默认单线程：并行专项用例显式传 threads 覆盖。"""
+    monkeypatch.setenv("ENGINE_THREADS", "1")

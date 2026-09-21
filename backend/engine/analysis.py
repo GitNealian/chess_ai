@@ -37,6 +37,8 @@ Task 12（`analyze`/`warmup`）语义要点：
 
 import dataclasses
 import logging
+import os
+import threading
 import time
 
 import numpy as np
@@ -47,8 +49,10 @@ from .position import full_base_score, load_position
 
 __all__ = [
     "END_GAME",
+    "MAX_THREADS",
     "MIDDLE_GAME",
     "AnalysisResult",
+    "_resolve_threads",
     "analyze",
     "dynamic_piece_scores",
     "phase_of",
@@ -137,6 +141,34 @@ def prepare(st):
 # --------------------------------------------------------------------------
 
 _log = logging.getLogger(__name__)
+
+# 并行搜索线程数上限（含主线程）。
+MAX_THREADS = 16
+
+# 自动线程数：核数 - 1（给 UI/系统留余量），最多 8。
+_AUTO_THREADS_MAX = 8
+
+
+def _resolve_threads(threads):
+    """解析并行线程数：显式参数 > 环境变量 `ENGINE_THREADS` > 自动。
+
+    自动值 = `max(1, min(cpu_count - 1, 8))`；显式值夹逼到 `[1, MAX_THREADS]`；
+    非法（非整数）值一律回退自动。
+    """
+    if threads is None:
+        raw = os.environ.get("ENGINE_THREADS")
+        if raw is not None:
+            try:
+                threads = int(raw)
+            except ValueError:
+                threads = None
+    if threads is None:
+        return max(1, min((os.cpu_count() or 1) - 1, _AUTO_THREADS_MAX))
+    try:
+        threads = int(threads)
+    except (TypeError, ValueError):
+        return max(1, min((os.cpu_count() or 1) - 1, _AUTO_THREADS_MAX))
+    return max(1, min(threads, MAX_THREADS))
 
 # 分析深度硬上限（防外部传参失控；与 Java 最高难度 32 层一致）。
 MAX_ANALYSIS_DEPTH = 32
