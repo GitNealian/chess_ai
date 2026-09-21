@@ -226,4 +226,10 @@ describe("LibraryView", () => {
 
     expect(wrapper.text()).toContain("加载中…");
   });
+
+  it("工具栏提供新对局入口", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.html()).toContain('href="/play"');
+  });
 });

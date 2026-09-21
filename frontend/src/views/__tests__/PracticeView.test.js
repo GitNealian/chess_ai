@@ -4,7 +4,10 @@ import { nextTick } from "vue";
 import PracticeView from "../PracticeView.vue";
 import { analyzeStream, api } from "../../api";
 
-const { route } = vi.hoisted(() => ({ route: { params: { id: "1" } } }));
+const { route, push } = vi.hoisted(() => ({
+  route: { params: { id: "1" } },
+  push: vi.fn(),
+}));
 
 vi.mock("../../api", () => ({
   api: {
@@ -15,6 +18,7 @@ vi.mock("../../api", () => ({
 
 vi.mock("vue-router", () => ({
   useRoute: () => route,
+  useRouter: () => ({ push }),
 }));
 
 const INITIAL_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -67,6 +71,7 @@ function analysisItems(wrapper) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  push.mockClear();
   route.params = { id: "1" };
   streams = [];
   analyzeStream.mockImplementation((payload, handlers = {}) => {
@@ -184,6 +189,17 @@ describe("PracticeView", () => {
     expect(api.getGame).toHaveBeenCalledTimes(2);
     expect(wrapper.text()).toContain("重试成功棋谱");
     expect(wrapper.find('[data-test="retry"]').exists()).toBe(false);
+  });
+
+  it("点击从此处开始对弈跳转 /play 携带 game 与 ply", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "next").trigger("click");
+    await nextTick();
+    await button(wrapper, "start-play").trigger("click");
+
+    expect(push).toHaveBeenCalledWith({ path: "/play", query: { game: 1, ply: 1 } });
   });
 });
 

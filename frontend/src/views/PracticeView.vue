@@ -33,6 +33,7 @@
             <button data-test="prev" @click="go(ply - 1)">&lt;</button>
             <button data-test="next" @click="go(ply + 1)">&gt;</button>
             <button data-test="last" @click="go(game.moves.length)">&gt;|</button>
+            <button data-test="start-play" @click="startPlay">从此处开始对弈</button>
           </div>
           <ol class="moves">
             <li
@@ -52,12 +53,13 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import ChessBoard from "../components/ChessBoard.vue";
 import { analyzeStream, api } from "../api";
 import { applyMove, fenToPieces } from "../utils/chess";
 
 const route = useRoute();
+const router = useRouter();
 const game = ref(null);
 const loading = ref(true);
 const error = ref(false);
@@ -172,6 +174,11 @@ function describe(move, index) {
 function go(target) {
   if (!game.value) return;
   ply.value = Math.max(0, Math.min(target, game.value.moves.length));
+}
+
+function startPlay() {
+  if (!game.value) return;
+  router.push({ path: "/play", query: { game: game.value.id, ply: ply.value } });
 }
 
 async function load() {

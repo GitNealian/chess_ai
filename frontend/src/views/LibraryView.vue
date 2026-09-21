@@ -4,6 +4,7 @@
       <input v-model="keyword" placeholder="搜索棋谱名" @input="reload(true)" />
       <input v-model="category" placeholder="按分类筛选" @input="reload(true)" />
       <router-link to="/editor" class="btn primary">新建棋谱</router-link>
+      <router-link to="/play" class="btn">新对局</router-link>
     </div>
     <div v-if="store.stats" class="stats">
       <span>共 {{ store.stats.total }}</span>
