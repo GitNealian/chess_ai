@@ -93,10 +93,10 @@ async function load() {
   try {
     if (route.query.game) {
       const game = await api.getGame(route.query.game);
-      const rawPly = route.query.ply;
-      const requested =
-        rawPly === undefined || rawPly === "" ? game.moves.length : Number(rawPly) || 0;
-      const ply = Math.max(0, Math.min(requested, game.moves.length));
+      const ply = Math.max(
+        0,
+        Math.min(Number(route.query.ply) || 0, game.moves.length)
+      );
       session.reset({ initial_fen: game.initial_fen, moves: game.moves.slice(0, ply) });
       if (ply > 0 && ply === game.moves.length) {
         await probePositionState(game, ply);

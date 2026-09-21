@@ -144,7 +144,7 @@ describe("PlayView", () => {
   });
 
   it("从棋谱终局步载入时显示结果并锁定棋盘", async () => {
-    route.query = { game: "7" };
+    route.query = { game: "7", ply: "2" };
     api.getGame.mockResolvedValue({
       id: 7,
       name: "终局棋谱",
@@ -193,6 +193,8 @@ describe("PlayView", () => {
     await button(wrapper, "retry").trigger("click");
     await flushPromises();
     expect(board(wrapper).exists()).toBe(true);
+    expect(wrapper.find('[data-test="move-list"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="turn"]').text()).toContain("红方走棋");
   });
 
   it("初始悔棋按钮禁用", async () => {
