@@ -90,13 +90,14 @@ def new_bufs():
 
 def test_new_stack_layout():
     stack = S.new_stack()
-    assert S.Stack._fields == ("zob32", "zob64", "is_eat", "chk", "pv")
+    assert S.Stack._fields == ("zob32", "zob64", "is_eat", "chk", "is_null", "pv")
     assert stack.zob32.shape == (68,) and stack.zob32.dtype == np.int64
     assert stack.zob64.shape == (68,) and stack.zob64.dtype == np.int64
     assert stack.is_eat.shape == (68,) and stack.is_eat.dtype == np.int8
     assert stack.chk.shape == (68,) and stack.chk.dtype == np.int8
+    assert stack.is_null.shape == (68,) and stack.is_null.dtype == np.int8
     assert stack.pv.shape == (68, 68) and stack.pv.dtype == np.int32
-    for arr in (stack.zob32, stack.zob64, stack.is_eat, stack.chk, stack.pv):
+    for arr in (stack.zob32, stack.zob64, stack.is_eat, stack.chk, stack.is_null, stack.pv):
         assert not arr.any()
 
 
