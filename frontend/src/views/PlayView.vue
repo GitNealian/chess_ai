@@ -213,6 +213,7 @@ async function load() {
   try {
     if (route.query.game) {
       const game = await api.getGame(route.query.game);
+      if (disposed) return;
       const ply = Math.max(
         0,
         Math.min(Number(route.query.ply) || 0, game.moves.length)

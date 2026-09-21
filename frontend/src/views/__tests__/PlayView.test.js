@@ -344,4 +344,15 @@ describe("PlayView", () => {
     expect(wrapper.find('[data-test="analysis-status"]').text()).toContain("分析失败");
     expect(wrapper.find('[data-test="analysis-status"]').text()).toContain("引擎不可用");
   });
+
+  it("getGame 未返回时卸载，resolve 后不再发起分析", async () => {
+    route.query = { game: "7" };
+    let resolveGame;
+    api.getGame.mockReturnValue(new Promise((r) => { resolveGame = r; }));
+    const wrapper = mountView();
+    wrapper.unmount();
+    resolveGame({ id: 7, name: "x", initial_fen: INITIAL_FEN, moves: [] });
+    await flushPromises();
+    expect(analyzeStream).not.toHaveBeenCalled();
+  });
 });
