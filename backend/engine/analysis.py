@@ -38,6 +38,7 @@ Task 12（`analyze`/`warmup`）语义要点：
 import dataclasses
 import logging
 import os
+import threading
 import time
 
 import numpy as np
@@ -227,6 +228,37 @@ def _copy_pv(stack):
     return pv
 
 
+def _forward_stop(external_stop, stop_all, done):
+    """把外部停旗轮询转发到内部总停旗；`done` 置位后退出。"""
+    while not done.wait(0.01):
+        if external_stop[0] != 0:
+            stop_all[0] = 1
+            return
+
+
+def _worker_loop(fen, shared_ctx, stop_all, start_depth, max_depth):
+    """Lazy SMP 辅助线程：独立 State/Stack/轻量 Ctx，共享 TT 与停旗。
+
+    不产出结果、不做时限判断；主线程结束置位 `stop_all` 后自行退出。
+    辅助线程异常只记录日志，不影响主线程结果。
+    """
+    from . import search as _search
+
+    try:
+        st = load_position(fen)
+        prepare(st)
+        ctx = _search.new_worker_context(shared_ctx, stop_all)
+        stack = _search.new_stack()
+        stack.zob32[0] = st.zob[0]
+        stack.zob64[0] = st.zob[1]
+        depth = start_depth
+        while depth <= max_depth and stop_all[0] == 0:
+            _search.search_depth(st, ctx, stack, depth)
+            depth += 1
+    except Exception:  # noqa: BLE001 - 辅助线程失败不影响主线程
+        _log.debug("Lazy SMP 辅助线程异常退出", exc_info=True)
+
+
 def analyze(
     fen,
     *,
@@ -234,6 +266,7 @@ def analyze(
     max_depth=C.DEFAULT_MAX_DEPTH,
     time_limit_ms=C.DEFAULT_TIME_LIMIT_MS,
     stop=None,
+    threads=None,
 ):
     """逐层迭代加深分析生成器：每完成一层（且 `depth >= start_depth`）产出一个结果。
 
@@ -252,6 +285,11 @@ def analyze(
       不得复位**；被中断的层不可信、不会产出（当前实现按 `stop[0]` 判定，
       复用数组存在 TOCTOU 窗口）。搜索中途被置位的层结果直接丢弃；
       层边界置位则正常结束。该数组由调用方持有，`analyze` 只读不改。
+    - `threads`：搜索线程数，`None` 表示自动（显式值 > 环境变量
+      `ENGINE_THREADS` > `max(1, min(cpu_count-1, 8))`，夹逼 `[1, MAX_THREADS]`）。
+      `threads == 1` 时与串行实现完全一致；`> 1` 时启动辅助线程共享 TT
+      （Lazy SMP），结果只取主线程，`nodes` 只统计主线程；并行结果存在
+      非确定性（同局面分数/PV 可能微变），中断与时限语义不变。
 
     产出：`AnalysisResult` 迭代器。`Ctx` 为生成器局部变量，提前关闭
     （`break`/`GeneratorExit`）或耗尽时在 `finally` 中释放。
@@ -271,29 +309,59 @@ def analyze(
     start_depth = max(int(start_depth), C.ROOT_START_DEPTH)
     max_depth = max(0, min(int(max_depth), MAX_ANALYSIS_DEPTH))
     time_limit_ms = int(time_limit_ms)
+    threads = _resolve_threads(threads)
 
     if start_depth > max_depth:
         return  # 无产出：不加载局面、不分配 Ctx/Stack
 
+    if threads > 1:
+        warmup()  # 幂等；避免多个搜索线程并发触发 JIT 编译
+
     st = load_position(fen)
     prepare(st)
-    # 让 ctx.stop 与外部停旗共享同一数组：搜索为 nogil，其他线程置位后
-    # 根节点循环与递归入口都能立刻观察到。
-    ctx = _search.new_context()._replace(stop=stop)
+    # 总停旗：并行时所有搜索线程共享；串行时直接复用外部停旗（现状）。
+    stop_all = np.zeros(1, dtype=np.int8) if threads > 1 else None
+    search_stop = stop_all if stop_all is not None else stop
+    ctx = _search.new_context()._replace(stop=search_stop)
     stack = _search.new_stack()
     stack.zob32[0] = st.zob[0]
     stack.zob64[0] = st.zob[1]
+
+    done = threading.Event()
+    helpers = []
+    forwarder = None
+    if threads > 1:
+        if stop is not None:
+            forwarder = threading.Thread(
+                target=_forward_stop,
+                args=(stop, stop_all, done),
+                name="engine-stop-forward",
+                daemon=True,
+            )
+            forwarder.start()
+        for i in range(1, threads):
+            first_depth = C.ROOT_START_DEPTH + i
+            if first_depth > max_depth:
+                break
+            helper = threading.Thread(
+                target=_worker_loop,
+                args=(fen, ctx, stop_all, first_depth, max_depth),
+                name=f"engine-helper-{i}",
+                daemon=True,
+            )
+            helper.start()
+            helpers.append(helper)
 
     t0 = time.perf_counter()
     try:
         depth = C.ROOT_START_DEPTH
         last_layer_ms = 0
         while depth <= max_depth:
-            if stop[0] != 0:
+            if search_stop[0] != 0:
                 break
             layer_t0 = time.perf_counter()
             score, _ = _search.search_depth(st, ctx, stack, depth)
-            if stop[0] != 0:
+            if search_stop[0] != 0:
                 break  # 中断层结果不可信，丢弃
             last_layer_ms = int((time.perf_counter() - layer_t0) * 1000)
             score = int(score)
@@ -320,6 +388,13 @@ def analyze(
                     break
             depth += 1
     finally:
+        done.set()
+        if stop_all is not None:
+            stop_all[0] = 1
+        for helper in helpers:
+            helper.join(timeout=2.0)
+        if forwarder is not None:
+            forwarder.join(timeout=0.5)
         del ctx, stack, st
 
 

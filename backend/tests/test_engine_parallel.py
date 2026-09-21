@@ -10,6 +10,7 @@ import threading
 import numpy as np
 import pytest
 from engine import analysis as A
+from engine import analyze
 from engine import constants as C
 from engine import search as S
 
@@ -156,3 +157,55 @@ def test_concurrent_tt_no_foreign_values():
         t.join()
     assert errors == []
     assert sum(hits) > 0
+
+
+def test_parallel_analysis_produces_results():
+    results = list(
+        analyze(INITIAL, start_depth=6, max_depth=8, time_limit_ms=5000, threads=3)
+    )
+    depths = [r.depth for r in results]
+    assert depths == sorted(depths)
+    assert depths[0] >= 6 and depths[-1] <= 8
+    assert all(r.pv for r in results)
+    for r in results:
+        assert r.score_red == (
+            r.score_stm if r.side_to_move == C.RED else -r.score_stm
+        )
+
+
+def test_parallel_mate_consistent_across_thread_counts():
+    for threads in (1, 2, 4):
+        results = list(
+            analyze(
+                MATE_IN_ONE,
+                start_depth=6,
+                max_depth=6,
+                time_limit_ms=5000,
+                threads=threads,
+            )
+        )
+        last = results[-1]
+        assert last.mate == 1, threads
+        assert last.score_red > C.MAX_SCORE - 100, threads
+
+
+def test_parallel_stop_leaves_no_worker_threads():
+    stop = np.zeros(1, dtype=np.int8)
+    it = analyze(
+        INITIAL,
+        start_depth=6,
+        max_depth=32,
+        time_limit_ms=60000,
+        stop=stop,
+        threads=4,
+    )
+    first = next(it)
+    assert first.depth >= 6
+    stop[0] = 1
+    list(it)
+    leftovers = [
+        t
+        for t in threading.enumerate()
+        if t.name.startswith("engine-helper-") or t.name == "engine-stop-forward"
+    ]
+    assert leftovers == []
