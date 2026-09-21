@@ -19,7 +19,11 @@ RAdapt L102-113、FutilityScore L19-30）、`MoveNodesSort.java`（next L81-150�
 - `FUTILITY_SCORE`/killer 索引在越界极端情形下钳位而非崩溃。
 """
 
+import threading
+import time
+
 import numpy as np
+
 from engine import analysis as A
 from engine import constants as C
 from engine import movegen as MG
@@ -342,3 +346,112 @@ def test_search_depth_writes_back_root_scores():
     # 结果写回 root_scores（供下一轮 getSortAfterBestMove 动态选择）
     assert after != before
     assert all(-C.MAX_SCORE <= s <= C.MAX_SCORE for s in after)
+
+
+# --------------------------------------------------------------------------
+# mate 分数不入 TT（修正 Java 继承缺陷）：同一 ctx 迭代加深不再漂移
+# --------------------------------------------------------------------------
+
+# 5 个杀棋局面（1/1/3/3/5 ply），期望值由独立穷举验证
+MATE_CHAIN_CASES = (
+    ("3R5/5k1N1/9/9/9/9/9/9/9/4K1R2 w - - 0 1", 1),
+    ("5k3/8R/9/9/9/9/9/9/9/3K3P1 w - - 0 1", 1),
+    ("3pk4/1R7/2N4N1/4N4/9/9/9/9/9/3K5 w - - 0 1", 3),
+    ("3pk4/1R7/2N6/4N4/9/9/9/9/9/3K5 w - - 0 1", 3),
+    ("2C6/4k4/1C7/9/9/9/9/9/9/3K5 w - - 0 1", 5),
+)
+
+
+def _force_mate(st, play, plies):
+    """play 方在 plies 内强制将死/困毙对方（只用 movegen/position 的穷举）。"""
+    moves = MG.gen_legal_moves(st, play)
+    if moves.size == 0:
+        return False
+    opp = 1 - play
+    for i in range(moves.size):
+        m = int(moves[i])
+        undo = P.make_move(st, m)
+        if MG.gen_legal_moves(st, opp).size == 0:
+            P.unmake_move(st, m, undo)
+            return True
+        if plies >= 3:
+            all_ok = True
+            replies = MG.gen_legal_moves(st, opp)
+            for j in range(replies.size):
+                reply = int(replies[j])
+                undo2 = P.make_move(st, reply)
+                ok = _force_mate(st, play, plies - 2)
+                P.unmake_move(st, reply, undo2)
+                if not ok:
+                    all_ok = False
+                    break
+            if all_ok:
+                P.unmake_move(st, m, undo)
+                return True
+        P.unmake_move(st, m, undo)
+    return False
+
+
+def min_mate_ply(fen, max_ply=7):
+    """独立穷举最小杀步（ply），无杀返回 0。"""
+    st = root(fen)
+    play = int(st.side_to_move[0])
+    for plies in range(1, max_ply + 1, 2):
+        if _force_mate(st, play, plies):
+            return plies
+    return 0
+
+
+def test_exhaustive_min_mate_matches_expected_cases():
+    for fen, expect in MATE_CHAIN_CASES:
+        assert min_mate_ply(fen) == expect
+
+
+def test_iterative_deepening_mate_reports_do_not_drift():
+    # mate 分数不入 TT：同一 ctx 迭代加深时每层报出的 mate 要么是 0（深度
+    # 还不够），要么等于穷举最小杀步；深度足够后必须报出正确值且保持稳定
+    for fen, expect in MATE_CHAIN_CASES:
+        st, ctx, stack = new_search(fen)
+        reported = []
+        for depth in (4, 5, 6, 7, 8):
+            score, mate = S.search_depth(st, ctx, stack, depth)
+            mate = int(mate)
+            reported.append(mate)
+            assert mate in (0, expect), (fen, depth, mate)
+            if mate != 0:
+                assert int(score) == C.MAX_SCORE - expect
+        assert expect in reported
+        # 足够深的后续两轮仍报相同值（TT 复用下不再漂移）
+        for _ in range(2):
+            score, mate = S.search_depth(st, ctx, stack, 8)
+            assert int(mate) == expect
+            assert int(score) == C.MAX_SCORE - expect
+
+
+# --------------------------------------------------------------------------
+# nogil 中断响应
+# --------------------------------------------------------------------------
+
+
+def test_stop_from_other_thread_interrupts_nogil_search():
+    st, ctx, stack = new_search(OPENING_FEN)
+    S.init_root(st, ctx, stack)
+    S.search_depth(st, ctx, stack, 4)  # 预热 JIT
+
+    st2, ctx2, stack2 = new_search(OPENING_FEN)
+    S.init_root(st2, ctx2, stack2)
+
+    def setter():
+        time.sleep(0.15)
+        ctx2.stop[0] = 1
+
+    thread = threading.Thread(target=setter)
+    thread.start()
+    start = time.perf_counter()
+    S.search_depth(st2, ctx2, stack2, 8)
+    elapsed = time.perf_counter() - start
+    thread.join()
+    assert int(ctx2.stop[0]) == 1
+    # nogil 生效：其他线程可置停旗，depth8 搜索应在亚秒级返回
+    # （不释放 GIL 时该搜索会跑满数秒）
+    assert elapsed < 2.0

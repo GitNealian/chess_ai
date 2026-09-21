@@ -31,6 +31,11 @@ Java 参考：
   `isExists` 真正参与读取，语义更自洽）；
 - `set_tt` 中"STEP 槽旧条目更深则放弃"仅指 STEP 槽不更新，STRAIGHT 槽
   仍按 Java 写入新条目（`setTranZobrist` L319-330 无条件调用覆盖写入）；
+- **修正 Java 继承缺陷**：mate 分数（`|value| >= MATE_BOUND`）不入置换表。
+  Java 的 mate 分数按 `±(maxScore - ply)` 编码（量纲是 ply），而 TT 读取按
+  `value -= (depth - entry_depth)` 调整（量纲是剩余深度），量纲不一致会在
+  同一 ctx 迭代加深时导致杀步虚报/漂移（如 3 步杀被报成 4~5 步）。不入表后
+  每层重新搜索杀棋，以速度换 mate 步数准确；
 - `set_root_tt` 对应 `setRootTranZobrist`（L177-185）：只写 **STEP** 槽的
   key+move（`OVERRIDESTEP=0`；`setRootTranZobrist2` 才写 STRAIGHT 槽），
   不改 depth/entry_type/value；槽从未分配时按 Java 新建 `HashItem` 语义把
@@ -89,11 +94,19 @@ Task 11 的主搜索语义（与 Java 一致的关键点）：
   （Java 为 32×80、killer[64]，越界会抛异常）；
 - `stack.pv` 是三角 PV 表（Java 用 NodeLink 链）：每层发现更优着法时立即
   写入"本层最佳着法 + 子层 PV"（`_store_pv`），根层 `stack.pv[0]` 即完整 PV；
-- **本模块全部 `@njit(cache=False)`**：numba 0.67 对"递归 + 跨函数调用 +
-  磁盘缓存"的组合存在缺陷（缓存加载时报 `LLVM ERROR: Symbol not found`
-  并段错误），禁用缓存换取稳定性；代价是进程首次调用前需要一次性 JIT
-  编译（本机约 20s）。递归标志用模块级只读数组 `_FLAGS` 传递，避免 numba
-  把常量实参字面量化导致递归签名不统一。
+- **本模块全部 `@njit(nogil=True, cache=False)`**：numba 0.67 对"递归 +
+  跨函数调用 + 磁盘缓存"的组合存在缺陷（缓存加载时报
+  `LLVM ERROR: Symbol not found` 并段错误），禁用缓存换取稳定性；代价是
+  进程首次调用前需要一次性 JIT 编译（本机约 20s）。`nogil=True` 让搜索
+  期间释放 GIL，其他线程可并发写 `ctx.stop`（配合 `nega_scout` 入口检查
+  实现亚毫秒级中断；实测 depth8 全量 3.8s 的搜索在置位后 <1ms 返回）。
+  递归标志用模块级只读数组 `_FLAGS` 传递，避免 numba 把常量实参字面量化
+  导致递归签名不统一；**stop 中断返回的分数/`mate`/PV 无效，必须由上层
+  丢弃**（见 `search_depth`）；
+- `init_root` 首轮根序为 killer → 全部吃子生成序 → 非吃子生成序，Java 为
+  killer → MVV-LVA 吃子 → 历史分混排（排序分在生成时写入 `savePlayChess`）；
+  首轮之后的排序由 `_select_best` 动态选择，二者行为一致，首轮差异只影响
+  等分着法的尝试顺序、不改变最终分数。
 """
 
 import collections
@@ -205,7 +218,7 @@ def new_context(hash_size=N):
     )
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _get_by_hash_item(ctx, play, kind, slot, depth, alpha, beta):
     """对应 `getTranZobristByHashItem`（L361-391）。
 
@@ -231,7 +244,7 @@ def _get_by_hash_item(ctx, play, kind, slot, depth, alpha, beta):
     return FAIL
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def get_tt(ctx, play, zob32, zob64, depth, alpha, beta):
     """探测置换表，返回 `(hit, value, move)`。
 
@@ -277,7 +290,7 @@ def get_tt(ctx, play, zob32, zob64, depth, alpha, beta):
     return False, value, move
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _copy_slot(ctx, play, src_kind, dst_kind, slot):
     """整体复制条目（Java 中把 STEP 旧条目引用赋给 STRAIGHT 槽）。
 
@@ -294,7 +307,7 @@ def _copy_slot(ctx, play, src_kind, dst_kind, slot):
     ctx.tt_exists[play, dst_kind, slot] = True
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _write_straight(ctx, play, slot, zob64, entry_type, value, depth, move):
     """覆盖写 STRAIGHT 槽（`setTranZobristOverride` else 分支）。
 
@@ -309,7 +322,7 @@ def _write_straight(ctx, play, slot, zob64, entry_type, value, depth, move):
     ctx.tt_exists[play, SLOT_STRAIGHT, slot] = True
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _write_step(ctx, play, slot, zob64, entry_type, value, depth, move):
     """把新条目写入 STEP 槽（Java 中总是新建 HashItem，move 默认空）。"""
     ctx.tt_key[play, SLOT_STEP, slot] = zob64
@@ -323,7 +336,7 @@ def _write_step(ctx, play, slot, zob64, entry_type, value, depth, move):
     ctx.tt_exists[play, SLOT_STEP, slot] = True
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _step_allocated(ctx, play, slot):
     """STEP 槽是否分配过条目（对应 Java `HashItem == null` 的反面）。"""
     return (
@@ -334,16 +347,23 @@ def _step_allocated(ctx, play, slot):
     )
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def set_tt(ctx, play, zob32, zob64, entry_type, value, depth, move):
     """写入置换表（`setTranZobrist` L319-330 + 两个 Override 辅助）。
 
     - 8000..9000 / -9000..-8000（长将等）不入表；
+    - **修正 Java 继承缺陷**：mate 分数（`|value| >= MATE_BOUND`）直接不入表。
+      Java 的 mate 分数按 `±(maxScore - ply)` 编码（量纲是 ply），而 TT 读取
+      按 `value -= (depth - entry_depth)` 调整（量纲是剩余深度），两者不一致
+      会导致同一 ctx 迭代加深时杀步虚报/漂移（3 步杀被报成 4~5 步）；不入表
+      后每层重新搜索杀棋，以少量速度换取 mate 步数准确；
     - STEP 槽：已分配且 `tt_exists` 且旧 depth > 新 depth → 只放弃 STEP 更新，
       STRAIGHT 槽仍写新条目；否则旧条目踢出到 STRAIGHT，新条目写 STEP；
     - STEP 未分配时 STEP 与 STRAIGHT 都写新条目。
     """
     if (value >= 8000 and value <= 9000) or (value >= -9000 and value <= -8000):
+        return
+    if value > MATE_BOUND or value < -MATE_BOUND:
         return
     slot = zob32 & (ctx.tt_key.shape[2] - 1)
     step_exists = ctx.tt_exists[play, SLOT_STEP, slot]
@@ -361,7 +381,7 @@ def set_tt(ctx, play, zob32, zob64, entry_type, value, depth, move):
     _write_step(ctx, play, slot, zob64, entry_type, value, depth, move)
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def set_root_tt(ctx, play, zob32, zob64, move):
     """IID 根槽写入（`setRootTranZobrist` L177-185）。
 
@@ -375,7 +395,7 @@ def set_root_tt(ctx, play, zob32, zob64, move):
     ctx.tt_move[play, SLOT_STEP, slot] = np.int32(move)
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def clean_tt(ctx):
     """清理 STEP 槽（`cleanTranZobrist` L67-78）：只把 exists 置 False。"""
     for play in range(2):
@@ -383,14 +403,14 @@ def clean_tt(ctx):
             ctx.tt_exists[play, SLOT_STEP, slot] = False
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def update_killer(ctx, depth, move):
     """killer 双槽轮转：`killer[depth][1] = killer[depth][0]; [0] = move`。"""
     ctx.killer[depth, 1] = ctx.killer[depth, 0]
     ctx.killer[depth, 0] = np.int32(move)
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def history_bonus(ctx, piece_index, dest, depth):
     """历史加分（`setCHistoryGOOD`）：`history[PIECE_KINDS[piece_index]][dest] += 2 << depth`。
 
@@ -406,7 +426,7 @@ def history_bonus(ctx, piece_index, dest, depth):
     ctx.history[C.PIECE_KINDS[piece_index], dest] += np.int32(delta)
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def history_decay(ctx):
     """历史衰减（`AICoreHandler.moveEnd`）：逐元素 `/512`，**向零截断**。"""
     for i in range(ctx.history.shape[0]):
@@ -418,7 +438,7 @@ def history_decay(ctx):
                 ctx.history[i, j] = np.int32(-((-v) // 512))
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def history_score(ctx, piece_index, dest):
     """读取历史分（`getCHistory`）：`history[PIECE_KINDS[piece_index]][dest]`。"""
     return ctx.history[C.PIECE_KINDS[piece_index], dest]
@@ -462,20 +482,20 @@ def new_stack():
     )
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def fine_evaluate(st, play, ctx):
     """精确评估（`fineEvaluate` L115-118）：计节点数后按阶段分派 `evaluate`。"""
     ctx.nodes[0] += 1
     return _evaluate.evaluate(st, play)
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def rough_evaluate(st, play):
     """粗评估（`roughEvaluate` L123-125）：`base_score[play] - base_score[1-play]`。"""
     return st.base_score[play] - st.base_score[1 - play]
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def is_long_check(stack, ply):
     """长将检测（`isLongChk` L240-260）。
 
@@ -498,7 +518,7 @@ def is_long_check(stack, ply):
     return False
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def is_draw(st, stack, ply):
     """和棋判定（`isDraw` L267-273）：双方攻击子（兵卒车马炮）数都为 0。
 
@@ -509,7 +529,7 @@ def is_draw(st, stack, ply):
     return st.attack_def[C.RED, 0] == 0 and st.attack_def[C.BLACK, 0] == 0
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _select_best(buf, score, index, count):
     """从 `index..count-1` 选出最大 score 与 `index` 原地交换（严格大于）。
 
@@ -528,7 +548,7 @@ def _select_best(buf, score, index, count):
         score[best] = ts
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _store_pv(stack, ply, move):
     """把本层最佳着法与子层 PV 写入三角表（对应 Java `setNextLink(bestNodeLink)`）。
 
@@ -544,7 +564,7 @@ def _store_pv(stack, ply, move):
         stack.pv[ply, j + 1] = 0
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def gen_quiesc_moves(
     st, ctx, play, is_checked, good_buf, good_score, general_buf, general_score
 ):
@@ -603,7 +623,7 @@ def gen_quiesc_moves(
     return good_n, general_n
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def quiesc_search(st, ctx, stack, alpha, beta, ply, play, is_checked):
     """静态搜索（`quiescSearch` L163-239），返回 `play` 视角分数。
 
@@ -764,7 +784,7 @@ _FLAGS = np.array([0, 1, 0, 1], dtype=np.int64)
 _FLAGS.setflags(write=False)
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def RAdapt(depth):
     """空着归约自适应 R（`RAdapt` L102-113）：<=6 → 2、<=8 → 3、否则 4。"""
     if depth <= 6:
@@ -774,7 +794,7 @@ def RAdapt(depth):
     return 4
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def is_danger(st, play):
     """危险判定（`isDanger` L274-286）。
 
@@ -793,14 +813,14 @@ def is_danger(st, play):
     )
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _int32_wrap(v):
     """把 int64 按 Java int 语义环绕到 int32 范围（历史分加法用）。"""
     v = ((v + 0x80000000) & 0xFFFFFFFF) - 0x80000000
     return v
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def _killer_index(depth):
     """killer 行索引钳位（Java killerMove[64] 越界会抛异常，此处防御）。"""
     d = depth if depth < 64 else 63
@@ -808,7 +828,7 @@ def _killer_index(depth):
     return d
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def init_root(st, ctx, stack, killer_depth=0):
     """枚举根着法（`searchMove` L54-66）。
 
@@ -884,7 +904,7 @@ def init_root(st, ctx, stack, killer_depth=0):
     ctx.root_inited[0] = np.int8(1)
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def search_depth(st, ctx, stack, depth):
     """一轮迭代加深的根搜索（`searchMove` 单轮 + `rootNegaScout`）。
 
@@ -895,6 +915,11 @@ def search_depth(st, ctx, stack, depth):
     连续多轮调用时复用已按分数排序的根着法列表，等价于 Java 的
     `for d in range(4, depth+1)` 迭代。每轮按 Java L71-78 用 PV 路径覆写
     killer 表（`killerMove[d+1..0]`）。
+
+    **中断语义**：`ctx.stop` 置位后当前着法搜索完即返回，且未搜索完成的
+    层会从下界保护处被直接裁剪，因此 **stop 中断返回的 `score`/`mate`/PV
+    不可信，调用方必须丢弃该层结果**（本函数不做重试）。njit 均为
+    `nogil=True`，搜索期间其他线程可并发置位 `ctx.stop`。
     """
     if ctx.root_inited[0] == 0:
         init_root(st, ctx, stack, depth)
@@ -917,7 +942,7 @@ def search_depth(st, ctx, stack, depth):
     return score, mate
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def root_nega_scout(st, ctx, stack, alpha, beta, depth):
     """根节点 PVS（`rootNegaScout` L95-148），返回根走子方视角分数。
 
@@ -1009,7 +1034,7 @@ def root_nega_scout(st, ctx, stack, alpha, beta, depth):
     return np.int64(-(C.MAX_SCORE - 0))
 
 
-@njit(cache=False)
+@njit(nogil=True, cache=False)
 def nega_scout(st, ctx, stack, alpha, beta, depth, ply, play, is_pv, is_null):
     """内部 PVS + negaScout（`negaScout` L154-337），返回 play 视角分数。
 
@@ -1018,6 +1043,11 @@ def nega_scout(st, ctx, stack, alpha, beta, depth, ply, play, is_pv, is_null):
     将军延伸 → `depth<=0` 转静态搜索 → 空着裁剪 → IID → 着法循环
     （TT/killer/good 吃子/general，Futility、PVS/LMR、beta 截断写 killer）→
     收尾写 PV/历史/TT。
+
+    **中断增强**：入口检查 `ctx.stop`（Java 只在根循环检查），置位立即
+    返回当前下界 `ply - MAX_SCORE`；所有 njit 为 `nogil=True`，搜索期间
+    释放 GIL，其他线程可并发置位（中断延迟为亚毫秒级）。此时分数无效，
+    由上层丢弃该层结果。
 
     `is_pv`/`is_null` 是 int64 标志（1=是、0=否；不用 bool 以避免 numba
     对递归函数生成 `Literal[bool]` 特化时的 LLVM 缺陷）。`is_null=1`

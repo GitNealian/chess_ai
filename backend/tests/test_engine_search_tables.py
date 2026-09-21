@@ -124,17 +124,36 @@ def test_depth_too_shallow_misses_non_mate():
     assert value == 100  # Java value[0] 仍输出失败条目的原始 value
 
 
-def test_mate_value_hits_despite_depth_and_adjusts():
+def test_mate_value_not_stored_but_reader_still_adjusts():
+    # Task 11 修正：mate 分数（|value| > MATE_BOUND）不入表
     move = C.pack_move(2, 3)
+    slot = slot_of(Z32)
     ctx = ctx_small()
     S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, 9990, 5, move)
+    assert not ctx.tt_exists[0, S.SLOT_STEP, slot]
+    assert not ctx.tt_exists[0, S.SLOT_STRAIGHT, slot]
+    ctx = ctx_small()
+    S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, -9990, 5, move)
+    assert not ctx.tt_exists[0, S.SLOT_STEP, slot]
+
+    # 读取端的 mate 分数深度调整语义保持不变（Java L361-391）：手工写入条目
+    def write_mate(ctx, value):
+        ctx.tt_key[0, S.SLOT_STEP, slot] = Z64
+        ctx.tt_type[0, S.SLOT_STEP, slot] = S.HASH_PV
+        ctx.tt_value[0, S.SLOT_STEP, slot] = value
+        ctx.tt_depth[0, S.SLOT_STEP, slot] = 5
+        ctx.tt_move[0, S.SLOT_STEP, slot] = move
+        ctx.tt_exists[0, S.SLOT_STEP, slot] = True
+
+    ctx = ctx_small()
+    write_mate(ctx, 9990)
     hit, value, got_move = S.get_tt(ctx, 0, Z32, Z64, 8, -9999, 9999)
     assert hit
     assert value == 9990 - (8 - 5)  # value -= depth - entry_depth
     assert got_move == move
 
     ctx = ctx_small()
-    S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, -9990, 5, move)
+    write_mate(ctx, -9990)
     hit, value, _ = S.get_tt(ctx, 0, Z32, Z64, 8, -9999, 9999)
     assert hit
     assert value == -9990 + (8 - 5)  # value += depth - entry_depth
@@ -142,22 +161,44 @@ def test_mate_value_hits_despite_depth_and_adjusts():
 
 def test_mate_else_if_chain_boundary():
     move = C.pack_move(2, 3)
-    # value == 9899 不满足 value > mateNode，落入 else-if 的 entry_depth < depth
+    slot = slot_of(Z32)
+    # 边界值 ±MATE_BOUND 不算 mate 仍可入表；不满足 value > mateNode 时
+    # 落入 else-if 的 entry_depth < depth
     ctx = ctx_small()
     S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, S.MATE_BOUND, 3, move)
+    assert ctx.tt_exists[0, S.SLOT_STEP, slot]
     assert not S.get_tt(ctx, 0, Z32, Z64, 5, -9999, 9999)[0]
-    # value == 9900 是 mate 分支：不做 entry_depth < depth 检查
+    ctx = ctx_small()
+    S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, -S.MATE_BOUND, 3, move)
+    assert ctx.tt_exists[0, S.SLOT_STEP, slot]
+    assert not S.get_tt(ctx, 0, Z32, Z64, 5, -9999, 9999)[0]
+
+    # set_tt 对 mate 分支（|value| > MATE_BOUND）不入表
     ctx = ctx_small()
     S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, S.MATE_BOUND + 1, 3, move)
+    assert not ctx.tt_exists[0, S.SLOT_STEP, slot]
+    ctx = ctx_small()
+    S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, -S.MATE_BOUND - 1, 3, move)
+    assert not ctx.tt_exists[0, S.SLOT_STEP, slot]
+
+    # 读取端：mate 分支不做 entry_depth < depth 检查（手工写入条目验证）
+    ctx = ctx_small()
+    ctx.tt_key[0, S.SLOT_STEP, slot] = Z64
+    ctx.tt_type[0, S.SLOT_STEP, slot] = S.HASH_PV
+    ctx.tt_value[0, S.SLOT_STEP, slot] = S.MATE_BOUND + 1
+    ctx.tt_depth[0, S.SLOT_STEP, slot] = 3
+    ctx.tt_move[0, S.SLOT_STEP, slot] = move
+    ctx.tt_exists[0, S.SLOT_STEP, slot] = True
     hit, value, _ = S.get_tt(ctx, 0, Z32, Z64, 5, -9999, 9999)
     assert hit
     assert value == S.MATE_BOUND + 1 - (5 - 3)
-    # 负侧边界对称
     ctx = ctx_small()
-    S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, -S.MATE_BOUND, 3, move)
-    assert not S.get_tt(ctx, 0, Z32, Z64, 5, -9999, 9999)[0]
-    ctx = ctx_small()
-    S.set_tt(ctx, 0, Z32, Z64, S.HASH_PV, -S.MATE_BOUND - 1, 3, move)
+    ctx.tt_key[0, S.SLOT_STEP, slot] = Z64
+    ctx.tt_type[0, S.SLOT_STEP, slot] = S.HASH_PV
+    ctx.tt_value[0, S.SLOT_STEP, slot] = -S.MATE_BOUND - 1
+    ctx.tt_depth[0, S.SLOT_STEP, slot] = 3
+    ctx.tt_move[0, S.SLOT_STEP, slot] = move
+    ctx.tt_exists[0, S.SLOT_STEP, slot] = True
     hit, value, _ = S.get_tt(ctx, 0, Z32, Z64, 5, -9999, 9999)
     assert hit
     assert value == -S.MATE_BOUND - 1 + (5 - 3)
