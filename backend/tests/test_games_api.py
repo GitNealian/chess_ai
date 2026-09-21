@@ -38,6 +38,44 @@ def test_filter_by_category_and_keyword(client):
     assert len(client.get("/api/games?keyword=B").get_json()["items"]) == 1
 
 
+def test_list_pagination(client):
+    for i in range(25):
+        client.post("/api/games", json=_payload(name=f"棋谱{i}"))
+    body = client.get("/api/games?page=1&page_size=10").get_json()
+    assert body["total"] == 25
+    assert body["page"] == 1
+    assert body["page_size"] == 10
+    assert len(body["items"]) == 10
+    body = client.get("/api/games?page=3&page_size=10").get_json()
+    assert len(body["items"]) == 5
+
+
+def test_list_default_page_size(client):
+    for i in range(25):
+        client.post("/api/games", json=_payload(name=f"棋谱{i}"))
+    body = client.get("/api/games").get_json()
+    assert len(body["items"]) == 20
+    assert body["total"] == 25
+
+
+def test_list_rejects_bad_pagination(client):
+    assert client.get("/api/games?page=0").status_code == 400
+    assert client.get("/api/games?page=abc").status_code == 400
+    assert client.get("/api/games?page_size=0").status_code == 400
+    assert client.get("/api/games?page_size=101").status_code == 400
+
+
+def test_filter_category_is_fuzzy(client):
+    client.post("/api/games", json=_payload(name="A", category="2019年腾讯棋牌全国象棋甲级联赛"))
+    assert len(client.get("/api/games?category=甲级联赛").get_json()["items"]) == 1
+    assert len(client.get("/api/games?category=个人赛").get_json()["items"]) == 0
+
+
+def test_search_matches_event(client):
+    client.post("/api/games", json=_payload(name="A", event="2019年全国象棋个人赛"))
+    assert len(client.get("/api/games?keyword=个人赛").get_json()["items"]) == 1
+
+
 def test_invalid_practice_side(client):
     resp = client.post("/api/games", json=_payload(practice_side="green"))
     assert resp.status_code == 400

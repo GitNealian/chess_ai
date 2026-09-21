@@ -25,6 +25,8 @@ class Game(db.Model):
     initial_fen = db.Column(db.String(200), default=INITIAL_FEN)
     _moves = db.Column("moves", db.Text, default="[]")
     practice_side = db.Column(db.String(10), default="both")
+    source = db.Column(db.String(50), default="")
+    source_hash = db.Column(db.String(40), unique=True)
     created_at = db.Column(db.DateTime, default=_utcnow)
     updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
 

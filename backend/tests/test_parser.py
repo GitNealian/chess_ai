@@ -30,6 +30,19 @@ def test_parse_iccs_uppercase():
     assert (move.x1, move.y1, move.x2, move.y2) == (7, 2, 4, 2)
 
 
+def test_parse_iccs_with_dash():
+    move = parse_iccs("H2-E2")
+    assert (move.x1, move.y1, move.x2, move.y2) == (7, 2, 4, 2)
+
+
+def test_parse_moves_iccs_with_dash():
+    board = Board.initial()
+    moves = parse_moves(board, "H2-E2 H7-E7")
+    assert len(moves) == 2
+    assert (moves[0].x1, moves[0].y1, moves[0].x2, moves[0].y2) == (7, 2, 4, 2)
+    assert (moves[1].x1, moves[1].y1, moves[1].x2, moves[1].y2) == (7, 7, 4, 7)
+
+
 def test_parse_moves_uppercase_iccs():
     board = Board.initial()
     moves = parse_moves(board, "H2E2 H7E7")
@@ -66,6 +79,24 @@ def test_parse_pgn_result_header():
 def test_parse_pgn_empty_body():
     parsed = parse_pgn('[Event "测试"]')
     assert parsed["moves"] == []
+
+
+def test_parse_pgn_with_fen_header():
+    pgn = """[FEN "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"]
+
+1. H2-E2 H7-E7
+"""
+    parsed = parse_pgn(pgn)
+    assert len(parsed["moves"]) == 2
+
+
+def test_parse_pgn_invalid_fen_header():
+    pgn = """[FEN "not-a-fen"]
+
+1. H2-E2
+"""
+    with pytest.raises(ValueError, match="FEN 头无效"):
+        parse_pgn(pgn)
 
 
 def test_parse_moves_ignores_result_token():

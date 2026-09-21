@@ -44,6 +44,30 @@ def test_queue_orders_by_due_date_ascending(app, client):
     assert items[0]["due_date"] == (date.today() - timedelta(days=5)).isoformat()
 
 
+def test_queue_limit_and_total_count(client):
+    for i in range(5):
+        _game(client, f"g{i}")
+    body = client.get("/api/review/queue?limit=2").get_json()
+    assert body["count"] == 5
+    assert body["limit"] == 2
+    assert len(body["items"]) == 2
+    assert [item["game"]["id"] for item in body["items"]] == [1, 2]
+
+
+def test_queue_default_limit_applies(client):
+    for i in range(3):
+        _game(client, f"g{i}")
+    body = client.get("/api/review/queue").get_json()
+    assert body["count"] == 3
+    assert len(body["items"]) == 3
+
+
+def test_queue_rejects_bad_limit(client):
+    assert client.get("/api/review/queue?limit=0").status_code == 400
+    assert client.get("/api/review/queue?limit=abc").status_code == 400
+    assert client.get("/api/review/queue?limit=201").status_code == 400
+
+
 def test_submit_creates_review_and_schedules(client):
     game_id = _game(client)
     resp = _submit(client, game_id, duration_ms=5000)

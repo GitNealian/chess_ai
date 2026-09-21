@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from sqlalchemy.orm import joinedload
 
 from chess_engine.board import INITIAL_FEN, Board
 from chess_engine.move import Move
@@ -8,6 +9,8 @@ from models import Game, db
 games_bp = Blueprint("games", __name__)
 
 VALID_SIDES = {"red", "black", "both"}
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
 
 
 def _error(message, detail=None, step=None, status=400):
@@ -47,17 +50,60 @@ def _validate_game_moves(initial_fen, moves):
     return None
 
 
+def _parse_positive_int(raw, default, minimum, maximum=None):
+    if raw is None or raw == "":
+        return default, None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None, "必须是整数"
+    if value < minimum:
+        return None, f"不能小于 {minimum}"
+    if maximum is not None and value > maximum:
+        return None, f"不能大于 {maximum}"
+    return value, None
+
+
 @games_bp.get("")
 def list_games():
-    query = Game.query
+    page, error = _parse_positive_int(request.args.get("page"), 1, 1)
+    if error:
+        return _error(f"page {error}")
+    page_size, error = _parse_positive_int(
+        request.args.get("page_size"), DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE
+    )
+    if error:
+        return _error(f"page_size {error}")
+
+    query = Game.query.options(joinedload(Game.review))
     category = request.args.get("category")
     keyword = request.args.get("keyword")
     if category:
-        query = query.filter(Game.category == category)
+        query = query.filter(Game.category.contains(category))
     if keyword:
-        query = query.filter(Game.name.contains(keyword))
-    games = query.order_by(Game.updated_at.desc()).all()
-    return jsonify({"items": [game.to_dict() for game in games]})
+        pattern = f"%{keyword}%"
+        query = query.filter(
+            db.or_(
+                Game.name.like(pattern),
+                Game.event.like(pattern),
+                Game.category.like(pattern),
+            )
+        )
+    total = query.count()
+    games = (
+        query.order_by(Game.updated_at.desc(), Game.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return jsonify(
+        {
+            "items": [game.to_dict() for game in games],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
 
 
 @games_bp.post("")
@@ -140,6 +186,7 @@ def import_pgn():
         black_player=parsed["black_player"],
         event=parsed["event"],
         result=parsed["result"],
+        initial_fen=parsed["initial_fen"],
         practice_side=data.get("practice_side", "both"),
     )
     game.moves = [move.as_dict() for move in parsed["moves"]]

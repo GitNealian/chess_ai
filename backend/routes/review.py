@@ -1,11 +1,28 @@
 from datetime import date, datetime, timezone
 
 from flask import Blueprint, jsonify, request
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from models import Game, Review, ReviewLog, db
 from srs import quality_from_result, schedule
 
 review_bp = Blueprint("review", __name__)
+
+DEFAULT_QUEUE_LIMIT = 50
+MAX_QUEUE_LIMIT = 200
+
+
+def _parse_limit(raw):
+    if raw is None or raw == "":
+        return DEFAULT_QUEUE_LIMIT, None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None, "limit 必须是整数"
+    if value < 1 or value > MAX_QUEUE_LIMIT:
+        return None, f"limit 必须在 1 到 {MAX_QUEUE_LIMIT} 之间"
+    return value, None
 
 
 def _parse_int(data, key, default=0, minimum=None):
@@ -30,25 +47,33 @@ def _parse_bool(data, key, default=False):
 
 @review_bp.get("/review/queue")
 def review_queue():
+    limit, error = _parse_limit(request.args.get("limit"))
+    if error:
+        return jsonify({"error": error}), 400
     today = date.today()
-    games = Game.query.all()
+    query = (
+        Game.query.outerjoin(Review, Review.game_id == Game.id)
+        .filter(db.or_(Review.id.is_(None), Review.due_date <= today))
+        .options(joinedload(Game.review))
+    )
+    count = query.count()
+    games = (
+        query.order_by(func.coalesce(Review.due_date, today).asc(), Game.id.asc())
+        .limit(limit)
+        .all()
+    )
     entries = []
     for game in games:
         review = game.review
-        if review is None or review.due_date <= today:
-            due = review.due_date if review else today
-            entries.append(
-                {
-                    "game": game.to_dict(),
-                    "due_date": due.isoformat(),
-                    "is_new": review is None,
-                    "_due": due,
-                }
-            )
-    entries.sort(key=lambda item: (item["_due"], item["game"]["id"]))
-    for item in entries:
-        item.pop("_due")
-    return jsonify({"items": entries, "count": len(entries)})
+        due = review.due_date if review else today
+        entries.append(
+            {
+                "game": game.to_dict(),
+                "due_date": due.isoformat(),
+                "is_new": review is None,
+            }
+        )
+    return jsonify({"items": entries, "count": count, "limit": limit})
 
 
 @review_bp.post("/review/<int:game_id>/submit")

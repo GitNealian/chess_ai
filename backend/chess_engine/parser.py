@@ -8,15 +8,19 @@ _ICCS_RE = re.compile(r"^[a-i][0-9][a-i][0-9]$")
 _RESULT_TOKENS = ("*", "1-0", "0-1", "1/2-1/2")
 
 
+def _normalize_iccs(text):
+    return text.strip().lower().replace("-", "")
+
+
 def parse_iccs(text):
-    text = text.strip().lower()
-    if not _ICCS_RE.match(text):
+    normalized = _normalize_iccs(text)
+    if not _ICCS_RE.match(normalized):
         raise ValueError(f"无效 ICCS 坐标：{text}")
     return Move(
-        ord(text[0]) - ord("a"),
-        int(text[1]),
-        ord(text[2]) - ord("a"),
-        int(text[3]),
+        ord(normalized[0]) - ord("a"),
+        int(normalized[1]),
+        ord(normalized[2]) - ord("a"),
+        int(normalized[3]),
     )
 
 
@@ -35,7 +39,7 @@ def parse_moves(board, text):
     working = board.clone()
     for index, token in enumerate(_tokenize(text), start=1):
         try:
-            if _ICCS_RE.match(token.lower()):
+            if _ICCS_RE.match(_normalize_iccs(token)):
                 move = parse_iccs(token)
             else:
                 move = parse_chinese(working, token)
@@ -59,11 +63,18 @@ def parse_pgn(text):
         elif stripped:
             body_lines.append(stripped)
     board = Board.initial()
+    fen = headers.get("FEN")
+    if fen:
+        try:
+            board.load_fen(fen)
+        except ValueError as exc:
+            raise ValueError(f"FEN 头无效：{exc}") from exc
     moves = parse_moves(board, "\n".join(body_lines))
     return {
         "event": headers.get("Event", ""),
         "red_player": headers.get("Red", ""),
         "black_player": headers.get("Black", ""),
         "result": headers.get("Result", ""),
+        "initial_fen": board.to_fen(),
         "moves": moves,
     }
