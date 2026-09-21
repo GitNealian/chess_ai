@@ -13,7 +13,8 @@
 - **间隔重复（SM-2）**：按错误次数与是否看答案评分，更新 `ease_factor` / `interval` / `repetitions` / `lapses`，到期自动进入今日复习队列。
 - **棋谱库管理**：分类、关键字筛选，显示掌握度（新 / 学习中 / 已掌握）与下次复习日期。
 - **规则引擎**：完整合法性判定（蹩马腿、塞象眼、炮翻山、将帅照面、过河兵、将死/困毙），规则单一真相源在后端。
-- **AI 局面分析**：打谱时逐层加深实时打分，红优/黑优评分 + 优势条 + 棋盘箭头标注双方一步推演（最新结果置顶）。
+- **人人对弈**：同屏双人轮流走子，支持翻转棋盘（黑方视角）、悔棋、每步自动 AI 分析；可从空白开局，也可从任意棋谱的当前步续下；对局可手动保存到棋谱库。
+- **AI 局面分析**：打谱与对弈时逐层加深实时打分，红优/黑优评分 + 优势条 + 棋盘箭头标注双方一步推演（最新结果置顶）。
 
 ## 目录结构
 
@@ -42,7 +43,7 @@ chess/
 │   │   └── constants.py    # 常量与 site/(x,y) 坐标转换
 │   ├── srs.py              # SM-2 间隔重复调度
 │   ├── routes/
-│   │   ├── engine.py       # 引擎分析 NDJSON 流式接口
+│   │   ├── engine.py       # 引擎分析 NDJSON 流式接口 + 走子校验
 │   │   ├── games.py        # 棋谱 CRUD、解析、PGN 导入、走法校验
 │   │   └── review.py       # 复习队列、提交、统计
 │   ├── scripts/            # 工具脚本（评估表提取、PGN 批量导入）
@@ -51,8 +52,8 @@ chess/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/     # ChessBoard.vue（SVG 自绘）
-│   │   ├── views/          # Library / Editor / Practice / Review
-│   │   ├── stores/         # Pinia：library / practice
+│   │   ├── views/          # Library / Editor / Practice / Review / Play
+│   │   ├── stores/         # Pinia：library / practice；play 对弈会话（reactive 工厂）
 │   │   ├── api/            # axios 封装
 │   │   ├── utils/          # 坐标与记谱工具
 │   │   └── router/         # Vue Router
@@ -92,10 +93,10 @@ npm run dev
 ## 测试
 
 ```bash
-# 后端（417 项：416 通过 + 1 跳过；其中引擎相关 254 项）
+# 后端（428 项：427 通过 + 1 跳过；其中引擎相关 254 项）
 cd backend && .venv/bin/python -m pytest
 
-# 前端（94 项）
+# 前端（149 项）
 cd frontend && npx vitest run
 ```
 
@@ -147,6 +148,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 | POST | `/api/games/import-pgn` | PGN 导入 |
 | POST | `/api/games/:id/check-move` | 校验某步是否为正确着法 |
 | POST | `/api/engine/analyze` | 局面分析（NDJSON 流式，逐层返回） |
+| POST | `/api/engine/validate-move` | 无状态走子校验（返回新局面 / 中文记谱 / 将军 / 终局） |
 | GET | `/api/review/queue` | 今日复习队列 |
 | POST | `/api/review/:gameId/submit` | 提交复习结果并更新调度 |
 | GET | `/api/stats` | 掌握度统计 |
@@ -160,6 +162,8 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - `{"type":"done", "depth":..., "time_ms":..., "reason":...}`：正常结束（`reason` 为 `max_depth` / `time_limit` / `stop`）；
 - `{"type":"error", "message":...}`：参数、FEN 或着法错误。
 
+`POST /api/engine/validate-move` 为无状态走子校验（供人人对弈页调用）：请求体 `{ "initial_fen"?, "moves"?, "move" }`，重放 `initial_fen + moves`（缺省初始局面 / 空序列）后校验 `move`。合法返回 `{ "legal": true, "fen", "side_to_move", "chinese", "check", "game_over" }`，其中 `check` 为走子后对方是否被将军、`game_over` 为 `{ "winner", "reason": "checkmate" | "stalemate" }` 或 `null`（中国象棋困毙判负），`chinese` 生成失败时回退 ICCS；非法着法返回 200 `{ "legal": false, "reason" }`（"起点没有棋子" / "该棋子不属于行棋方" / "该棋子不能这样走" / "不能送将"）；参数、FEN 或重放序列错误返回 400 `{ "error", "detail"? }`（`moves` 上限 1024 步）。
+
 ## 已知限制
 
 - 前端「棋盘摆子」入口不校验着法合法性；后端保存时会校验并拒绝非法序列（错误信息带步号）。
@@ -171,7 +175,8 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 掌握度阈值：`repetitions >= 3` 视为「已掌握」，与 `/api/stats` 的 `mastered` 口径一致。
 - 棋谱列表对每条棋谱的复习信息为惰性加载（本地单用户规模下可接受）。
 - 单用户、无登录；数据存于 SQLite。
-- AI 分析目前只接入打谱页（`PracticeView`），其他视图未接入。
+- AI 分析接入打谱页与对弈页；录入 / 默写视图未接入。
+- 人人对弈为同屏双人，不联网、不自动保存（手动保存到棋谱库）；不判定长将、重复局面和棋；从棋谱续下的将军/终局提示由一次探测请求恢复，悔棋到该步之前时提示不恢复（着法合法性始终由后端保证）。
 - 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，完成一层后按「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（通常完成时间不超过其 ~1.5 倍）；若下一层实际耗时相对上一层暴涨，仍可能超出。
 - Zobrist 哈希为自生成（固定种子），与 Java 版哈希值不兼容，仅保证引擎内部自洽。
 - mate 分数不入置换表（修正 Java 继承缺陷，避免深层杀步失真）。
@@ -179,5 +184,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 
 ## 设计文档与实现计划
 
-- 设计文档：`docs/plans/2026-09-19-chess-practice-design.md`
-- 实现计划：`docs/plans/2026-09-19-chess-practice-implementation.md`
+- 棋谱练习（初版）：`docs/plans/2026-09-19-chess-practice-design.md` / `docs/plans/2026-09-19-chess-practice-implementation.md`
+- 移动端适配：`docs/plans/2026-09-19-mobile-responsive-design.md`
+- AI 引擎：`docs/plans/2026-09-20-ai-engine-design.md` / `docs/plans/2026-09-20-ai-engine-implementation.md`
+- 人人对弈：`docs/plans/2026-09-21-play-mode-design.md` / `docs/plans/2026-09-21-play-mode-implementation.md`
