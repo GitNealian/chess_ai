@@ -22,6 +22,11 @@
   「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（done 的
   `reason` 仍为 `time_limit`）；不保证在时限到达时立即返回；客户端断开后
   则在下一个 ping 周期内停止搜索并释放锁。
+
+另外提供 `POST /api/engine/validate-move`：无状态走子校验（重放
+`initial_fen + moves` 后校验一步），供「人人对弈」页面调用。该接口只做
+请求内局面推演、无共享可变状态，因此**不获取 `_ANALYZE_LOCK`**（避免
+分析进行中无法走子），也不触发引擎搜索。
 """
 
 import json
@@ -52,6 +57,9 @@ MIN_DEPTH = EC.ROOT_START_DEPTH  # 4
 MAX_DEPTH = 16
 MIN_TIME_LIMIT_MS = 100
 MAX_TIME_LIMIT_MS = 30000
+
+# 重放着法步数上限（防超长序列放大 CPU）；正常对局数百步足够。
+MAX_REPLAY_MOVES = 1024
 
 # 对外的 PV 长度（当前方最佳着法 + 对方应着）。
 PV_LIMIT = 2
@@ -215,26 +223,35 @@ def validate_move():
     moves = data.get("moves", [])
     if not isinstance(moves, list):
         return jsonify({"error": "moves 必须是数组"}), 400
+    if len(moves) > MAX_REPLAY_MOVES:
+        return jsonify({"error": f"moves 最多 {MAX_REPLAY_MOVES} 步"}), 400
     for index, raw in enumerate(moves, start=1):
         if not _valid_move_dict(raw):
-            return jsonify({"error": f"第 {index} 步着法格式错误"}), 400
+            return jsonify(
+                {"error": "重放着法格式错误", "detail": f"第 {index} 步着法格式错误"}
+            ), 400
         replay = Move.from_dict(raw)
         if not board.is_legal(replay):
-            return jsonify({"error": f"第 {index} 步不合法"}), 400
+            return jsonify(
+                {"error": "重放着法不合法", "detail": f"第 {index} 步不合法"}
+            ), 400
         board.apply_move(replay)
 
     raw_move = data.get("move")
     if not _valid_move_dict(raw_move):
-        return jsonify({"error": "move 必须是含 x1/y1/x2/y2 的对象"}), 400
+        return jsonify(
+            {"error": "move 格式错误", "detail": "move 必须是含 x1/y1/x2/y2 的对象"}
+        ), 400
     move = Move.from_dict(raw_move)
     if not board.is_legal(move):
         return jsonify({"legal": False, "reason": _illegal_reason(board, move)})
 
     mover = board.side_to_move
+    iccs = f"{chr(97 + move.x1)}{move.y1}{chr(97 + move.x2)}{move.y2}"
     try:
         chinese = move_to_chinese(board, move)
     except ValueError:
-        chinese = None
+        chinese = iccs
     board.apply_move(move)
     opponent = board.side_to_move
     check = board.in_check(opponent)

@@ -23,7 +23,9 @@ def test_validate_legal_move_with_default_fen(client):
     assert body["chinese"] == "炮八平五"
     assert body["check"] is False
     assert body["game_over"] is None
-    assert body["fen"] != INITIAL_FEN
+    assert body["fen"] == (
+        "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/4C2C1/9/RNBAKABNR b - - 0 1"
+    )
 
 
 def test_validate_replays_initial_fen_and_moves(client):
@@ -36,6 +38,18 @@ def test_validate_replays_initial_fen_and_moves(client):
     assert body["legal"] is True
     assert body["side_to_move"] == "red"
     assert body["chinese"] == "马8进7"
+
+
+def test_validate_chinese_falls_back_to_iccs(client):
+    body = post(
+        client,
+        {
+            "initial_fen": "3k5/9/9/9/9/C8/9/C8/9/C3K4 w - - 0 1",
+            "move": {"x1": 0, "y1": 2, "x2": 1, "y2": 2},
+        },
+    ).get_json()
+    assert body["legal"] is True
+    assert body["chinese"] == "a2b2"
 
 
 def test_validate_illegal_move_returns_reason(client):
@@ -55,6 +69,19 @@ def test_validate_empty_origin(client):
     body = post(client, {"move": {"x1": 4, "y1": 4, "x2": 4, "y2": 5}}).get_json()
     assert body["legal"] is False
     assert body["reason"] == "起点没有棋子"
+
+
+def test_validate_reports_self_exposing_move(client):
+    # 红帅 (3,0)→(4,0) 后与黑车 (4,1) 同列且中间无子 → 送将
+    body = post(
+        client,
+        {
+            "initial_fen": "4k4/R8/9/9/9/9/9/9/4r4/3K5 w - - 0 1",
+            "move": {"x1": 3, "y1": 0, "x2": 4, "y2": 0},
+        },
+    ).get_json()
+    assert body["legal"] is False
+    assert body["reason"] == "不能送将"
 
 
 def test_validate_reports_check_and_checkmate(client):
@@ -85,8 +112,25 @@ def test_validate_rejects_bad_payloads(client):
     assert client.post("/api/engine/validate-move", json={}).status_code == 400
     assert post(client, {"move": "炮二平五"}).status_code == 400
     assert post(client, {"move": {"x1": 1, "y1": 2}}).status_code == 400
-    assert post(client, {"initial_fen": "not-a-fen", "move": {"x1": 1, "y1": 2, "x2": 4, "y2": 2}}).status_code == 400
-    assert post(client, {"moves": "x", "move": {"x1": 1, "y1": 2, "x2": 4, "y2": 2}}).status_code == 400
+    assert post(
+        client,
+        {"initial_fen": "not-a-fen", "move": {"x1": 1, "y1": 2, "x2": 4, "y2": 2}},
+    ).status_code == 400
+    assert post(
+        client,
+        {"moves": "x", "move": {"x1": 1, "y1": 2, "x2": 4, "y2": 2}},
+    ).status_code == 400
+    assert post(
+        client,
+        {"moves": [{"x1": 1}], "move": {"x1": 1, "y1": 2, "x2": 4, "y2": 2}},
+    ).status_code == 400
+    assert post(
+        client,
+        {
+            "moves": [{"x1": 0, "y1": 0, "x2": 1, "y2": 1}] * 1025,
+            "move": {"x1": 1, "y1": 2, "x2": 4, "y2": 2},
+        },
+    ).status_code == 400
 
 
 def test_validate_rejects_illegal_replay_sequence(client):
@@ -96,4 +140,5 @@ def test_validate_rejects_illegal_replay_sequence(client):
     }
     resp = post(client, payload)
     assert resp.status_code == 400
-    assert "第 1 步" in resp.get_json()["error"]
+    body = resp.get_json()
+    assert "第 1 步" in body["detail"]
