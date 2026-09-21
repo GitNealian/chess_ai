@@ -32,7 +32,8 @@ Task 12（`analyze`/`warmup`）语义要点：
   耗时不可预估的风险收敛到"最后一层最多约为上一层的 1.5 倍"；
 - `start_depth > max_depth` 时提前返回（不加载局面、不分配 `Ctx`/`Stack`）；
 - 每次 `analyze` 新建 `Ctx`（默认 40MB 置换表），生成器结束时显式释放；
-- `warmup` 用初始局面触发全链 JIT 编译并计入日志，`_WARMED` 保证幂等。
+- `warmup` 用初始局面触发全链 JIT 编译并计入日志，`_WARMED` + `_WARMUP_LOCK`
+  保证幂等与并发安全（含 fork 后重建）。
 """
 
 import dataclasses
@@ -185,6 +186,17 @@ _WARMUP_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - -
 _WARMED = False
 
 _WARMUP_LOCK = threading.Lock()
+# 不可重入：预热体内（及其调用链）禁止再次调用 warmup/analyze(threads>1)。
+
+
+def _reset_warmup_lock_after_fork():
+    """fork 后子进程重建锁：父进程持锁时 fork 会继承 locked 状态、永久死锁。"""
+    global _WARMUP_LOCK
+    _WARMUP_LOCK = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):  # Windows 无 fork，无需处理
+    os.register_at_fork(after_in_child=_reset_warmup_lock_after_fork)
 
 
 @dataclasses.dataclass
@@ -420,11 +432,11 @@ def warmup():
     global _WARMED
     if _WARMED:
         return
+    from . import search as _search
+
     with _WARMUP_LOCK:
         if _WARMED:
             return
-        from . import search as _search
-
         t0 = time.perf_counter()
         st = load_position(_WARMUP_FEN)
         prepare(st)

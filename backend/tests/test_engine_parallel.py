@@ -274,13 +274,24 @@ def test_single_thread_starts_no_workers():
 
 
 def test_warmup_is_thread_safe(monkeypatch):
+    """4 线程并发 warmup：预热体只执行一次（无锁实现此断言在压力下会失败）。"""
     from engine import warmup
 
     monkeypatch.setattr(A, "_WARMED", False)
+    calls = []
+    real_load_position = A.load_position
+
+    def counting_load_position(fen):
+        calls.append(fen)
+        return real_load_position(fen)
+
+    monkeypatch.setattr(A, "load_position", counting_load_position)
     errors = []
+    barrier = threading.Barrier(4)
 
     def run():
         try:
+            barrier.wait()
             warmup()
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
@@ -292,3 +303,10 @@ def test_warmup_is_thread_safe(monkeypatch):
         t.join()
     assert errors == []
     assert A._WARMED is True
+    assert len(calls) == 1
+
+
+def test_warmup_lock_reset_helper_replaces_lock():
+    old = A._WARMUP_LOCK
+    A._reset_warmup_lock_after_fork()
+    assert A._WARMUP_LOCK is not old
