@@ -68,7 +68,7 @@ chess/
 - Node.js 18+
 - 引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时。大部分引擎模块启用 numba 磁盘缓存（`backend/engine/__pycache__/`），编译产物可跨进程复用；但**搜索模块（`search.py`）因 numba 0.67「递归 + 跨函数调用 + 磁盘缓存」缺陷不使用磁盘缓存**，因此**每个新进程首次分析仍需 ~20-35s 预热**。建议部署后等预热线程完成（或先发一个浅层分析请求）再对外服务；gunicorn 多 worker 各自独立预热。
 - numba 缓存目录会随源码变更 / numba 升级累积历史编译产物而增长。运行一段时间后可安全删除 `backend/engine/__pycache__/`，代价是下次冷启动重新编译（即上述预热耗时）。
-- **并行搜索（Lazy SMP）**：引擎默认使用 `max(1, min(cpu_count-1, 8))` 个线程并行分析：主线程产出结果，辅助线程共享置换表互补搜索。可用环境变量 `ENGINE_THREADS`（如 `ENGINE_THREADS=1` 完全串行）或分析请求的 `threads` 字段（1..16）覆盖。并行模式下 `nodes` 只统计主线程；同一局面的分数/PV 在多次运行间可能微变（非确定性），属预期行为。本机实测（nproc=20 逻辑核，固定深度、`time_limit_ms=60000`、预热完成后空载测量，每档重复 3 次取中位数，depth 8 / 10）：2 线程 1.5x / 1.6x，4 线程 1.9x / 2.1x；默认 8 线程档未测。
+- **并行搜索（Lazy SMP）**：引擎默认使用 `max(1, min(cpu_count-1, 8))` 个线程并行分析：主线程产出结果，辅助线程共享置换表互补搜索。可用环境变量 `ENGINE_THREADS`（如 `ENGINE_THREADS=1` 完全串行）或分析请求的 `threads` 字段（1..16）覆盖。并行模式下 `nodes` 只统计主线程；同一局面的分数/PV 在多次运行间可能微变（非确定性），属预期行为。本机实测（nproc=20 逻辑核，固定深度、`time_limit_ms=60000`、预热完成后测量（无额外基准负载，测量时系统 load≈1），每档重复 3 次取中位数，depth 8 / 10）：2 线程 1.5x / 1.6x，4 线程 1.9x / 2.1x；默认 8 线程档未测。
 - **`gunicorn --preload` 注意**：请在 gunicorn 配置的 `on_starting(server)` 钩子中同步调用 `engine.warmup()` 完成预热后再 fork worker（或直接不使用 `--preload`）。若在预热线程运行期间 fork，子进程可能继承 numba 自身的编译锁（本项目的 `_WARMUP_LOCK` 已做 fork 重建，numba 编译锁不能），导致子进程首次编译（含 `threads=1` 串行搜索）阻塞。
 
 ## 后端启动
