@@ -185,6 +185,77 @@ def _done_reason(last, max_depth, time_limit_ms, stop):
     return "time_limit"
 
 
+def _illegal_reason(board, move):
+    piece = board.piece_at(move.x1, move.y1)
+    if piece is None:
+        return "起点没有棋子"
+    if piece[0] != board.side_to_move:
+        return "该棋子不属于行棋方"
+    if move not in board.pseudo_moves_from(move.x1, move.y1):
+        return "该棋子不能这样走"
+    return "不能送将"
+
+
+@engine_bp.post("/validate-move")
+def validate_move():
+    """无状态走子校验：重放 `initial_fen + moves` 后校验 `move` 并返回新局面。"""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体必须是 JSON 对象"}), 400
+
+    initial_fen = data.get("initial_fen", INITIAL_FEN)
+    if not isinstance(initial_fen, str) or not initial_fen.strip():
+        return jsonify({"error": "initial_fen 必须是非空字符串"}), 400
+    board = Board()
+    try:
+        board.load_fen(initial_fen)
+    except ValueError as exc:
+        return jsonify({"error": "初始局面无效", "detail": str(exc)}), 400
+
+    moves = data.get("moves", [])
+    if not isinstance(moves, list):
+        return jsonify({"error": "moves 必须是数组"}), 400
+    for index, raw in enumerate(moves, start=1):
+        if not _valid_move_dict(raw):
+            return jsonify({"error": f"第 {index} 步着法格式错误"}), 400
+        replay = Move.from_dict(raw)
+        if not board.is_legal(replay):
+            return jsonify({"error": f"第 {index} 步不合法"}), 400
+        board.apply_move(replay)
+
+    raw_move = data.get("move")
+    if not _valid_move_dict(raw_move):
+        return jsonify({"error": "move 必须是含 x1/y1/x2/y2 的对象"}), 400
+    move = Move.from_dict(raw_move)
+    if not board.is_legal(move):
+        return jsonify({"legal": False, "reason": _illegal_reason(board, move)})
+
+    mover = board.side_to_move
+    try:
+        chinese = move_to_chinese(board, move)
+    except ValueError:
+        chinese = None
+    board.apply_move(move)
+    opponent = board.side_to_move
+    check = board.in_check(opponent)
+    game_over = None
+    if not board.has_legal_move(opponent):
+        game_over = {
+            "winner": mover,
+            "reason": "checkmate" if check else "stalemate",
+        }
+    return jsonify(
+        {
+            "legal": True,
+            "fen": board.to_fen(),
+            "side_to_move": opponent,
+            "chinese": chinese,
+            "check": check,
+            "game_over": game_over,
+        }
+    )
+
+
 @engine_bp.post("/analyze")
 def analyze_position():
     data = request.get_json(silent=True)
