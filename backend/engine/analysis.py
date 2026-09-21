@@ -297,6 +297,10 @@ def analyze(
     # 延迟导入：`search → evaluate → analysis` 构成环，顶层导入会循环。
     from . import search as _search
 
+    # 记录外部停旗来源（必须在下方替换 stop 之前）：转发线程只在调用方
+    # 真的传入 stop 时才需要启动。
+    has_external_stop = stop is not None
+
     if stop is None:
         stop = np.zeros(1, dtype=np.int8)
     else:
@@ -330,30 +334,33 @@ def analyze(
     done = threading.Event()
     helpers = []
     forwarder = None
-    if threads > 1:
-        if stop is not None:
-            forwarder = threading.Thread(
-                target=_forward_stop,
-                args=(stop, stop_all, done),
-                name="engine-stop-forward",
-                daemon=True,
-            )
-            forwarder.start()
-        for i in range(1, threads):
-            first_depth = C.ROOT_START_DEPTH + i
-            if first_depth > max_depth:
-                break
-            helper = threading.Thread(
-                target=_worker_loop,
-                args=(fen, ctx, stop_all, first_depth, max_depth),
-                name=f"engine-helper-{i}",
-                daemon=True,
-            )
-            helper.start()
-            helpers.append(helper)
 
     t0 = time.perf_counter()
     try:
+        # 线程启动在 try 内：启动过程中任何异常（如 start() 失败）都会走
+        # finally 置位总停旗并回收已启动的线程，不泄漏无法停止的后台线程。
+        if threads > 1:
+            if has_external_stop:
+                forwarder = threading.Thread(
+                    target=_forward_stop,
+                    args=(stop, stop_all, done),
+                    name="engine-stop-forward",
+                    daemon=True,
+                )
+                forwarder.start()
+            for i in range(1, threads):
+                first_depth = C.ROOT_START_DEPTH + i
+                if first_depth > max_depth:
+                    break
+                helper = threading.Thread(
+                    target=_worker_loop,
+                    args=(fen, ctx, stop_all, first_depth, max_depth),
+                    name=f"engine-helper-{i}",
+                    daemon=True,
+                )
+                helper.start()
+                helpers.append(helper)
+
         depth = C.ROOT_START_DEPTH
         last_layer_ms = 0
         while depth <= max_depth:
@@ -391,9 +398,12 @@ def analyze(
         done.set()
         if stop_all is not None:
             stop_all[0] = 1
+        # 只 join 真正启动过的线程：start() 失败的线程 join 会抛 RuntimeError，
+        # 掩盖启动时的原始异常。
         for helper in helpers:
-            helper.join(timeout=2.0)
-        if forwarder is not None:
+            if helper.ident is not None:
+                helper.join(timeout=2.0)
+        if forwarder is not None and forwarder.ident is not None:
             forwarder.join(timeout=0.5)
         del ctx, stack, st
 

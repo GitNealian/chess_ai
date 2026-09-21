@@ -6,6 +6,7 @@
 
 import os
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -209,3 +210,64 @@ def test_parallel_stop_leaves_no_worker_threads():
         if t.name.startswith("engine-helper-") or t.name == "engine-stop-forward"
     ]
     assert leftovers == []
+
+
+def test_parallel_start_failure_cleans_up(monkeypatch):
+    real_start = threading.Thread.start
+
+    def flaky_start(self):
+        if self.name == "engine-helper-2":
+            raise RuntimeError("start failed")
+        return real_start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", flaky_start)
+    stop = np.zeros(1, dtype=np.int8)
+    it = analyze(
+        INITIAL,
+        start_depth=6,
+        max_depth=32,
+        time_limit_ms=60000,
+        stop=stop,
+        threads=4,
+    )
+    with pytest.raises(RuntimeError):
+        next(it)
+    time.sleep(0.05)
+    leftovers = [
+        t
+        for t in threading.enumerate()
+        if t.name.startswith("engine-helper-") or t.name == "engine-stop-forward"
+    ]
+    assert leftovers == []
+
+
+def test_parallel_generator_close_leaves_no_worker_threads():
+    it = analyze(
+        INITIAL,
+        start_depth=6,
+        max_depth=32,
+        time_limit_ms=60000,
+        threads=4,
+    )
+    first = next(it)
+    assert first.depth >= 6
+    it.close()
+    time.sleep(0.05)
+    leftovers = [
+        t
+        for t in threading.enumerate()
+        if t.name.startswith("engine-helper-") or t.name == "engine-stop-forward"
+    ]
+    assert leftovers == []
+
+
+def test_single_thread_starts_no_workers():
+    it = analyze(
+        INITIAL, start_depth=6, max_depth=6, time_limit_ms=5000, threads=1
+    )
+    next(it)
+    names = [t.name for t in threading.enumerate()]
+    assert not any(
+        n.startswith("engine-helper-") or n == "engine-stop-forward" for n in names
+    )
+    list(it)
