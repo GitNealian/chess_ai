@@ -703,9 +703,8 @@ def test_make_unmake_restores_everything():
 
 def test_capture_updates_remain_and_masks():
     st = P.load_position(INITIAL_FEN)
-    # 红车 (0,0) 走到 (0,4) 不吃子；构造吃子：黑卒 (0,6) 走到 (0,5)，再红车吃？
-    # 用固定盘面：红车在 site 81 吃黑卒 site 54 的同列情境
-    st = P.load_position("4k4/9/9/9/9/9/p8/9/9/R3K4 w - - 0 1")
+    # 固定盘面：红车 site81 吃黑卒 site27（同列）
+    st = P.load_position("4k4/9/9/p8/9/9/9/9/9/R3K4 w - - 0 1")   # 黑卒在 (0,6)=site27，红车 (0,0)=site81，同列直线
     src = C.xy_to_site(0, 0)
     dest = C.xy_to_site(0, 6)
     m = C.pack_move(src, dest)
@@ -994,7 +993,7 @@ def parse_arrays(path):
 
 对照 Java `EvaluateComputeMiddleGame.evaluate`（L35-218）与笔记 5.4 / 9.4，逐段实现并保留全部权重：
 - `dynamic_partition_score(st)`：按士象数量动态调整分区评分表（Java L201-222）
-- 遍历 16..47 存活棋子：`chess_all_move(role, site, play)`（控制范围位掩码）、`comp_partition_score`、机动性惩罚（车 min=19/罚 50、马 min=8/罚 12、炮 min=19/罚 2）、`king_unmove` 标志
+- 遍历 16..47 存活棋子：`chess_all_move(role, site, play)`（控制范围位掩码；**炮不含平移位**）、`comp_partition_score`、机动性惩罚（**车 min=19/罚 5、马 min=8/罚 12、炮 min=19/罚 2、将 min=1/罚 50**——以源码为准）、`king_unmove` 标志
 - 攻防位棋盘 × 主攻/防御子的权重（10/6/18/9）
 - 炮特殊分：空头炮（曼哈顿距 × 45）、沉底炮（≤3 格 +100）；`rest_chariot != 1` → +30
 - 对方分区削减（weakness、king_unmove、将偏位）

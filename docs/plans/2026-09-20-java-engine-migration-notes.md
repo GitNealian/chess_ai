@@ -607,9 +607,10 @@ for i in {RED,BLACK}:
 return score[play] - score[1-play];
 ```
 
-关键参数表：
-- `chessMinMobility`/`chessMobilityRewards`（L13-25）：车 min=19 reward=50；马 min=8 reward=12；炮 min=19 reward=2；其余 0。
-- 分区评分表 `attackChessPartitionScore/defenseChessPartitionScore` L181-191，按角色类型给 2/3/4 分（车=4、马炮=3、兵士象=2），并由 `dynamicCMPChessPartitionScore` L201-222 动态调整士象/马炮的值。
+关键参数表（**2026-09-20 已按源码复核，以下为正确值**）：
+- `chessMinMobility`/`chessMobilityRewards`（L13-25）：**车 min=19 reward=5；马 min=8 reward=12；炮 min=19 reward=2；将 min=1 reward=50**；其余 0。
+- 分区评分表 `attackChessPartitionScore/defenseChessPartitionScore`（源码，非 L181-191 的旧描述）：基础值为 **车/马/炮=4、象/士=3、兵=2**；`dynamicCMPChessPartitionScore` 会覆盖：马 = `{5,5,4}`（依赖己方士数）、炮 = `{2,3,4}`（依赖己方士数）、士/象防御值 = `{0,2,3}`（依赖己方士象数）。
+- **`chessAllMove` 对炮不含平移位**：Java 中 `MoveChariotOrGunBitBoard` 那一行被注释掉，炮的控制范围 = 吃子位 ∪ 压制位；车 = 吃子位 ∪ 平移位。
 - `chessRolePartitionSite[role][site]` L414-417：每张位置表把 90 格映射到分区代号 {1,2,3,4,5,6,31,32,33,64,65,66}。
 - `trimPartitionScore` L162-179：红方 attack=[1,2,3] defense=[4,5,6]；黑方相反。
 - 炮检测工具：`exposedCannon`（空头炮/当头炮，L129-136）、`bottomCannon`（沉底炮，用隔两子攻击表 L141-148）、`restChariot`（L153-160）。
@@ -714,7 +715,7 @@ return FAIL;   // FAIL = Integer.MIN_VALUE + 1
 
 **着法存储**：只有 `hashPV`/`hashBeta` 更新时通过 `bestMoveNode` 存 TT 着法（nested：`setTranZobrist` 第 6 参）。`hashAlpha` 时不传着法（`if(entryType!=hashAlpha) bestMoveNode=...` L321-325）。
 
-**根槽写入**：IID 时 `setRootTranZobrist(play, move)` 只写 STRAIGHT 槽（L177-185）的 checkSum+moveNode（不改 depth/type/value）。
+**根槽写入（2026-09-20 更正）**：IID 时 `setRootTranZobrist(play, move)` 写的是 **STEP 槽**（`tranZobrist[play][x][OVERRIDESTEP]`，索引 0，见 L177-185；`OVERRIDESTRAIGHT=1, OVERRIDESTEP=0`）的 checkSum+moveNode（不改 depth/type/value）。**注意**：Java 该函数在槽未分配时新建 `HashItem` 后**未赋回数组**，写入实际丢失；Python 侧选择写回（修正该缺陷，行为更符合 IID 意图）。原笔记写"只写 STRAIGHT 槽"有误。
 
 **其他**：`fenLib` 是开局面库（HashMap<boardZobrist64, List<MoveNode>>），`getTranZobristFen` 随机选一个；`loadBook` 在 ChessInitialize 中被注释（L196-197），当前版本未加载。`setTranZobrist(MoveNode)` 与 `FEN` 常量属于库函数。
 
