@@ -61,6 +61,7 @@ const loading = ref(true);
 const error = ref(false);
 const flipped = ref(false);
 const session = createPlaySession({});
+let disposed = false;
 
 function emptyAnalysis(status) {
   return {
@@ -205,6 +206,8 @@ async function probePositionState(game, ply) {
 }
 
 async function load() {
+  stopAnalysis();
+  analysis.value = emptyAnalysis("idle");
   loading.value = true;
   error.value = false;
   try {
@@ -226,12 +229,16 @@ async function load() {
     loading.value = false;
     return;
   }
+  if (disposed) return;
   loading.value = false;
   startAnalysis();
 }
 
 onMounted(load);
-onUnmounted(stopAnalysis);
+onUnmounted(() => {
+  disposed = true;
+  stopAnalysis();
+});
 </script>
 
 <style scoped>

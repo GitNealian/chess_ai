@@ -286,7 +286,10 @@ describe("PlayView", () => {
     await nextTick();
 
     expect(wrapper.find('[data-test="score"]').text()).toContain("+135");
-    expect(board(wrapper).props("arrows")).toHaveLength(2);
+    const arrows = board(wrapper).props("arrows");
+    expect(arrows).toHaveLength(2);
+    expect(arrows[0]).toMatchObject({ kind: "best" });
+    expect(arrows[1]).toMatchObject({ kind: "reply" });
   });
 
   it("悔棋后重新分析", async () => {
@@ -307,5 +310,38 @@ describe("PlayView", () => {
     emitDone(0);
     await nextTick();
     expect(wrapper.find('[data-test="analysis-status"]').text()).toContain("已完成");
+  });
+
+  it("走子后旧分析流被中止且迟到结果不污染", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    expect(streams[0].handlers.signal.aborted).toBe(true);
+
+    emitResult(0, { depth: 8, score_red: 999, mate: null, time_ms: 10, pv: [] });
+    emitDone(0);
+    await nextTick();
+
+    expect(wrapper.find('[data-test="score"]').text()).not.toContain("+999");
+    expect(wrapper.findAll('[data-test="analysis-item"]')).toHaveLength(0);
+    expect(wrapper.find('[data-test="analysis-status"]').text()).toContain("分析中");
+  });
+
+  it("组件卸载时中止进行中的分析", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    wrapper.unmount();
+    expect(streams[0].handlers.signal.aborted).toBe(true);
+  });
+
+  it("分析失败时显示失败原因", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    streams[0].handlers.onError(new Error("引擎不可用"));
+    await nextTick();
+    expect(wrapper.find('[data-test="analysis-status"]').text()).toContain("分析失败");
+    expect(wrapper.find('[data-test="analysis-status"]').text()).toContain("引擎不可用");
   });
 });
