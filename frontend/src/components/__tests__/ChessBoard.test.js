@@ -102,9 +102,32 @@ describe("ChessBoard", () => {
     expect(wrapper.emitted("cell-click")[0]).toEqual([0, 0]);
   });
 
-  it("flipped 时楚河汉界文字旋转 180 度", () => {
+  it("flipped 时河界文字绕自身中心旋转", () => {
     const wrapper = mount(ChessBoard, { props: { position, flipped: true } });
-    const transform = wrapper.find("text").attributes("transform");
-    expect(transform).toContain("rotate(180");
+    const text = wrapper.find('[data-river="chu"]');
+    const y = Number(text.attributes("y"));
+    const parts = text
+      .attributes("transform")
+      .replace("rotate(", "")
+      .replace(")", "")
+      .split(" ")
+      .map(Number);
+    expect(parts[0]).toBe(180);
+    expect(parts[2]).toBe(y);
+    expect(text.attributes("dominant-baseline")).toBe("central");
+  });
+
+  it("未翻转时河界文字无 transform", () => {
+    const wrapper = mount(ChessBoard, { props: { position } });
+    expect(wrapper.find('[data-river="chu"]').attributes("transform")).toBeUndefined();
+  });
+
+  it("flipped 时棋盘外框位置不变", () => {
+    const normal = mount(ChessBoard, { props: { position } });
+    const flipped = mount(ChessBoard, { props: { position, flipped: true } });
+    const normalFrame = normal.find('rect[stroke="#5a3d24"]').attributes();
+    const flippedFrame = flipped.find('rect[stroke="#5a3d24"]').attributes();
+    expect(flippedFrame.x).toBe(normalFrame.x);
+    expect(flippedFrame.y).toBe(normalFrame.y);
   });
 });

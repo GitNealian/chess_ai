@@ -22,10 +22,10 @@ const mirrorY = (y) => (props.flipped ? 9 - y : y);
 const cellX = (x) => margin + mirrorX(x) * gap;
 const cellY = (y) => margin + (9 - mirrorY(y)) * gap;
 
+const riverMidY = () => (cellY(4) + cellY(5)) / 2;
+
 const riverTransform = (x) =>
-  props.flipped
-    ? `rotate(180 ${cellX(x)} ${(cellY(4) + cellY(5)) / 2 + 10})`
-    : undefined;
+  props.flipped ? `rotate(180 ${cellX(x)} ${riverMidY()})` : undefined;
 
 const uid = Math.random().toString(36).slice(2, 8);
 
@@ -104,8 +104,8 @@ function onSvgClick(event) {
     </template>
 
     <rect
-      :x="cellX(0) - 12"
-      :y="cellY(9) - 12"
+      :x="margin - 12"
+      :y="margin - 12"
       :width="8 * gap + 24"
       :height="9 * gap + 24"
       fill="none"
@@ -147,22 +147,26 @@ function onSvgClick(event) {
     />
 
     <text
+      data-river="chu"
       :x="cellX(1.5)"
-      :y="(cellY(4) + cellY(5)) / 2 + 10"
-      :transform="riverTransform(1.5)"
+      :y="riverMidY()"
+      dominant-baseline="central"
       text-anchor="middle"
       font-size="26"
       fill="#7a5c3e"
+      :transform="riverTransform(1.5)"
     >
       楚 河
     </text>
     <text
+      data-river="han"
       :x="cellX(6.5)"
-      :y="(cellY(4) + cellY(5)) / 2 + 10"
-      :transform="riverTransform(6.5)"
+      :y="riverMidY()"
+      dominant-baseline="central"
       text-anchor="middle"
       font-size="26"
       fill="#7a5c3e"
+      :transform="riverTransform(6.5)"
     >
       汉 界
     </text>
