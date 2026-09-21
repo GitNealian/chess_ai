@@ -151,6 +151,7 @@ __all__ = [
     "nega_scout",
     "new_context",
     "new_stack",
+    "new_worker_context",
     "quiesc_search",
     "root_nega_scout",
     "rough_evaluate",
@@ -210,6 +211,24 @@ def new_context(hash_size=N):
         killer=np.zeros((64, 2), dtype=np.int32),
         history=np.zeros((8, 256), dtype=np.int32),
         stop=np.zeros(1, dtype=np.int8),
+        nodes=np.zeros(1, dtype=np.int64),
+        root_moves=np.zeros(128, dtype=np.int32),
+        root_scores=np.zeros(128, dtype=np.int32),
+        root_count=np.zeros(1, dtype=np.int32),
+        root_inited=np.zeros(1, dtype=np.int8),
+    )
+
+
+def new_worker_context(ctx, stop):
+    """派生 Lazy SMP 工作线程上下文：TT 数组引用共享，其余字段独立。
+
+    共享：`tt_*` 六数组（线程间互补填表）与 `stop`（总停旗）；
+    独立：killer/history/nodes 与根着法缓冲（避免线程间互相干扰排序状态）。
+    """
+    return ctx._replace(
+        killer=np.zeros((64, 2), dtype=np.int32),
+        history=np.zeros((8, 256), dtype=np.int32),
+        stop=stop,
         nodes=np.zeros(1, dtype=np.int64),
         root_moves=np.zeros(128, dtype=np.int32),
         root_scores=np.zeros(128, dtype=np.int32),
