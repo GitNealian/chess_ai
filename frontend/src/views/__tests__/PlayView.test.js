@@ -487,4 +487,18 @@ describe("PlayView", () => {
       expect.objectContaining({ name: "红方 vs 黑方" })
     );
   });
+
+  it("保存请求未返回时卸载，resolve 后不跳转", async () => {
+    let resolveCreate;
+    api.createGame.mockReturnValue(new Promise((r) => { resolveCreate = r; }));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "save").trigger("click");
+    await button(wrapper, "save-submit").trigger("submit");
+    wrapper.unmount();
+    resolveCreate({ id: 9 });
+    await flushPromises();
+    expect(push).not.toHaveBeenCalled();
+  });
 });

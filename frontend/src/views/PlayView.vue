@@ -255,6 +255,7 @@ async function save() {
       moves: session.state.moves.map(({ x1, y1, x2, y2 }) => ({ x1, y1, x2, y2 })),
       practice_side: "both",
     });
+    if (disposed) return;
     showSave.value = false;
     router.push(`/practice/${created.id}`);
   } catch (err) {
