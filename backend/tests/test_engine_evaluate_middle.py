@@ -220,6 +220,7 @@ def test_direction_masks_match_source():
 
 
 def test_attach_score_uses_middle_tables():
+    st = P.load_position(INITIAL_FEN)  # phase=0 → 中局表
     for role in range(1, 15):
         for site in (0, 4, 40, 81, 89):
             want = (
@@ -227,11 +228,13 @@ def test_attach_score_uses_middle_tables():
                 if role <= 7
                 else T.MIDDLE_BLACK[role - 8, site]
             )
-            assert int(P.attach_score(role, site)) == int(want)
-    assert int(P.attach_score(C.RED_CHARIOT, 81)) == int(
+            assert int(P.attach_score(st, role, site)) == int(want)
+    assert int(P.attach_score(st, C.RED_CHARIOT, 81)) == int(
         T.MIDDLE_RED[C.CHARIOT - 1, 81]
     )
-    assert int(P.attach_score(C.BLACK_KING, 4)) == int(T.MIDDLE_BLACK[C.KING - 1, 4])
+    assert int(P.attach_score(st, C.BLACK_KING, 4)) == int(
+        T.MIDDLE_BLACK[C.KING - 1, 4]
+    )
 
 
 def test_initial_base_score_is_material_plus_attach():
@@ -245,7 +248,7 @@ def test_initial_base_score_is_material_plus_attach():
     for site in range(90):
         piece = int(st.board[site])
         if piece:
-            attach_total += int(P.attach_score(int(C.PIECE_ROLES[piece]), site))
+            attach_total += int(P.attach_score(st, int(C.PIECE_ROLES[piece]), site))
     assert red + black == material + attach_total
 
 

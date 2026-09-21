@@ -1,9 +1,10 @@
-"""中局评估（Task 7）。
+"""主评估：中局（Task 7）与残局（Task 8）。
 
 Java 参考：
 - `EvaluateCompute.java`：位置/分区表、`chessAllMove`、`chessMobility`、
   炮检测（`exposedCannon`/`bottomCannon`/`restChariot`）、攻防掩码；
-- `EvaluateComputeMiddleGame.java` L35-218：主评估；
+- `EvaluateComputeMiddleGame.java` L35-218：中局评估；
+- `EvaluateComputeEndGame.java` L26-55：残局评估；
 - `SearchEngine.java` L123-125：`roughEvaluate`。
 
 约定与差异：
@@ -11,7 +12,8 @@ Java 参考：
   扫描顺序（红方 0..89 升序；黑方 81..89、54..80、27..53、0..26）；
 - Java 用静态分区评分表就地改写，Python 改为每次评估由
   `dynamic_partition_score` 局部重建，避免全局可变状态；
-- 主评估 `evaluate` 只实现中局；残局（Task 8）暂未接入。
+- `evaluate` 按 `st.phase`（由 `analysis.prepare` 设置）自动选中局/残局，
+  也可用 `endgame=True` 显式强制残局；阶段常量 `END_GAME` 来自 analysis。
 """
 
 import numpy as np
@@ -20,6 +22,7 @@ from numba import njit
 from . import bitboard, tables
 from . import constants as C
 from . import eval_tables as T
+from .analysis import END_GAME
 
 # attach_score 定义在 position.py（njit，base_score 增量与全量共用），此处再导出。
 from .position import attach_score
@@ -32,6 +35,7 @@ __all__ = [
     "comp_partition_score",
     "dynamic_partition_score",
     "evaluate",
+    "evaluate_endgame",
     "exposed_cannon",
     "msb",
     "rest_chariot",
@@ -384,10 +388,81 @@ def rest_chariot(st, play, opp_king_site, row, col):
 
 
 @njit(cache=True)
+def _soldiers_attack(st, play):
+    """play 方全部兵/卒的攻击位并集。
+
+    对应 Java `EvaluateComputeEndGame.getSoldiersAttackBitBoard` L63-73：
+    逐个存活兵调用 `chessAllMove` 后取并。返回 (lo, hi)。
+    """
+    lo = np.int64(0)
+    hi = np.int64(0)
+    role = C.SOLDIER + 7 * (1 - play)
+    for chess in range(27 + 16 * play, 32 + 16 * play):
+        site = st.all_chess[chess]
+        if site < 0:
+            continue
+        alo, ahi = chess_all_move(st, role, site, play)
+        lo |= alo
+        hi |= ahi
+    return lo, hi
+
+
+@njit(cache=True)
+def evaluate_endgame(st, play):
+    """残局评估，返回 play 视角分数（对应 `EvaluateComputeEndGame.evaluate` L26-55）。
+
+    只含 base_score（残局位置表 + 动态子力）+ 三项残局加成：
+
+    - 兵保护：己方兵数 >= 2 时，`SOLDIERS_PROTECTED[(兵攻击位 ∩ 己方兵位)]`；
+    - 炮对缺士：`GUN_OPPT_NOT_GUARD[对方士数]`，己方两门炮时 ×1.7 后 `int` 截断；
+    - 马对缺士：`KNIGHT_OPPT_NOT_GUARD[对方士数]`，己方两匹马时 ×1.7 后截断。
+    """
+    score = np.empty(2, dtype=np.int32)
+    score[C.RED] = st.base_score[C.RED]
+    score[C.BLACK] = st.base_score[C.BLACK]
+    for curplay in range(2):
+        role_soldier = C.SOLDIER + 7 * (1 - curplay)
+        soldier_num = st.remain[role_soldier]
+        gun_num = st.remain[C.GUN + 7 * (1 - curplay)]
+        knight_num = st.remain[C.KNIGHT + 7 * (1 - curplay)]
+        # 兵之相互保护加分
+        if soldier_num >= 2:
+            alo, ahi = _soldiers_attack(st, curplay)
+            plo = alo & st.mask_role[role_soldier, 0]
+            phi = ahi & st.mask_role[role_soldier, 1]
+            score[curplay] += T.SOLDIERS_PROTECTED[bitboard.count(plo, phi)]
+        # 对方士数相关：表 {0,40,110}
+        opp_guard_num = st.remain[C.GUARD + 7 * curplay]
+        if gun_num > 0:
+            if gun_num == 2:
+                score[curplay] += np.int32(
+                    int(T.GUN_OPPT_NOT_GUARD[opp_guard_num] * 1.7)
+                )
+            else:
+                score[curplay] += T.GUN_OPPT_NOT_GUARD[opp_guard_num]
+        # 对方士数相关：表 {110,40,0}
+        if knight_num > 0:
+            if knight_num == 2:
+                score[curplay] += np.int32(
+                    int(T.KNIGHT_OPPT_NOT_GUARD[opp_guard_num] * 1.7)
+                )
+            else:
+                score[curplay] += T.KNIGHT_OPPT_NOT_GUARD[opp_guard_num]
+    return score[play] - score[1 - play]
+
+
+@njit(cache=True)
 def evaluate(st, play, endgame=False):
-    """中局评估，返回 play 视角分数（对应 `EvaluateComputeMiddleGame.evaluate`）。"""
+    """主评估，返回 play 视角分数。
+
+    `st.phase == END_GAME`（`analysis.prepare` 设置）或 `endgame=True` 时走
+    残局分支（`EvaluateComputeEndGame.evaluate`），否则走中局分支
+    （`EvaluateComputeMiddleGame.evaluate`）。
+    """
     if endgame:
-        raise NotImplementedError("endgame evaluation is Task 8")
+        return evaluate_endgame(st, play)
+    if st.side_to_move[1] == END_GAME:
+        return evaluate_endgame(st, play)
     score = np.empty(2, dtype=np.int32)
     score[C.RED] = st.base_score[C.RED]
     score[C.BLACK] = st.base_score[C.BLACK]
