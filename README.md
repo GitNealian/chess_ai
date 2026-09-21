@@ -68,6 +68,8 @@ chess/
 - Node.js 18+
 - 引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时。大部分引擎模块启用 numba 磁盘缓存（`backend/engine/__pycache__/`），编译产物可跨进程复用；但**搜索模块（`search.py`）因 numba 0.67「递归 + 跨函数调用 + 磁盘缓存」缺陷不使用磁盘缓存**，因此**每个新进程首次分析仍需 ~20-35s 预热**。建议部署后等预热线程完成（或先发一个浅层分析请求）再对外服务；gunicorn 多 worker 各自独立预热。
 - numba 缓存目录会随源码变更 / numba 升级累积历史编译产物而增长。运行一段时间后可安全删除 `backend/engine/__pycache__/`，代价是下次冷启动重新编译（即上述预热耗时）。
+- **并行搜索（Lazy SMP）**：引擎默认使用 `max(1, min(cpu_count-1, 8))` 个线程并行分析：主线程产出结果，辅助线程共享置换表互补搜索。可用环境变量 `ENGINE_THREADS`（如 `ENGINE_THREADS=1` 完全串行）或分析请求的 `threads` 字段（1..16）覆盖。并行模式下 `nodes` 只统计主线程；同一局面的分数/PV 在多次运行间可能微变（非确定性），属预期行为。本机实测（20 核，每档重复 3 次取中位数，depth 8 / 10）：2 线程 1.5x / 1.6x，4 线程 1.9x / 2.1x。
+- **`gunicorn --preload` 注意**：预热线程运行期间 fork，会让子进程继承 numba 自身的编译锁（不可重建）而阻塞，请确保 fork 发生在预热完成之后（例如在 master 同步预热完毕后启动 worker），或不要使用 `--preload`。
 
 ## 后端启动
 
@@ -147,7 +149,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 | POST | `/api/games/parse` | 解析文本棋谱（预览，不入库） |
 | POST | `/api/games/import-pgn` | PGN 导入 |
 | POST | `/api/games/:id/check-move` | 校验某步是否为正确着法 |
-| POST | `/api/engine/analyze` | 局面分析（NDJSON 流式，逐层返回） |
+| POST | `/api/engine/analyze` | 局面分析（NDJSON 流式，逐层返回；可选 threads 1..16） |
 | POST | `/api/engine/validate-move` | 无状态走子校验（返回新局面 / 中文记谱 / 将军 / 终局） |
 | GET | `/api/review/queue` | 今日复习队列 |
 | POST | `/api/review/:gameId/submit` | 提交复习结果并更新调度 |
@@ -155,7 +157,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 
 错误统一返回 `{error, detail?, step?}`。
 
-`POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 30000，范围 100–30000，层边界软时限：按「上一层耗时 × 1.5」外推下一层预算，通常完成时间不超过其 ~1.5 倍）。流内依次可能出现：
+`POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 30000，范围 100–30000，层边界软时限：按「上一层耗时 × 1.5」外推下一层预算，通常完成时间不超过其 ~1.5 倍）、`threads`（可选，1..16，越界夹逼；缺省自动：环境变量 `ENGINE_THREADS` > `max(1, min(cpu_count-1, 8))`；`threads=1` 即串行）。流内依次可能出现：
 
 - `{"type":"result", ...}`：每完成一层一条，含 `depth` / `score_red` / `score_stm` / `mate` / `pv`（每步含 `x1,y1,x2,y2` / `chinese` / `iccs`）/ `time_ms` / `nodes` / `side_to_move`；
 - `{"type":"ping", "elapsed_ms": ...}`：约每 0.3s 的保活行，客户端可忽略；
@@ -178,6 +180,8 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - AI 分析接入打谱页与对弈页；录入 / 默写视图未接入。
 - 人人对弈为同屏双人，不联网、不自动保存（手动保存到棋谱库）；不判定长将、重复局面和棋；从棋谱续下的将军/终局提示由一次探测请求恢复，悔棋到该步之前时提示不恢复（着法合法性始终由后端保证）。
 - 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，完成一层后按「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（通常完成时间不超过其 ~1.5 倍）；若下一层实际耗时相对上一层暴涨，仍可能超出。
+- 并行分析下 `nodes` 仅统计主线程，且结果非确定性（同局面多次分析的分数/PV 可能微变）。
+- 显式 `threads` 不按核数降级（1..16 夹逼），低核机器上设大值会线程超订；建议不显式设置或设 `ENGINE_THREADS`。
 - Zobrist 哈希为自生成（固定种子），与 Java 版哈希值不兼容，仅保证引擎内部自洽。
 - mate 分数不入置换表（修正 Java 继承缺陷，避免深层杀步失真）。
 - 黑方着法生成顺序与 Java 版略有差异（按 site 升序扫描），不影响棋力。
