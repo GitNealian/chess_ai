@@ -194,7 +194,13 @@ Ctx.__doc__ = """搜索上下文。
 - `stop`：int8[1] 停止标志；`nodes`：int64[1] 节点计数；
 - `root_moves`：int32[128] 根着法缓冲；`root_scores`：int32[128] 根着法分数；
   `root_count`：int32[1] 根着法数；`root_inited`：int8[1] 初始化标志。
+
+并行（Lazy SMP）时由 `new_worker_context` 派生的上下文共享 TT 六数组与
+`stop`，其余字段各自独立（见该函数）。
 """
+
+# 置换表六数组字段名（并行派生时共享）。
+_TT_FIELDS = ("tt_key", "tt_type", "tt_value", "tt_depth", "tt_move", "tt_exists")
 
 
 def new_context(hash_size=N):
@@ -222,18 +228,22 @@ def new_context(hash_size=N):
 def new_worker_context(ctx, stop):
     """派生 Lazy SMP 工作线程上下文：TT 数组引用共享，其余字段独立。
 
-    共享：`tt_*` 六数组（线程间互补填表）与 `stop`（总停旗）；
+    共享：`tt_*` 六数组（线程间互补填表）与 `stop`（总停旗，须与
+    `ctx.stop` 为同一数组，保证各线程停旗联动）；
     独立：killer/history/nodes 与根着法缓冲（避免线程间互相干扰排序状态）。
+    实现为「默认独立、显式共享」：先按同尺寸 `new_context` 新建，再逐个
+    替换 TT 六数组为共享引用，避免 `Ctx` 未来新增字段时被静默共享。
+
+    仅限 Python 层调用：numba 不支持 namedtuple 的 `_replace`。
     """
-    return ctx._replace(
-        killer=np.zeros((64, 2), dtype=np.int32),
-        history=np.zeros((8, 256), dtype=np.int32),
-        stop=stop,
-        nodes=np.zeros(1, dtype=np.int64),
-        root_moves=np.zeros(128, dtype=np.int32),
-        root_scores=np.zeros(128, dtype=np.int32),
-        root_count=np.zeros(1, dtype=np.int32),
-        root_inited=np.zeros(1, dtype=np.int8),
+    stop = np.asarray(stop)
+    if stop.shape != (1,) or stop.dtype != np.int8:
+        raise ValueError("stop 必须是 np.int8[1]")
+    if stop is not ctx.stop:
+        raise ValueError("stop 必须与 ctx.stop 为同一数组")
+    fresh = new_context(hash_size=ctx.tt_key.shape[2])
+    return fresh._replace(
+        stop=stop, **{field: getattr(ctx, field) for field in _TT_FIELDS}
     )
 
 

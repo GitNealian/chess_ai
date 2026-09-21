@@ -7,6 +7,7 @@
 import os
 
 import numpy as np
+import pytest
 from engine import analysis as A
 from engine import search as S
 
@@ -65,13 +66,11 @@ def test_resolve_threads_non_finite_float_falls_back(monkeypatch):
 
 
 def test_worker_context_shares_tt_isolates_rest():
-    base = S.new_context(hash_size=1 << 10)
     shared_stop = np.zeros(1, dtype=np.int8)
+    base = S.new_context(hash_size=1 << 10)._replace(stop=shared_stop)
     worker = S.new_worker_context(base, shared_stop)
 
-    for field in ("tt_key", "tt_type", "tt_value", "tt_depth", "tt_move", "tt_exists"):
-        assert getattr(worker, field) is getattr(base, field)
-    for field in (
+    independent = (
         "killer",
         "history",
         "nodes",
@@ -79,10 +78,37 @@ def test_worker_context_shares_tt_isolates_rest():
         "root_scores",
         "root_count",
         "root_inited",
-    ):
-        assert getattr(worker, field) is not getattr(base, field)
+    )
+    assert set(S.Ctx._fields) == set(S._TT_FIELDS) | set(independent) | {"stop"}
+
+    for field in S._TT_FIELDS:
+        assert getattr(worker, field) is getattr(base, field)
+    for field in independent:
+        w = getattr(worker, field)
+        b = getattr(base, field)
+        assert w is not b
+        assert w.dtype == b.dtype
+        assert w.shape == b.shape
 
     assert worker.stop is shared_stop
     assert worker.nodes[0] == 0
+    worker.nodes[0] = 5
+    assert base.nodes[0] == 0
+    worker.root_count[0] = 3
+    assert base.root_count[0] == 0
     worker.history[0, 0] = 7
     assert base.history[0, 0] == 0
+
+
+def test_worker_context_rejects_non_int8_stop():
+    shared_stop = np.zeros(1, dtype=np.int8)
+    base = S.new_context(hash_size=1 << 10)._replace(stop=shared_stop)
+    with pytest.raises(ValueError):
+        S.new_worker_context(base, np.zeros(1, dtype=np.int32))
+
+
+def test_worker_context_rejects_foreign_stop():
+    shared_stop = np.zeros(1, dtype=np.int8)
+    base = S.new_context(hash_size=1 << 10)._replace(stop=shared_stop)
+    with pytest.raises(ValueError):
+        S.new_worker_context(base, np.zeros(1, dtype=np.int8))
