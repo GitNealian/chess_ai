@@ -5,10 +5,12 @@
 """
 
 import os
+import threading
 
 import numpy as np
 import pytest
 from engine import analysis as A
+from engine import constants as C
 from engine import search as S
 
 INITIAL = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
@@ -112,3 +114,31 @@ def test_worker_context_rejects_foreign_stop():
     base = S.new_context(hash_size=1 << 10)._replace(stop=shared_stop)
     with pytest.raises(ValueError):
         S.new_worker_context(base, np.zeros(1, dtype=np.int8))
+
+
+def test_concurrent_tt_read_write_stays_in_range():
+    """4 线程并发读写同一 TT：不崩、命中分数不越界。"""
+    ctx = S.new_context(hash_size=1 << 12)
+    errors = []
+
+    def hammer(seed):
+        rng = np.random.default_rng(seed)
+        for _ in range(4000):
+            play = int(rng.integers(0, 2))
+            z32 = int(rng.integers(0, 1 << 20))
+            z64 = int(rng.integers(1, 1 << 62))
+            value = int(rng.integers(-9999, 9999))
+            try:
+                S.set_tt(ctx, play, z32, z64, S.HASH_PV, value, 6, C.pack_move(0, 1))
+                hit, got, _ = S.get_tt(ctx, play, z32, z64, 6, -9999, 9999)
+                if hit:
+                    assert -20000 <= int(got) <= 20000
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+    threads = [threading.Thread(target=hammer, args=(seed,)) for seed in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []

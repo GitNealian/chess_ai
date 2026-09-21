@@ -106,7 +106,10 @@ Task 11 的主搜索语义（与 Java 一致的关键点）：
 - `init_root` 首轮根序为 killer → 全部吃子生成序 → 非吃子生成序，Java 为
   killer → MVV-LVA 吃子 → 历史分混排（排序分在生成时写入 `savePlayChess`）；
   首轮之后的排序由 `_select_best` 动态选择，二者行为一致，首轮差异只影响
-  等分着法的尝试顺序、不改变最终分数。
+  等分着法的尝试顺序、不改变最终分数；
+- 共享 TT 多线程写序：`_write_*`/`_copy_slot`/`set_root_tt` 均最后写 `tt_key`，
+  `get_tt` 以两次 key 一致复核条目；单线程行为不变，多线程仅把
+  「数据已更新、key 未更新」的极短窗口当作未命中（见 Lazy SMP 设计文档）；
 """
 
 import collections
@@ -282,39 +285,43 @@ def get_tt(ctx, play, zob32, zob64, depth, alpha, beta):
     直接命中；否则按 Java 逻辑输出失败条目的 `move`（STRAIGHT 优先覆盖）与
     `value`（仅当 `step 不存在或 step.depth < straight.depth` 时被 STRAIGHT
     覆盖）。`move == 0` 表示无着法。
+
+    共享 TT 无锁读复核：写者把 `tt_key` 放在最后写，读取前后各取一次 key，
+    两次不一致（或首读已不匹配，与单线程语义相同）即视为条目不完整并放弃
+    该槽，保守当作未命中；单线程下 key 不会被并发改动，行为不变。
     """
     slot = zob32 & (ctx.tt_key.shape[2] - 1)
     value = 0
     move = 0
 
-    step_exists = (
-        ctx.tt_exists[play, SLOT_STEP, slot]
-        and ctx.tt_key[play, SLOT_STEP, slot] == zob64
-    )
+    step_key = ctx.tt_key[play, SLOT_STEP, slot]
+    step_exists = ctx.tt_exists[play, SLOT_STEP, slot] and step_key == zob64
     if step_exists:
         step_value = _get_by_hash_item(ctx, play, SLOT_STEP, slot, depth, alpha, beta)
-        if step_value != FAIL:
-            return True, step_value, ctx.tt_move[play, SLOT_STEP, slot]
-        move = ctx.tt_move[play, SLOT_STEP, slot]
-        value = ctx.tt_value[play, SLOT_STEP, slot]
+        # 共享 TT 无锁读：写者 key 最后写；两次 key 不一致说明条目正在被
+        # 并发覆盖，放弃本槽（保守当作未命中）。
+        if step_key == ctx.tt_key[play, SLOT_STEP, slot]:
+            if step_value != FAIL:
+                return True, step_value, ctx.tt_move[play, SLOT_STEP, slot]
+            move = ctx.tt_move[play, SLOT_STEP, slot]
+            value = ctx.tt_value[play, SLOT_STEP, slot]
 
-    straight_exists = (
-        ctx.tt_exists[play, SLOT_STRAIGHT, slot]
-        and ctx.tt_key[play, SLOT_STRAIGHT, slot] == zob64
-    )
+    straight_key = ctx.tt_key[play, SLOT_STRAIGHT, slot]
+    straight_exists = ctx.tt_exists[play, SLOT_STRAIGHT, slot] and straight_key == zob64
     if straight_exists:
         straight_value = _get_by_hash_item(
             ctx, play, SLOT_STRAIGHT, slot, depth, alpha, beta
         )
-        if straight_value != FAIL:
-            return True, straight_value, ctx.tt_move[play, SLOT_STRAIGHT, slot]
-        move = ctx.tt_move[play, SLOT_STRAIGHT, slot]
-        if (
-            not step_exists
-            or ctx.tt_depth[play, SLOT_STEP, slot]
-            < ctx.tt_depth[play, SLOT_STRAIGHT, slot]
-        ):
-            value = ctx.tt_value[play, SLOT_STRAIGHT, slot]
+        if straight_key == ctx.tt_key[play, SLOT_STRAIGHT, slot]:
+            if straight_value != FAIL:
+                return True, straight_value, ctx.tt_move[play, SLOT_STRAIGHT, slot]
+            move = ctx.tt_move[play, SLOT_STRAIGHT, slot]
+            if (
+                not step_exists
+                or ctx.tt_depth[play, SLOT_STEP, slot]
+                < ctx.tt_depth[play, SLOT_STRAIGHT, slot]
+            ):
+                value = ctx.tt_value[play, SLOT_STRAIGHT, slot]
 
     return False, value, move
 
@@ -327,13 +334,16 @@ def _copy_slot(ctx, play, src_kind, dst_kind, slot):
     只看 checkSum、不看 isExists，故 clean 过的旧条目依然可命中；本迁移的
     `get_tt` 额外校验 `tt_exists`，在此保持同样的可观察行为（clean 只让
     STEP 槽失效）。
+
+    共享 TT 无锁写序：key 最后写，读者以两次 key 一致判定条目完整。
     """
-    ctx.tt_key[play, dst_kind, slot] = ctx.tt_key[play, src_kind, slot]
     ctx.tt_type[play, dst_kind, slot] = ctx.tt_type[play, src_kind, slot]
     ctx.tt_value[play, dst_kind, slot] = ctx.tt_value[play, src_kind, slot]
     ctx.tt_depth[play, dst_kind, slot] = ctx.tt_depth[play, src_kind, slot]
     ctx.tt_move[play, dst_kind, slot] = ctx.tt_move[play, src_kind, slot]
     ctx.tt_exists[play, dst_kind, slot] = True
+    # 共享 TT 无锁写序：key 最后写，读者以两次 key 一致判定条目完整
+    ctx.tt_key[play, dst_kind, slot] = ctx.tt_key[play, src_kind, slot]
 
 
 @njit(nogil=True, cache=False)
@@ -341,20 +351,24 @@ def _write_straight(ctx, play, slot, zob64, entry_type, value, depth, move):
     """覆盖写 STRAIGHT 槽（`setTranZobristOverride` else 分支）。
 
     Java 复用已有 HashItem：`moveNode == null`（move=0）时保留旧 moveNode。
+    共享 TT 无锁写序：key 最后写。
     """
-    ctx.tt_key[play, SLOT_STRAIGHT, slot] = zob64
     ctx.tt_type[play, SLOT_STRAIGHT, slot] = np.int8(entry_type)
     ctx.tt_value[play, SLOT_STRAIGHT, slot] = np.int32(value)
     ctx.tt_depth[play, SLOT_STRAIGHT, slot] = np.int8(depth)
     if move != 0:
         ctx.tt_move[play, SLOT_STRAIGHT, slot] = np.int32(move)
     ctx.tt_exists[play, SLOT_STRAIGHT, slot] = True
+    # 共享 TT 无锁写序：key 最后写
+    ctx.tt_key[play, SLOT_STRAIGHT, slot] = zob64
 
 
 @njit(nogil=True, cache=False)
 def _write_step(ctx, play, slot, zob64, entry_type, value, depth, move):
-    """把新条目写入 STEP 槽（Java 中总是新建 HashItem，move 默认空）。"""
-    ctx.tt_key[play, SLOT_STEP, slot] = zob64
+    """把新条目写入 STEP 槽（Java 中总是新建 HashItem，move 默认空）。
+
+    共享 TT 无锁写序：key 最后写。
+    """
     ctx.tt_type[play, SLOT_STEP, slot] = np.int8(entry_type)
     ctx.tt_value[play, SLOT_STEP, slot] = np.int32(value)
     ctx.tt_depth[play, SLOT_STEP, slot] = np.int8(depth)
@@ -363,6 +377,8 @@ def _write_step(ctx, play, slot, zob64, entry_type, value, depth, move):
     else:
         ctx.tt_move[play, SLOT_STEP, slot] = np.int32(0)
     ctx.tt_exists[play, SLOT_STEP, slot] = True
+    # 共享 TT 无锁写序：key 最后写
+    ctx.tt_key[play, SLOT_STEP, slot] = zob64
 
 
 @njit(nogil=True, cache=False)
@@ -416,12 +432,14 @@ def set_root_tt(ctx, play, zob32, zob64, move):
 
     只覆盖 STEP 槽的 checkSum 与 moveNode，不改 depth/entry_type/value；
     槽从未分配时按新建 `HashItem` 默认 `isExists=true` 置位。
+    共享 TT 无锁写序：key 最后写。
     """
     slot = zob32 & (ctx.tt_key.shape[2] - 1)
     if not _step_allocated(ctx, play, slot):
         ctx.tt_exists[play, SLOT_STEP, slot] = True
-    ctx.tt_key[play, SLOT_STEP, slot] = zob64
     ctx.tt_move[play, SLOT_STEP, slot] = np.int32(move)
+    # 共享 TT 无锁写序：key 最后写
+    ctx.tt_key[play, SLOT_STEP, slot] = zob64
 
 
 @njit(nogil=True, cache=False)
