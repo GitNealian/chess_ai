@@ -221,6 +221,20 @@ describe("PlayView", () => {
     expect(wrapper.find('[data-test="turn"]').text()).toContain("被将军");
   });
 
+  it("ply=0 时不发起 probe", async () => {
+    route.query = { game: "7", ply: "0" };
+    api.getGame.mockResolvedValue({
+      id: 7,
+      name: "x",
+      initial_fen: INITIAL_FEN,
+      moves: [{ x1: 1, y1: 2, x2: 4, y2: 2 }],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    expect(api.validateMove).not.toHaveBeenCalled();
+    expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(0);
+  });
+
   it("加载失败显示错误并可重试", async () => {
     route.query = { game: "7" };
     api.getGame.mockRejectedValueOnce(new Error("boom"));
