@@ -4,7 +4,9 @@
 - `fen` 与 `initial_fen + moves`（含 `ply` 缺省/裁剪）两种局面来源；
 - 参数越界夹逼、done 行 reason、PV 至多 2 步与 ICCS/中文记谱；
 - 非法 FEN/着法/空请求体走流内 error 行；
-- 并发请求由模块级锁串行化（互不干扰）。
+- 并发请求由模块级锁串行化（互不干扰）；
+- Task 14：等待期间产出 `ping` 保活行；客户端断开（生成器 close）
+  立即置位停旗停止后台搜索，后续请求不必等前一次搜完。
 
 首次调用会触发搜索链 numba JIT 编译（约 20-35s，预期内）；
 各用例用 `max_depth=4/6` 把搜索耗时控制在亚秒级。
@@ -13,6 +15,7 @@
 import json
 import re
 import threading
+import time
 
 from chess_engine.board import INITIAL_FEN, Board
 from chess_engine.move import Move
@@ -219,3 +222,108 @@ def test_analyze_concurrent_lock(app):
     assert not failures
     assert len(done_lines) == 2
     assert all(done["depth"] >= 4 for done in done_lines)
+
+
+def test_ping_rows_during_wait(client):
+    # max_depth=6 单次请求通常跨过 0.3s 的 ping 周期；允许不出现 ping，
+    # 但出现时必须形如 {"type": "ping", "elapsed_ms": int} 且可被解析器忽略。
+    messages = read_stream(
+        client,
+        {
+            "fen": INITIAL_FEN,
+            "start_depth": 4,
+            "max_depth": 6,
+            "time_limit_ms": 1500,
+        },
+    )
+    for ping in _of_type(messages, "ping"):
+        assert set(ping) == {"type", "elapsed_ms"}
+        assert isinstance(ping["elapsed_ms"], int) and not isinstance(
+            ping["elapsed_ms"], bool
+        )
+        assert ping["elapsed_ms"] >= 0
+
+    results = _of_type(messages, "result")
+    assert results and results[-1]["depth"] >= 4
+    assert _of_type(messages, "done")
+
+
+def test_client_disconnect_stops_analysis(client):
+    # 先跑一次完整分析，确保 numba JIT 缓存就绪，计时断言只反映中断语义。
+    read_stream(
+        client,
+        {"fen": INITIAL_FEN, "start_depth": 4, "max_depth": 4, "time_limit_ms": 1000},
+    )
+
+    resp = client.post(
+        "/api/engine/analyze",
+        json={
+            "fen": INITIAL_FEN,
+            "start_depth": 4,
+            "max_depth": 16,
+            "time_limit_ms": 10000,
+        },
+    )
+    assert resp.status_code == 200
+    # 只读第一行就关闭响应：模拟 WSGI 服务器发现客户端断开后 close 生成器。
+    first_line = next(iter(resp.response), None)
+    assert first_line
+    resp.close()
+
+    # 断开应立即置位停旗：第二个请求无需等第一次搜完，短时内完成。
+    started = time.perf_counter()
+    messages = read_stream(
+        client,
+        {"fen": INITIAL_FEN, "start_depth": 4, "max_depth": 4, "time_limit_ms": 1000},
+    )
+    elapsed = time.perf_counter() - started
+
+    assert _of_type(messages, "done")
+    assert elapsed < 10, f"断开后第二个请求耗时 {elapsed:.1f}s，搜索未被中断"
+
+
+def test_concurrent_requests_are_serialized(app):
+    # 模块级锁串行化：两次搜索不重叠，后完成者与先完成者的结束时刻之差
+    # 约为一次完整搜索的耗时；若锁失效（并行）该差值趋近 0。
+    # 先单独预热，避免 numba 首次 JIT 编译（不可中断）+ 排队干扰计时。
+    hot = app.test_client()
+    read_stream(
+        hot,
+        {"fen": INITIAL_FEN, "start_depth": 4, "max_depth": 4, "time_limit_ms": 1000},
+    )
+
+    completions = []
+    failures = []
+    barrier = threading.Barrier(2)
+
+    def worker():
+        try:
+            client = app.test_client()
+            barrier.wait(timeout=10)
+            started = time.perf_counter()
+            messages = read_stream(
+                client,
+                {
+                    "fen": INITIAL_FEN,
+                    "start_depth": 4,
+                    "max_depth": 4,
+                    "time_limit_ms": 5000,
+                },
+            )
+            assert _of_type(messages, "done")
+            completions.append((time.perf_counter(), time.perf_counter() - started))
+        except Exception as exc:  # noqa: BLE001 - 线程内异常带回主线程断言
+            failures.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert not failures
+    assert len(completions) == 2
+    completions.sort()
+    first_end, first_duration = completions[0]
+    second_end, second_duration = completions[1]
+    assert second_end - first_end >= min(first_duration, second_duration) * 0.5

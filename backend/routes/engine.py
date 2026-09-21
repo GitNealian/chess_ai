@@ -1,20 +1,30 @@
-"""引擎分析 NDJSON 流式接口（Task 13）。
+"""引擎分析 NDJSON 流式接口（Task 13/14）。
 
 `POST /api/engine/analyze`：接收 FEN，或 `initial_fen + moves + ply` 重放
 得到局面，以 `application/x-ndjson` 逐行输出：
 
 - `{"type": "result", ...}`：`depth >= start_depth` 的每完成一层；
+- `{"type": "ping", "elapsed_ms": ...}`：等待搜索事件的保活行，约每 0.3s
+  一条（前端与既有解析器应忽略未知 `type`）；
 - `{"type": "done", ...}`：正常结束，含 `depth` / `time_ms` / `reason`；
 - `{"type": "error", "message": ...}`：参数、FEN 或着法错误（流内错误行，
   客户端只需处理一种错误路径；仅 Content-Type 非 JSON、body 非对象时
   在流开始前返回 400 JSON）。
 
-并发约定：模块级 `threading.Lock` 串行化整个分析过程（单用户场景），
-第二个请求排队等待；客户端断开时生成器 `finally` 置位停旗，配合
-nogil 搜索立即退出。
+并发与中断（Task 14）：
+- 模块级 `threading.Lock` 串行化整个分析过程（单用户场景），第二个请求
+  排队等待；
+- 搜索在工作线程（daemon，`engine-analyze`）中执行，主生成器只从事件
+  队列转发结果；主生成器每 `PING_INTERVAL_S` 秒至少 yield 一次保活行，
+  让 WSGI 服务器在写失败时能及时 `close` 生成器（真实客户端断开检测的
+  关键）；生成器 `finally` 置位停旗，配合 nogil 搜索在毫秒级退出。
+- `time_limit_ms` 是**层边界软时限**：只保证在某一层搜索结束后按累计耗时
+  停止，不保证在时限到达时立即返回；客户端断开后则在下一个 ping 周期内
+  停止搜索并释放锁。
 """
 
 import json
+import queue
 import threading
 import time
 
@@ -31,6 +41,10 @@ engine_bp = Blueprint("engine", __name__)
 
 # 整个分析过程（含流式产出）持锁：第二个请求排队等待。
 _ANALYZE_LOCK = threading.Lock()
+
+# 保活行间隔（秒）：等待事件超时即产出 ping，为 WSGI 服务器提供
+# 周期性写机会以检测客户端断开。
+PING_INTERVAL_S = 0.3
 
 # 参数范围：越界夹逼而非报错，缺省用引擎默认值。
 MIN_DEPTH = EC.ROOT_START_DEPTH  # 4
@@ -175,33 +189,38 @@ def analyze_position():
         return jsonify({"error": "请求体必须是 JSON 对象"}), 400
 
     def generate():
-        with _ANALYZE_LOCK:
-            stop = np.zeros(1, dtype=np.int8)
-            t0 = time.perf_counter()
+        try:
+            fen = _resolve_fen(data)
+            start_depth = _clamp_int(
+                data.get("start_depth"),
+                EC.DEFAULT_START_DEPTH,
+                MIN_DEPTH,
+                MAX_DEPTH,
+            )
+            max_depth = _clamp_int(
+                data.get("max_depth"),
+                EC.DEFAULT_MAX_DEPTH,
+                MIN_DEPTH,
+                MAX_DEPTH,
+            )
+            # 保证至少有一层产出（夹逼语义的一部分）。
+            start_depth = min(start_depth, max_depth)
+            time_limit_ms = _clamp_int(
+                data.get("time_limit_ms"),
+                EC.DEFAULT_TIME_LIMIT_MS,
+                MIN_TIME_LIMIT_MS,
+                MAX_TIME_LIMIT_MS,
+            )
+            base_board = Board().load_fen(fen)
+        except Exception as exc:  # noqa: BLE001 - 兜底转流内 error 行
+            yield _encode({"type": "error", "message": str(exc)})
+            return
+
+        stop = np.zeros(1, dtype=np.int8)
+        events = queue.Queue()
+
+        def worker():
             try:
-                fen = _resolve_fen(data)
-                start_depth = _clamp_int(
-                    data.get("start_depth"),
-                    EC.DEFAULT_START_DEPTH,
-                    MIN_DEPTH,
-                    MAX_DEPTH,
-                )
-                max_depth = _clamp_int(
-                    data.get("max_depth"),
-                    EC.DEFAULT_MAX_DEPTH,
-                    MIN_DEPTH,
-                    MAX_DEPTH,
-                )
-                # 保证至少有一层产出（夹逼语义的一部分）。
-                start_depth = min(start_depth, max_depth)
-                time_limit_ms = _clamp_int(
-                    data.get("time_limit_ms"),
-                    EC.DEFAULT_TIME_LIMIT_MS,
-                    MIN_TIME_LIMIT_MS,
-                    MAX_TIME_LIMIT_MS,
-                )
-                base_board = Board().load_fen(fen)
-                last = None
                 for result in analyze(
                     fen,
                     start_depth=start_depth,
@@ -209,31 +228,66 @@ def analyze_position():
                     time_limit_ms=time_limit_ms,
                     stop=stop,
                 ):
-                    last = result
-                    yield _encode(
-                        {
-                            "type": "result",
-                            "depth": result.depth,
-                            "score_red": result.score_red,
-                            "score_stm": result.score_stm,
-                            "mate": result.mate,
-                            "pv": _pv_payload(result.pv, base_board),
-                            "time_ms": result.time_ms,
-                            "nodes": result.nodes,
-                            "side_to_move": _SIDE_NAMES[result.side_to_move],
-                        }
-                    )
-                yield _encode(
-                    {
-                        "type": "done",
-                        "depth": last.depth if last is not None else 0,
-                        "time_ms": int((time.perf_counter() - t0) * 1000),
-                        "reason": _done_reason(last, max_depth, time_limit_ms, stop),
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001 - 兜底转流内 error 行
-                yield _encode({"type": "error", "message": str(exc)})
+                    events.put(("result", result))
+                events.put(("done", None))
+            except Exception as exc:  # noqa: BLE001 - 转流内 error 行
+                events.put(("error", exc))
+
+        with _ANALYZE_LOCK:
+            t0 = time.perf_counter()
+            threading.Thread(
+                target=worker, name="engine-analyze", daemon=True
+            ).start()
+            last = None
+            try:
+                while True:
+                    try:
+                        kind, payload = events.get(timeout=PING_INTERVAL_S)
+                    except queue.Empty:
+                        # 保活：让主生成器周期性 yield，WSGI 服务器才能
+                        # 在写失败时 close 本生成器（进而置位停旗）。
+                        yield _encode(
+                            {
+                                "type": "ping",
+                                "elapsed_ms": int(
+                                    (time.perf_counter() - t0) * 1000
+                                ),
+                            }
+                        )
+                        continue
+                    if kind == "result":
+                        last = payload
+                        yield _encode(
+                            {
+                                "type": "result",
+                                "depth": last.depth,
+                                "score_red": last.score_red,
+                                "score_stm": last.score_stm,
+                                "mate": last.mate,
+                                "pv": _pv_payload(last.pv, base_board),
+                                "time_ms": last.time_ms,
+                                "nodes": last.nodes,
+                                "side_to_move": _SIDE_NAMES[last.side_to_move],
+                            }
+                        )
+                    elif kind == "done":
+                        yield _encode(
+                            {
+                                "type": "done",
+                                "depth": last.depth if last is not None else 0,
+                                "time_ms": int((time.perf_counter() - t0) * 1000),
+                                "reason": _done_reason(
+                                    last, max_depth, time_limit_ms, stop
+                                ),
+                            }
+                        )
+                        break
+                    else:
+                        yield _encode({"type": "error", "message": str(payload)})
+                        break
             finally:
-                stop[0] = 1  # 客户端断开时让 nogil 搜索立即退出
+                # 生成器 close（客户端断开）或正常结束时立即停止后台搜索；
+                # 工作线程为 daemon，置位后自行在毫秒级退出，无需 join。
+                stop[0] = 1
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")

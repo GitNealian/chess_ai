@@ -1,4 +1,5 @@
 import os
+import threading
 
 from flask import Flask, abort, jsonify, send_from_directory
 from sqlalchemy import inspect, text
@@ -71,6 +72,11 @@ def create_app(config_class=Config):
     with app.app_context():
         db.create_all()
         _ensure_schema()
+
+    if not app.config.get("TESTING"):
+        from engine import warmup
+
+        threading.Thread(target=warmup, name="engine-warmup", daemon=True).start()
 
     return app
 
