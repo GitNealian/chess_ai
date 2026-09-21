@@ -1,8 +1,8 @@
 <template>
   <section>
     <div class="toolbar">
-      <input v-model="keyword" placeholder="搜索棋谱名" @input="reload" />
-      <input v-model="category" placeholder="按分类筛选" @input="reload" />
+      <input v-model="keyword" placeholder="搜索棋谱名" @input="reload(true)" />
+      <input v-model="category" placeholder="按分类筛选" @input="reload(true)" />
       <router-link to="/editor" class="btn primary">新建棋谱</router-link>
     </div>
     <div v-if="store.stats" class="stats">
@@ -32,16 +32,23 @@
         </tr>
       </tbody>
     </table>
+    <div v-if="store.total > store.pageSize" class="pager">
+      <button data-test="prev-page" :disabled="page <= 1" @click="changePage(page - 1)">上一页</button>
+      <span data-test="page-info">第 {{ page }} / {{ totalPages }} 页 · 共 {{ store.total }} 条</span>
+      <button data-test="next-page" :disabled="page >= totalPages" @click="changePage(page + 1)">下一页</button>
+    </div>
   </section>
 </template>
 
 <script setup>
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useLibraryStore } from "../stores/library";
 
 const store = useLibraryStore();
 const keyword = ref("");
 const category = ref("");
+const page = ref(1);
+const totalPages = computed(() => Math.max(1, Math.ceil(store.total / store.pageSize)));
 
 function sideText(side) {
   return { red: "红方", black: "黑方", both: "双方" }[side] || side;
@@ -56,8 +63,16 @@ function dueText(game) {
   return game.review ? game.review.due_date : "今日";
 }
 
-function reload() {
+function reload(resetPage = false) {
+  if (resetPage) page.value = 1;
+  store.page = page.value;
   store.fetchGames({ keyword: keyword.value || undefined, category: category.value || undefined });
+}
+
+function changePage(next) {
+  if (next < 1 || next > totalPages.value) return;
+  page.value = next;
+  reload();
 }
 
 async function onRemove(id) {
@@ -137,6 +152,24 @@ input {
   min-height: 44px;
   padding: 8px 12px;
 }
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+  color: #6b5a45;
+}
+.pager button {
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid #cbb89a;
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.pager button:disabled { opacity: 0.45; cursor: default; }
 
 /* 桌面端：恢复适配前的横向工具栏与表格布局 */
 @media (min-width: 768px) {

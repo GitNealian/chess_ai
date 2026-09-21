@@ -2,12 +2,15 @@
   <section class="review">
     <p v-if="loading" class="hint">加载中…</p>
     <p v-else-if="!current" class="hint" data-test="empty">
-      今日复习已全部完成 🎉
+      {{ emptyText }}
     </p>
     <template v-else>
       <h2>{{ current.game.name }}</h2>
       <p class="progress" data-test="progress">
         第 {{ index + 1 }} / {{ queue.length }} 个
+      </p>
+      <p v-if="queueTotal > queue.length" class="queue-total" data-test="queue-total">
+        待复习共 {{ queueTotal }} 局，本次加载前 {{ queue.length }} 局
       </p>
       <div class="layout">
         <ChessBoard :position="{ pieces }" :selected="selected" @cell-click="onCellClick" />
@@ -39,6 +42,7 @@ import { createPracticeSession } from "../stores/practice";
 
 const route = useRoute();
 const queue = ref([]);
+const queueTotal = ref(0);
 const index = ref(0);
 const loading = ref(true);
 const session = ref(null);
@@ -57,6 +61,14 @@ const sideText = computed(() => {
   if (side === "red") return "红方";
   if (side === "black") return "黑方";
   return "轮到的一方";
+});
+
+const emptyText = computed(() => {
+  const remaining = queueTotal.value - queue.value.length;
+  if (remaining > 0) {
+    return `本次 ${queue.value.length} 局已完成，还有约 ${remaining} 局待复习，刷新页面继续`;
+  }
+  return "今日复习已全部完成 🎉";
 });
 
 function startCurrent() {
@@ -125,6 +137,7 @@ onMounted(async () => {
     } else {
       const data = await api.reviewQueue();
       queue.value = data.items || [];
+      queueTotal.value = data.count ?? queue.value.length;
     }
   } catch (error) {
     queue.value = [];

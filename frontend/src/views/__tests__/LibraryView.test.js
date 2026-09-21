@@ -121,7 +121,48 @@ describe("LibraryView", () => {
     await wrapper.find("input[placeholder='搜索棋谱名']").setValue("顺炮");
     await flushPromises();
 
-    expect(api.listGames).toHaveBeenLastCalledWith({ keyword: "顺炮", category: undefined });
+    expect(api.listGames).toHaveBeenLastCalledWith({
+      keyword: "顺炮",
+      category: undefined,
+      page: 1,
+      page_size: 20,
+    });
+  });
+
+  it("分页控件显示页码并支持翻页", async () => {
+    api.listGames.mockResolvedValue({ items: games, total: 45, page: 1, page_size: 20 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const info = wrapper.find('[data-test="page-info"]');
+    expect(info.text()).toContain("第 1 / 3 页");
+    expect(info.text()).toContain("共 45 条");
+
+    await wrapper.find('[data-test="next-page"]').trigger("click");
+    await flushPromises();
+    expect(api.listGames).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }));
+  });
+
+  it("搜索变化时重置回第一页", async () => {
+    api.listGames.mockResolvedValue({ items: games, total: 45, page: 1, page_size: 20 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find('[data-test="next-page"]').trigger("click");
+    await flushPromises();
+    expect(api.listGames).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }));
+
+    await wrapper.find("input[placeholder='搜索棋谱名']").setValue("顺炮");
+    await flushPromises();
+    expect(api.listGames).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 }));
+  });
+
+  it("总数不超过一页时不显示分页控件", async () => {
+    api.listGames.mockResolvedValue({ items: games, total: 3, page: 1, page_size: 20 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="page-info"]').exists()).toBe(false);
   });
 
   it("点击删除调用 store.remove 并移除行", async () => {

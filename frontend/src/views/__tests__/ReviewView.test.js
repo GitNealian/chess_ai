@@ -99,6 +99,27 @@ describe("ReviewView", () => {
     expect(wrapper.find('[data-test="progress"]').text()).toContain("1 / 1");
   });
 
+  it("队列总量超过单次加载量时显示剩余提示", async () => {
+    api.reviewQueue.mockResolvedValue({ items: [item()], count: 141514 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="queue-total"]').text()).toContain("待复习共 141514 局");
+  });
+
+  it("单次加载的队列全部完成后提示刷新继续", async () => {
+    api.reviewQueue.mockResolvedValue({ items: [item()], count: 100 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await clickCells(wrapper.findComponent(BoardStub), [4, 0], [4, 1]);
+    await nextTick();
+    await wrapper.find('[data-test="submit"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="empty"]').text()).toContain("还有约 99 局待复习");
+  });
+
   it("走对着法后进入完成态，且棋盘同步移动", async () => {
     const wrapper = mountView();
     await flushPromises();
