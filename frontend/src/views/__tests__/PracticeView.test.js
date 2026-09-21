@@ -238,7 +238,7 @@ describe("PracticeView AI 分析", () => {
     expect(analysisItems(wrapper)).toHaveLength(2);
     expect(analysisItems(wrapper)[0].text()).toContain("第 7 层");
     expect(analysisItems(wrapper)[1].text()).toContain("第 6 层");
-    expect(wrapper.find('[data-test="score"]').text()).toContain("+1.4");
+    expect(wrapper.find('[data-test="score"]').text()).toContain("+135");
   });
 
   it("翻步立即重新分析并中止旧请求", async () => {
@@ -292,7 +292,7 @@ describe("PracticeView AI 分析", () => {
     await nextTick();
 
     const text = wrapper.find('[data-test="score"]').text();
-    expect(text).toContain("黑优 0.8");
+    expect(text).toContain("黑优 85");
     expect(text).not.toContain("-");
   });
 

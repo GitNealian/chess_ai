@@ -140,7 +140,7 @@ function formatScore(scoreRed, mate) {
     return `${side} ${Math.abs(mate)} 步杀`;
   }
   if (Math.abs(scoreRed) < 1) return "均势";
-  const value = (Math.abs(scoreRed) / 100).toFixed(1);
+  const value = Math.abs(scoreRed);
   return scoreRed > 0 ? `红优 +${value}` : `黑优 ${value}`;
 }
 
