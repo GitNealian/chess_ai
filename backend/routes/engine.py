@@ -22,9 +22,9 @@
   「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（done 的
   `reason` 仍为 `time_limit`）；不保证在时限到达时立即返回；客户端断开后
   则在下一个 ping 周期内停止搜索并释放锁。
-- 请求体可选 `threads`（1..16，越界夹逼；缺省自动：环境变量
-  `ENGINE_THREADS` > `min(cpu-1, 8)`）；`analyze` 内部 Lazy SMP，
-  响应字段不变。
+- 请求体可选 `threads`（1..16，越界夹逼；非法类型与布尔按未指定处理；
+  缺省自动：环境变量 `ENGINE_THREADS` > `max(1, min(cpu_count-1, 8))`）；
+  `analyze` 内部 Lazy SMP，响应字段不变。
 
 另外提供 `POST /api/engine/validate-move`：无状态走子校验（重放
 `initial_fen + moves` 后校验一步），供「人人对弈」页面调用。该接口只做
@@ -307,6 +307,7 @@ def analyze_position():
                 MIN_TIME_LIMIT_MS,
                 MAX_TIME_LIMIT_MS,
             )
+            # `None` 表示未指定（含非法类型/布尔），交由引擎层按 env/自动解析。
             threads = _clamp_int(
                 data.get("threads"),
                 None,

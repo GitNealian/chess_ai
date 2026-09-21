@@ -166,6 +166,20 @@ def test_analyze_clamps_parameters(client):
     done = _of_type(messages, "done")[-1]
     assert done["reason"] == "max_depth"
 
+    # `start_depth=Infinity`（Python `json.dumps` 默认 allow_nan=True 的字面量）
+    # 回退默认值而非流内 error：与 threads 的 Infinity 用例属同一健壮性变更。
+    messages = read_stream(
+        client,
+        {
+            "fen": INITIAL_FEN,
+            "start_depth": float("inf"),
+            "max_depth": 6,
+            "time_limit_ms": 5000,
+        },
+    )
+    assert not _of_type(messages, "error")
+    assert _of_type(messages, "result")
+
 
 def test_analyze_pv_has_at_most_two_moves(client):
     messages = read_stream(
@@ -359,7 +373,10 @@ def test_analyze_threads_clamped_and_optional(client):
 
 
 def test_analyze_threads_infinity_falls_back(client):
-    # JSON `Infinity` 解析为 float('inf')：不得抛错（_clamp_int 需捕获 OverflowError）
+    # JSON `Infinity` 解析为 float('inf')：不得抛错（_clamp_int 需捕获 OverflowError）。
+    # 该字面量主要来自 Python 生态客户端：`json.dumps`（默认 allow_nan=True）
+    # 会产出 `Infinity`，Flask/标准库 json 接受；浏览器 `JSON.stringify(Infinity)`
+    # 产出 `null`，不会到达此处。
     messages = read_stream(
         client,
         {
