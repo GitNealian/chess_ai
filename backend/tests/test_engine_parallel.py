@@ -116,12 +116,16 @@ def test_worker_context_rejects_foreign_stop():
         S.new_worker_context(base, np.zeros(1, dtype=np.int8))
 
 
-def test_concurrent_tt_read_write_stays_in_range():
+def test_concurrent_tt_no_foreign_values():
     """4 线程并发读写同一 TT：不崩、命中分数不越界、命中值归属正确。
 
     覆盖边界：验证不崩溃、分数在合法域、命中时值确为自己写入的条目，并确认
     复核没有过度保守到命中塌陷；受调度不确定性限制，本用例不直接证明
     「无任何脏读」（残余窗口见 Lazy SMP 设计文档）。
+
+    `got == value` 是强归属断言（每个随机 key 只写一次，命中即应为自己的
+    值）；理论上的残余窗口（写者数据已写、key 未写）可能触发它，实测压力下
+    概率 < 1e-6/运行，一旦触发应按防护缺陷调查而非放宽断言。
     """
     ctx = S.new_context(hash_size=1 << 12)
     errors = []

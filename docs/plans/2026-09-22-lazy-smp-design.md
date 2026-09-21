@@ -60,7 +60,7 @@ def new_worker_context(ctx, stop):
 - **写侧（先数据后 key）**：`_write_straight`、`_write_step`、`_copy_slot`、`set_root_tt` 调整为先写 `type/value/depth/move/exists`，**最后写 `tt_key`**；写序在 numba 生成的原生代码中成立。
 - **读侧（复核 key）**：`get_tt` 在 STEP/STRAIGHT 槽读到匹配 key、并取完数据后，调用 `_key_unchanged` 再读一次 `tt_key`；不一致即视为未命中（STEP 复核失败时该槽按不存在处理，不再抑制 STRAIGHT 的 fallback value 覆盖）。复核函数标记 `inline="never"`（约束 numba IR 层内联），且函数体内先执行 `_tt_read_barrier()`——由 numba `intrinsic` 生成的 `~{memory}` 空内联汇编。实测 numba 0.67 下 `inline="never"` 不会产生 LLVM `noinline`，LLVM 仍会把复核内联进 `get_tt`（复核是纯函数，两次 `tt_key` 读之间无写该数组的调用，存在被 CSE 合并的理论通道）；内存屏障使 LLVM 不能跨屏障合并访存，复核读在编译产物中必然保留。修复提交的 IR 证据：`get_tt` 主函数出现 2 处 `asm sideeffect`，`tt_key` 的 load 由 2 次（仅首读，修复前 a3bd3ee）增至 4 次（2 首读 + 2 复核）。
 - **残余窗口**：写者数据已更新、key 尚未更新的极短窗口内，读者可能仍以旧 key 匹配到新数据。该窗口内读到的分数/深度/着法仍是合法域内的值（不越界、不崩溃），影响是棋力级而非正确性级；`_copy_slot` 的「读源槽 → 写目标槽」读-改-写组合窗口更宽（复制期间源槽与目标槽都可能被并发覆盖），但也属同一风险等级；此风险接受并记录在案。
-- **tt_move 审计（已完成）**：TT 着法的唯一消费点是 `nega_scout` 内的着法排序（先置 head[0] 再参与后续排序），前置 `_movegen.legal_move` 合法性校验，脏读不会触发非法着法。
+- **tt_move 审计（已完成）**：`nega_scout` 内唯一的着法执行类消费点是着法排序（先置 head[0] 再参与后续排序），前置 `_movegen.legal_move` 合法性校验，脏读不会触发非法着法；另有 `tt_move == 0` 的 IID 触发判断一处，脏读只影响是否触发 IID，不影响正确性。
 - 不加锁理由：每个节点都发生多次 TT 读写，锁开销会直接吃掉并行收益；Stockfish 系的无锁 TT 亦采用同思路。
 
 ## 停旗与中断

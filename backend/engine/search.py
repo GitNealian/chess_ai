@@ -117,6 +117,10 @@ Task 11 的主搜索语义（与 Java 一致的关键点）：
   残余「数据已新、key 未更新」窗口为设计接受的棋力级风险；`_copy_slot` 的
   读-改-写窗口更宽但也属同一风险等级。`tt_move` 消费点（`nega_scout` 排序）
   已有 `legal_move` 校验，脏读不会触发非法着法；
+  复核生效的复验方法：`search.get_tt.inspect_llvm(...)` 主函数中应见 4 次
+  `tt_key` 的 i64 load（2 首读 + 2 复核）与 2 处 `asm sideeffect` 屏障；
+  numba/llvmlite 升级后必须复验。`_tt_read_barrier` 依赖 numba `intrinsic`，
+  本模块必须保持 `cache=False`（intrinsic 不可缓存）。
 """
 
 import collections
@@ -309,10 +313,11 @@ def _tt_read_barrier(typingctx):
 def _key_unchanged(ctx, play, kind, slot, key):
     """复核 TT 槽 key 是否仍等于 `key`（多线程读保护）。
 
-    **`inline="never"` 与 `_tt_read_barrier()` 缺一不可**：`inline="never"`
-    只约束 numba IR 层内联，LLVM 仍会把本函数内联进 `get_tt`（numba 0.67
-    实测），两次 `tt_key` 读之间存在被 CSE 合并的理论通道；函数体内的内存
-    屏障使 LLVM 无法跨屏障合并访存，复核读因此必然执行。
+    `_tt_read_barrier()` 是关键保证：内存屏障使 LLVM 无法把此处对 `tt_key`
+    的复核读与 `get_tt` 的首读做 CSE 合并（numba 0.67 + llvmlite 0.49 实测，
+    编译产物中 `tt_key` load 由 2 次增至 4 次、另有 2 处 `asm sideeffect`）。
+    `inline="never"` 仅约束 numba IR 层内联，对最终产物无影响（实测去掉后
+    产物相同），保留作为编译器的额外意图表达。
     """
     _tt_read_barrier()
     return ctx.tt_key[play, kind, slot] == key
