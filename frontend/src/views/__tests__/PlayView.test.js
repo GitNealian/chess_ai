@@ -372,4 +372,21 @@ describe("PlayView", () => {
     expect(api.validateMove).not.toHaveBeenCalled();
     expect(analyzeStream).not.toHaveBeenCalled();
   });
+
+  it("probe 进行中卸载，resolve 后不再发起分析", async () => {
+    route.query = { game: "7", ply: "1" };
+    api.getGame.mockResolvedValue({
+      id: 7, name: "终局棋谱", initial_fen: INITIAL_FEN,
+      moves: [{ x1: 1, y1: 2, x2: 4, y2: 2 }],
+    });
+    let resolveProbe;
+    api.validateMove.mockReturnValue(new Promise((r) => { resolveProbe = r; }));
+    const wrapper = mountView();
+    await flushPromises();
+    expect(api.validateMove).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+    resolveProbe({ legal: true, check: false, game_over: null });
+    await flushPromises();
+    expect(analyzeStream).not.toHaveBeenCalled();
+  });
 });
