@@ -389,4 +389,49 @@ describe("PlayView", () => {
     await flushPromises();
     expect(analyzeStream).not.toHaveBeenCalled();
   });
+
+  it("保存弹窗预填终局结果并提交棋谱", async () => {
+    api.validateMove.mockResolvedValue({
+      legal: true,
+      fen: INITIAL_FEN,
+      side_to_move: "black",
+      chinese: "车二进九",
+      check: true,
+      game_over: { winner: "red", reason: "checkmate" },
+    });
+    api.createGame.mockResolvedValue({ id: 9 });
+    const wrapper = mountView();
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    await button(wrapper, "save").trigger("click");
+    expect(wrapper.find('[data-test="save-result"]').element.value).toBe("1-0");
+
+    await button(wrapper, "save-submit").trigger("submit");
+    await flushPromises();
+
+    expect(api.createGame).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: "1-0",
+        category: "对弈",
+        practice_side: "both",
+        initial_fen: INITIAL_FEN,
+        moves: [{ x1: 1, y1: 2, x2: 4, y2: 2 }],
+      })
+    );
+    expect(push).toHaveBeenCalledWith("/practice/9");
+  });
+
+  it("保存失败在弹窗内显示错误", async () => {
+    api.createGame.mockRejectedValue({ response: { data: { error: "名称重复" } } });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "save").trigger("click");
+    await button(wrapper, "save-submit").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="save-error"]').text()).toBe("名称重复");
+  });
 });

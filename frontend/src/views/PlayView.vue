@@ -21,6 +21,7 @@
         <div class="controls">
           <button data-test="undo" :disabled="!session.state.moves.length" @click="undo">悔棋</button>
           <button data-test="flip" @click="flipped = !flipped">翻转棋盘</button>
+          <button data-test="save" @click="openSave">保存到棋谱库</button>
         </div>
         <div class="analysis" data-test="analysis">
           <div class="score-row">
@@ -46,17 +47,42 @@
         </ol>
       </div>
     </div>
+    <div v-if="showSave" class="modal" data-test="save-modal">
+      <form class="save-form" @submit.prevent="save">
+        <h3>保存到棋谱库</h3>
+        <label>名称<input v-model="form.name" data-test="save-name" /></label>
+        <label>红方<input v-model="form.red_player" /></label>
+        <label>黑方<input v-model="form.black_player" /></label>
+        <label>赛事<input v-model="form.event" /></label>
+        <label>分类<input v-model="form.category" /></label>
+        <label>
+          结果
+          <select v-model="form.result" data-test="save-result">
+            <option value="*">未结束</option>
+            <option value="1-0">红胜</option>
+            <option value="0-1">黑胜</option>
+            <option value="1/2-1/2">和棋</option>
+          </select>
+        </label>
+        <p v-if="saveError" class="warn" data-test="save-error">{{ saveError }}</p>
+        <div class="modal-actions">
+          <button type="button" @click="showSave = false">取消</button>
+          <button type="submit" data-test="save-submit" :disabled="saving">保存</button>
+        </div>
+      </form>
+    </div>
   </section>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
-import { useRoute } from "vue-router";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import ChessBoard from "../components/ChessBoard.vue";
 import { analyzeStream, api } from "../api";
 import { createPlaySession } from "../stores/play";
 
 const route = useRoute();
+const router = useRouter();
 const loading = ref(true);
 const error = ref(false);
 const flipped = ref(false);
@@ -188,6 +214,50 @@ function undo() {
   if (!session.state.moves.length) return;
   session.undo();
   startAnalysis();
+}
+
+const showSave = ref(false);
+const saving = ref(false);
+const saveError = ref("");
+const form = reactive({
+  name: "红方 vs 黑方",
+  red_player: "",
+  black_player: "",
+  event: "",
+  category: "对弈",
+  result: "*",
+});
+
+function openSave() {
+  if (session.state.gameOver) {
+    form.result = session.state.gameOver.winner === "red" ? "1-0" : "0-1";
+  }
+  saveError.value = "";
+  showSave.value = true;
+}
+
+async function save() {
+  saving.value = true;
+  saveError.value = "";
+  try {
+    const created = await api.createGame({
+      name: form.name || "红方 vs 黑方",
+      red_player: form.red_player,
+      black_player: form.black_player,
+      event: form.event,
+      category: form.category,
+      result: form.result,
+      initial_fen: session.state.initialFen,
+      moves: session.state.moves.map(({ x1, y1, x2, y2 }) => ({ x1, y1, x2, y2 })),
+      practice_side: "both",
+    });
+    showSave.value = false;
+    router.push(`/practice/${created.id}`);
+  } catch (err) {
+    saveError.value = err?.response?.data?.error || "保存失败";
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function probePositionState(game, ply) {
@@ -382,6 +452,58 @@ onUnmounted(() => {
 .hint button {
   min-height: 44px;
   padding: 10px 16px;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.save-form {
+  width: 100%;
+  max-width: 360px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.save-form h3 {
+  margin: 0;
+}
+
+.save-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.save-form input,
+.save-form select {
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid #cbb89a;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.modal-actions button {
+  flex: 1;
+  min-height: 44px;
 }
 
 @media (min-width: 768px) {
