@@ -12,6 +12,49 @@ http.interceptors.response.use(
   }
 );
 
+export async function analyzeStream(payload, { signal, onResult, onDone, onError } = {}) {
+  try {
+    const response = await fetch("/api/engine/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || data.error || `分析请求失败（${response.status}）`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const handleLine = (line) => {
+      const text = line.trim();
+      if (!text) return;
+      let msg;
+      try {
+        msg = JSON.parse(text);
+      } catch {
+        return;
+      }
+      if (msg.type === "result") onResult?.(msg);
+      else if (msg.type === "done") onDone?.(msg);
+      else if (msg.type === "error") onError?.(new Error(msg.message || "分析失败"));
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      lines.forEach(handleLine);
+    }
+    handleLine(buffer);
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    onError?.(err);
+  }
+}
+
 export const api = {
   listGames: (params) => http.get("/games", { params }).then((r) => r.data),
   getGame: (id) => http.get(`/games/${id}`).then((r) => r.data),

@@ -65,4 +65,25 @@ describe("ChessBoard", () => {
     expect(wrapper.findAll(".selected")).toHaveLength(1);
     expect(wrapper.html()).toContain("rgba(212,160,23,0.25)");
   });
+
+  it("渲染分析箭头：best 与 reply 两条", () => {
+    const wrapper = mount(ChessBoard, {
+      props: {
+        position: { pieces: [] },
+        arrows: [
+          { x1: 7, y1: 2, x2: 4, y2: 2, kind: "best" },
+          { x1: 1, y1: 7, x2: 4, y2: 7, kind: "reply" },
+        ],
+      },
+    });
+    const arrows = wrapper.findAll("[data-arrow]");
+    expect(arrows.length).toBe(2);
+    expect(arrows[0].attributes("data-arrow")).toBe("best");
+    expect(arrows[1].attributes("data-arrow")).toBe("reply");
+  });
+
+  it("无 arrows prop 时不渲染箭头", () => {
+    const wrapper = mount(ChessBoard, { props: { position: { pieces: [] } } });
+    expect(wrapper.findAll("[data-arrow]").length).toBe(0);
+  });
 });

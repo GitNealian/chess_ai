@@ -5,6 +5,7 @@ const props = defineProps({
   position: { type: Object, required: true },
   selected: { type: Object, default: null },
   legalTargets: { type: Array, default: () => [] },
+  arrows: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits(["cell-click"]);
@@ -16,6 +17,12 @@ const H = margin * 2 + 9 * gap;
 
 const cellX = (x) => margin + x * gap;
 const cellY = (y) => margin + (9 - y) * gap;
+
+const uid = Math.random().toString(36).slice(2, 8);
+
+const arrowKind = (kind) => (kind === "reply" ? "reply" : "best");
+const arrowColor = (kind) => (arrowKind(kind) === "reply" ? "#ea580c" : "#2563eb");
+const markerId = (kind) => `arrow-${arrowKind(kind)}-${uid}`;
 
 const pieces = computed(() => props.position?.pieces ?? []);
 
@@ -188,6 +195,47 @@ function onSvgClick(event) {
       :cy="cellY(spot.y)"
       r="7"
       fill="rgba(40,140,60,0.55)"
+    />
+
+    <defs v-if="arrows.length">
+      <marker
+        :id="markerId('best')"
+        markerUnits="userSpaceOnUse"
+        markerWidth="16"
+        markerHeight="16"
+        refX="14"
+        refY="8"
+        orient="auto"
+      >
+        <path d="M0,0 L16,8 L0,16 Z" fill="#2563eb" />
+      </marker>
+      <marker
+        :id="markerId('reply')"
+        markerUnits="userSpaceOnUse"
+        markerWidth="16"
+        markerHeight="16"
+        refX="14"
+        refY="8"
+        orient="auto"
+      >
+        <path d="M0,0 L16,8 L0,16 Z" fill="#ea580c" />
+      </marker>
+    </defs>
+
+    <line
+      v-for="(arrow, i) in arrows"
+      :key="`arrow-${i}`"
+      :data-arrow="arrowKind(arrow.kind)"
+      :x1="cellX(arrow.x1)"
+      :y1="cellY(arrow.y1)"
+      :x2="cellX(arrow.x2)"
+      :y2="cellY(arrow.y2)"
+      :stroke="arrowColor(arrow.kind)"
+      stroke-width="7"
+      stroke-linecap="round"
+      :marker-end="`url(#${markerId(arrow.kind)})`"
+      opacity="0.85"
+      pointer-events="none"
     />
 
     <rect
