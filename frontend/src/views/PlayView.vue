@@ -66,7 +66,7 @@
         </label>
         <p v-if="saveError" class="warn" data-test="save-error">{{ saveError }}</p>
         <div class="modal-actions">
-          <button type="button" @click="showSave = false">取消</button>
+          <button type="button" data-test="cancel" :disabled="saving" @click="showSave = false">取消</button>
           <button type="submit" data-test="save-submit" :disabled="saving">保存</button>
         </div>
       </form>
@@ -229,19 +229,23 @@ const form = reactive({
 });
 
 function openSave() {
-  if (session.state.gameOver) {
-    form.result = session.state.gameOver.winner === "red" ? "1-0" : "0-1";
-  }
+  form.result = session.state.gameOver
+    ? session.state.gameOver.winner === "red"
+      ? "1-0"
+      : "0-1"
+    : "*";
   saveError.value = "";
   showSave.value = true;
 }
 
 async function save() {
+  if (saving.value) return;
   saving.value = true;
   saveError.value = "";
   try {
+    const name = form.name.trim();
     const created = await api.createGame({
-      name: form.name || "红方 vs 黑方",
+      name: name || "红方 vs 黑方",
       red_player: form.red_player,
       black_player: form.black_player,
       event: form.event,
@@ -459,14 +463,16 @@ onUnmounted(() => {
   inset: 0;
   background: rgba(0, 0, 0, 0.4);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 16px;
+  overflow-y: auto;
 }
 
 .save-form {
   width: 100%;
   max-width: 360px;
+  margin: auto;
   background: #fff;
   border-radius: 12px;
   padding: 16px;

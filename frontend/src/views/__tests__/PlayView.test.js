@@ -432,6 +432,59 @@ describe("PlayView", () => {
     await button(wrapper, "save-submit").trigger("submit");
     await flushPromises();
 
+    expect(wrapper.find('[data-test="save-modal"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="save-error"]').text()).toBe("名称重复");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("终局取消并悔棋后重开弹窗结果恢复未结束", async () => {
+    api.validateMove.mockResolvedValue({
+      legal: true,
+      fen: INITIAL_FEN,
+      side_to_move: "black",
+      chinese: "车二进九",
+      check: true,
+      game_over: { winner: "red", reason: "checkmate" },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    await button(wrapper, "save").trigger("click");
+    expect(wrapper.find('[data-test="save-result"]').element.value).toBe("1-0");
+    await button(wrapper, "cancel").trigger("click");
+
+    await button(wrapper, "undo").trigger("click");
+    await flushPromises();
+    await button(wrapper, "save").trigger("click");
+    expect(wrapper.find('[data-test="save-result"]').element.value).toBe("*");
+  });
+
+  it("保存进行中取消按钮禁用", async () => {
+    api.createGame.mockReturnValue(new Promise(() => {}));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "save").trigger("click");
+    expect(button(wrapper, "cancel").attributes("disabled")).toBeUndefined();
+    await button(wrapper, "save-submit").trigger("submit");
+    await flushPromises();
+    expect(button(wrapper, "cancel").attributes("disabled")).toBeDefined();
+  });
+
+  it("名称空白时回退默认值", async () => {
+    api.createGame.mockResolvedValue({ id: 9 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "save").trigger("click");
+    await wrapper.find('[data-test="save-name"]').setValue("   ");
+    await button(wrapper, "save-submit").trigger("submit");
+    await flushPromises();
+
+    expect(api.createGame).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "红方 vs 黑方" })
+    );
   });
 });
