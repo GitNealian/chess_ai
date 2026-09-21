@@ -68,8 +68,8 @@ chess/
 - Node.js 18+
 - 引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时。大部分引擎模块启用 numba 磁盘缓存（`backend/engine/__pycache__/`），编译产物可跨进程复用；但**搜索模块（`search.py`）因 numba 0.67「递归 + 跨函数调用 + 磁盘缓存」缺陷不使用磁盘缓存**，因此**每个新进程首次分析仍需 ~20-35s 预热**。建议部署后等预热线程完成（或先发一个浅层分析请求）再对外服务；gunicorn 多 worker 各自独立预热。
 - numba 缓存目录会随源码变更 / numba 升级累积历史编译产物而增长。运行一段时间后可安全删除 `backend/engine/__pycache__/`，代价是下次冷启动重新编译（即上述预热耗时）。
-- **并行搜索（Lazy SMP）**：引擎默认使用 `max(1, min(cpu_count-1, 8))` 个线程并行分析：主线程产出结果，辅助线程共享置换表互补搜索。可用环境变量 `ENGINE_THREADS`（如 `ENGINE_THREADS=1` 完全串行）或分析请求的 `threads` 字段（1..16）覆盖。并行模式下 `nodes` 只统计主线程；同一局面的分数/PV 在多次运行间可能微变（非确定性），属预期行为。本机实测（20 核，每档重复 3 次取中位数，depth 8 / 10）：2 线程 1.5x / 1.6x，4 线程 1.9x / 2.1x。
-- **`gunicorn --preload` 注意**：预热线程运行期间 fork，会让子进程继承 numba 自身的编译锁（不可重建）而阻塞，请确保 fork 发生在预热完成之后（例如在 master 同步预热完毕后启动 worker），或不要使用 `--preload`。
+- **并行搜索（Lazy SMP）**：引擎默认使用 `max(1, min(cpu_count-1, 8))` 个线程并行分析：主线程产出结果，辅助线程共享置换表互补搜索。可用环境变量 `ENGINE_THREADS`（如 `ENGINE_THREADS=1` 完全串行）或分析请求的 `threads` 字段（1..16）覆盖。并行模式下 `nodes` 只统计主线程；同一局面的分数/PV 在多次运行间可能微变（非确定性），属预期行为。本机实测（nproc=20 逻辑核，固定深度、`time_limit_ms=60000`、预热完成后空载测量，每档重复 3 次取中位数，depth 8 / 10）：2 线程 1.5x / 1.6x，4 线程 1.9x / 2.1x；默认 8 线程档未测。
+- **`gunicorn --preload` 注意**：请在 gunicorn 配置的 `on_starting(server)` 钩子中同步调用 `engine.warmup()` 完成预热后再 fork worker（或直接不使用 `--preload`）。若在预热线程运行期间 fork，子进程可能继承 numba 自身的编译锁（本项目的 `_WARMUP_LOCK` 已做 fork 重建，numba 编译锁不能），导致子进程首次编译（含 `threads=1` 串行搜索）阻塞。
 
 ## 后端启动
 
@@ -180,8 +180,8 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - AI 分析接入打谱页与对弈页；录入 / 默写视图未接入。
 - 人人对弈为同屏双人，不联网、不自动保存（手动保存到棋谱库）；不判定长将、重复局面和棋；从棋谱续下的将军/终局提示由一次探测请求恢复，悔棋到该步之前时提示不恢复（着法合法性始终由后端保证）。
 - 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，完成一层后按「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（通常完成时间不超过其 ~1.5 倍）；若下一层实际耗时相对上一层暴涨，仍可能超出。
-- 并行分析下 `nodes` 仅统计主线程，且结果非确定性（同局面多次分析的分数/PV 可能微变）。
-- 显式 `threads` 不按核数降级（1..16 夹逼），低核机器上设大值会线程超订；建议不显式设置或设 `ENGINE_THREADS`。
+- 并行分析下 `nodes` 仅统计主线程，且结果非确定性（同局面多次分析的分数/PV 可能微变，将杀步数可能 ±1 ply 级偏差）。
+- 显式线程数（含环境变量 `ENGINE_THREADS`）不按核数降级（夹逼 1..16），低核机器上设大值会线程超订；不设时自动取 `max(1, min(cpu_count-1, 8))`，需要完全串行可用 `ENGINE_THREADS=1`。
 - Zobrist 哈希为自生成（固定种子），与 Java 版哈希值不兼容，仅保证引擎内部自洽。
 - mate 分数不入置换表（修正 Java 继承缺陷，避免深层杀步失真）。
 - 黑方着法生成顺序与 Java 版略有差异（按 site 升序扫描），不影响棋力。
@@ -192,3 +192,4 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 移动端适配：`docs/plans/2026-09-19-mobile-responsive-design.md`
 - AI 引擎：`docs/plans/2026-09-20-ai-engine-design.md` / `docs/plans/2026-09-20-ai-engine-implementation.md`
 - 人人对弈：`docs/plans/2026-09-21-play-mode-design.md` / `docs/plans/2026-09-21-play-mode-implementation.md`
+- Lazy SMP 并行搜索：`docs/plans/2026-09-22-lazy-smp-design.md` / `docs/plans/2026-09-22-lazy-smp-implementation.md`
