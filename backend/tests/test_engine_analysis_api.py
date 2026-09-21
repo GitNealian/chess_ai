@@ -124,8 +124,51 @@ def test_depth_bounds_clamped_and_no_result_when_start_exceeds_max():
     results = list(analyze(INITIAL, start_depth=6, max_depth=99, time_limit_ms=150))
     assert results and results[-1].depth == 6
 
-    # start_depth > max_depth：仍会搜到 max_depth，但不产出且不死循环
+    # start_depth > max_depth：不产出且不死循环
     assert list(analyze(INITIAL, start_depth=8, max_depth=6, time_limit_ms=5000)) == []
+
+
+def test_start_depth_above_max_returns_before_loading_position(monkeypatch):
+    """start_depth > max_depth 时应提前返回：不加载局面、不分配 Ctx/Stack 大对象。"""
+    from engine import analysis as A
+    from engine import analyze
+
+    def fail_load_position(fen):
+        raise AssertionError("start_depth > max_depth 时不应加载局面")
+
+    monkeypatch.setattr(A, "load_position", fail_load_position)
+    assert list(analyze(INITIAL, start_depth=8, max_depth=6, time_limit_ms=5000)) == []
+
+
+def test_interrupted_layer_is_dropped_and_no_further_depth(monkeypatch):
+    """停旗中断层的确定性回归：第 7 层中途置 stop 并返回垃圾分。
+
+    - 已完成层（6）仍产出；
+    - 第 7 层结果不可信，被丢弃、不产出；
+    - 第 8 层不再发起（调用序列止于 7）。
+    """
+    from engine import analyze
+    from engine import search as S
+
+    stop = np.zeros(1, dtype=np.int8)
+    calls = []
+    real_search_depth = S.search_depth
+
+    def fake_search_depth(st, ctx, stack, depth):
+        calls.append(depth)
+        if depth >= 7:
+            stop[0] = 1  # 模拟其他线程在 nogil 搜索中途置位
+            return np.int64(999999), np.int64(0)  # 垃圾值，不得产出
+        return real_search_depth(st, ctx, stack, depth)
+
+    monkeypatch.setattr(S, "search_depth", fake_search_depth)
+    results = list(
+        analyze(INITIAL, start_depth=6, max_depth=10, time_limit_ms=60000, stop=stop)
+    )
+    assert [r.depth for r in results] == [6]
+    assert results[0].score_stm != 999999
+    assert calls == [4, 5, 6, 7]
+    assert stop[0] == 1
 
 
 def test_generator_close_releases_position():

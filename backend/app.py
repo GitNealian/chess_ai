@@ -1,11 +1,33 @@
 import os
 
 from flask import Flask, abort, jsonify, send_from_directory
+from sqlalchemy import inspect, text
 
 from config import BASE_DIR, Config
 from models import db
 
 FRONTEND_DIST = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "dist"))
+
+
+def _ensure_schema():
+    inspector = inspect(db.engine)
+    if "games" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("games")}
+    if "source" not in columns:
+        db.session.execute(text("ALTER TABLE games ADD COLUMN source VARCHAR(50) DEFAULT ''"))
+    if "source_hash" not in columns:
+        db.session.execute(text("ALTER TABLE games ADD COLUMN source_hash VARCHAR(40)"))
+        db.session.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_games_source_hash ON games (source_hash)")
+        )
+    db.session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_games_updated_at_id "
+            "ON games (updated_at DESC, id DESC)"
+        )
+    )
+    db.session.commit()
 
 
 def _register_frontend(app):
@@ -36,16 +58,19 @@ def create_app(config_class=Config):
     def health():
         return jsonify({"status": "ok"})
 
+    from routes.engine import engine_bp
     from routes.games import games_bp
     from routes.review import review_bp
 
     app.register_blueprint(games_bp, url_prefix="/api/games")
+    app.register_blueprint(engine_bp, url_prefix="/api/engine")
     app.register_blueprint(review_bp, url_prefix="/api")
 
     _register_frontend(app)
 
     with app.app_context():
         db.create_all()
+        _ensure_schema()
 
     return app
 

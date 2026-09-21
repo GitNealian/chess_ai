@@ -1,0 +1,221 @@
+"""Task 13：`POST /api/engine/analyze` NDJSON 流式接口测试。
+
+覆盖：
+- `fen` 与 `initial_fen + moves`（含 `ply` 缺省/裁剪）两种局面来源；
+- 参数越界夹逼、done 行 reason、PV 至多 2 步与 ICCS/中文记谱；
+- 非法 FEN/着法/空请求体走流内 error 行；
+- 并发请求由模块级锁串行化（互不干扰）。
+
+首次调用会触发搜索链 numba JIT 编译（约 20-35s，预期内）；
+各用例用 `max_depth=4/6` 把搜索耗时控制在亚秒级。
+"""
+
+import json
+import re
+import threading
+
+from chess_engine.board import INITIAL_FEN, Board
+from chess_engine.move import Move
+
+ICCS_RE = re.compile(r"^[a-i][0-9][a-i][0-9]$")
+
+
+def read_stream(client, payload):
+    resp = client.post("/api/engine/analyze", json=payload)
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/x-ndjson"
+    return [
+        json.loads(line)
+        for line in resp.get_data(as_text=True).splitlines()
+        if line.strip()
+    ]
+
+
+def _of_type(messages, kind):
+    return [message for message in messages if message["type"] == kind]
+
+
+def _parse_iccs(text):
+    def point(part):
+        return ord(part[0]) - 97, int(part[1])
+
+    return point(text[:2]), point(text[2:])
+
+
+def test_analyze_with_fen(client):
+    messages = read_stream(
+        client,
+        {"fen": INITIAL_FEN, "start_depth": 4, "max_depth": 4, "time_limit_ms": 5000},
+    )
+    results = _of_type(messages, "result")
+    assert results and results[-1]["depth"] >= 4
+    last = results[-1]
+    assert set(last) >= {
+        "type",
+        "depth",
+        "score_red",
+        "score_stm",
+        "mate",
+        "pv",
+        "time_ms",
+        "nodes",
+        "side_to_move",
+    }
+    assert isinstance(last["score_red"], int)
+    assert isinstance(last["score_stm"], int)
+    assert last["side_to_move"] in ("red", "black")
+    assert last["pv"] and set(last["pv"][0]) >= {
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "iccs",
+        "chinese",
+    }
+    assert ICCS_RE.match(last["pv"][0]["iccs"])
+    done = _of_type(messages, "done")
+    assert done and done[-1]["depth"] >= 4
+
+
+def test_analyze_rebuilds_position_from_moves(client):
+    moves = [{"x1": 7, "y1": 2, "x2": 4, "y2": 2}]  # 炮二平五
+    messages = read_stream(
+        client,
+        {
+            "initial_fen": INITIAL_FEN,
+            "moves": moves,
+            "ply": 1,
+            "start_depth": 4,
+            "max_depth": 4,
+            "time_limit_ms": 5000,
+        },
+    )
+    results = _of_type(messages, "result")
+    assert results
+    last = results[-1]
+    assert last["side_to_move"] == "black"
+    first = last["pv"][0]
+    assert first["chinese"]
+
+    # PV 首步为黑方着法：起点棋子属于黑方
+    board = Board()
+    board.load_fen(INITIAL_FEN)
+    board.apply_move(Move(7, 2, 4, 2))
+    assert board.side_to_move == "black"
+    src, _ = _parse_iccs(first["iccs"])
+    piece = board.piece_at(*src)
+    assert piece is not None and piece[0] == "black"
+
+    # ply 缺省 = len(moves)：同样重放到黑方走子
+    base = {
+        "initial_fen": INITIAL_FEN,
+        "moves": moves,
+        "start_depth": 4,
+        "max_depth": 4,
+        "time_limit_ms": 5000,
+    }
+    default_ply = _of_type(read_stream(client, dict(base)), "result")[-1]
+    assert default_ply["side_to_move"] == "black"
+    # ply=0 表示不重放，仍是红方走子
+    zero_ply = _of_type(read_stream(client, dict(base, ply=0)), "result")[-1]
+    assert zero_ply["side_to_move"] == "red"
+
+
+def test_analyze_bad_fen_returns_error_line(client):
+    messages = read_stream(client, {"fen": "not-a-fen"})
+    assert len(messages) == 1
+    assert messages[0]["type"] == "error"
+    assert messages[0]["message"]
+
+
+def test_analyze_invalid_move_returns_error_line(client):
+    messages = read_stream(
+        client,
+        {
+            "initial_fen": INITIAL_FEN,
+            "moves": [{"x1": 0, "y1": 9, "x2": 0, "y2": 8}],  # 黑车着法，红方轮走
+            "ply": 1,
+        },
+    )
+    assert messages[0]["type"] == "error"
+    assert messages[0]["message"]
+
+
+def test_analyze_requires_input(client):
+    messages = read_stream(client, {})
+    assert messages[0]["type"] == "error"
+
+
+def test_analyze_clamps_parameters(client):
+    # start_depth=99 被钳到 16 并不超过 max_depth；time_limit=999999 钳到 10000。
+    # 用 max_depth=6 限制时长，done 由 max_depth 触发（而非 time_limit）。
+    messages = read_stream(
+        client,
+        {
+            "fen": INITIAL_FEN,
+            "start_depth": 99,
+            "max_depth": 6,
+            "time_limit_ms": 999999,
+        },
+    )
+    results = _of_type(messages, "result")
+    assert results and results[-1]["depth"] <= 16
+    done = _of_type(messages, "done")[-1]
+    assert done["reason"] == "max_depth"
+
+
+def test_analyze_pv_has_at_most_two_moves(client):
+    messages = read_stream(
+        client,
+        {"fen": INITIAL_FEN, "start_depth": 4, "max_depth": 4, "time_limit_ms": 5000},
+    )
+    result = _of_type(messages, "result")[-1]
+    assert 1 <= len(result["pv"]) <= 2
+
+
+def test_analyze_done_reason(client):
+    messages = read_stream(
+        client,
+        {"fen": INITIAL_FEN, "start_depth": 4, "max_depth": 4, "time_limit_ms": 5000},
+    )
+    done = _of_type(messages, "done")[-1]
+    assert done["reason"] == "max_depth"
+    assert done["depth"] >= 4
+
+    # max_depth 未到、时限先到 → time_limit
+    messages = read_stream(
+        client,
+        {"fen": INITIAL_FEN, "start_depth": 4, "max_depth": 16, "time_limit_ms": 100},
+    )
+    done = _of_type(messages, "done")[-1]
+    assert done["reason"] == "time_limit"
+
+
+def test_analyze_concurrent_lock(app):
+    done_lines = []
+    failures = []
+
+    def worker():
+        try:
+            client = app.test_client()
+            messages = read_stream(
+                client,
+                {
+                    "fen": INITIAL_FEN,
+                    "start_depth": 4,
+                    "max_depth": 4,
+                    "time_limit_ms": 5000,
+                },
+            )
+            done_lines.append(_of_type(messages, "done")[-1])
+        except Exception as exc:  # noqa: BLE001 - 线程内异常带回主线程断言
+            failures.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not failures
+    assert len(done_lines) == 2
+    assert all(done["depth"] >= 4 for done in done_lines)

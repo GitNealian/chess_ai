@@ -24,7 +24,10 @@ Task 12（`analyze`/`warmup`）语义要点：
   **只有 `depth >= start_depth` 的完成层才产出**（4/5 层是垫脚石，让首个
   结果更快且复用 TT/PV 排序）；
 - 停旗与时限的检查在**层边界**：搜索进行中被其他线程置位 `stop` 的层结果
-  不可信（见 `search_depth` docstring），直接丢弃不产出；
+  不可信（见 `search_depth` docstring），直接丢弃不产出；**中断契约：
+  `stop` 一旦置位，直到生成器结束前不得复位**——内部按 `stop[0]` 判定，
+  复用同一停旗数组存在 TOCTOU 窗口；
+- `start_depth > max_depth` 时提前返回（不加载局面、不分配 `Ctx`/`Stack`）；
 - 每次 `analyze` 新建 `Ctx`（默认 40MB 置换表），生成器结束时显式释放；
 - `warmup` 用初始局面触发全链 JIT 编译并计入日志，`_WARMED` 保证幂等。
 """
@@ -204,11 +207,13 @@ def analyze(
     - `fen`：局面 FEN（棋盘段必填，其余段可省，默认红先）；
     - `start_depth`：首个产出层；小于 `ROOT_START_DEPTH` 时按 4 处理；
     - `max_depth`：搜索到的最深层，钳位到 `[0, MAX_ANALYSIS_DEPTH]`；
-      `start_depth > max_depth` 时无产出（参数校验由 API 层负责）；
+      `start_depth > max_depth` 时无产出（提前返回，不分配搜索对象）；
     - `time_limit_ms`：总时限；**首个产出层完成后才检查**，因此
       `time_limit_ms <= 0` 时仍会搜到并产出 `start_depth` 层，然后立即停止；
     - `stop`：可选的 `np.int8[1]` 停旗（与 `ctx.stop` 共享，可被其他线程
-      在 nogil 搜索中置位）。搜索中途被置位的层结果不可信，直接丢弃；
+      在 nogil 搜索中置位）。**中断契约：一旦置位，直到本生成器结束前
+      不得复位**；被中断的层不可信、不会产出（当前实现按 `stop[0]` 判定，
+      复用数组存在 TOCTOU 窗口）。搜索中途被置位的层结果直接丢弃；
       层边界置位则正常结束。该数组由调用方持有，`analyze` 只读不改。
 
     产出：`AnalysisResult` 迭代器。`Ctx` 为生成器局部变量，提前关闭
@@ -229,6 +234,9 @@ def analyze(
     start_depth = max(int(start_depth), C.ROOT_START_DEPTH)
     max_depth = max(0, min(int(max_depth), MAX_ANALYSIS_DEPTH))
     time_limit_ms = int(time_limit_ms)
+
+    if start_depth > max_depth:
+        return  # 无产出：不加载局面、不分配 Ctx/Stack
 
     st = load_position(fen)
     prepare(st)
