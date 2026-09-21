@@ -1,3 +1,5 @@
+export const INITIAL_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
+
 export const LABELS = {
   "red-K": "帅", "red-A": "仕", "red-B": "相", "red-N": "马",
   "red-R": "车", "red-C": "炮", "red-P": "兵",

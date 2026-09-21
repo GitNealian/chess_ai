@@ -68,4 +68,5 @@ export const api = {
   reviewQueue: () => http.get("/review/queue").then((r) => r.data),
   submitReview: (id, data) => http.post(`/review/${id}/submit`, data).then((r) => r.data),
   stats: () => http.get("/stats").then((r) => r.data),
+  validateMove: (data) => http.post("/engine/validate-move", data).then((r) => r.data),
 };
