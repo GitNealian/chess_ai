@@ -48,6 +48,7 @@ export async function analyzeStream(payload, { signal, onResult, onDone, onError
       buffer = lines.pop();
       lines.forEach(handleLine);
     }
+    buffer += decoder.decode();
     handleLine(buffer);
   } catch (err) {
     if (err?.name === "AbortError") return;

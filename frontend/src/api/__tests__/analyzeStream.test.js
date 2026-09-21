@@ -84,6 +84,22 @@ describe("analyzeStream", () => {
     expect(results.map((r) => r.depth)).toEqual([4]);
   });
 
+  it("最后一个 chunk 的半个中文字符由下一 chunk 补全", async () => {
+    const encoder = new TextEncoder();
+    const full = encoder.encode('{"type":"error","message":"中文"}\n');
+    mockFetchChunks([full.slice(0, full.length - 4), full.slice(full.length - 4)]);
+    const errors = [];
+    await analyzeStream({ fen: "x" }, { onError: (e) => errors.push(e.message) });
+    expect(errors).toEqual(["中文"]);
+  });
+
+  it("流结束时 flush 解码器内部残留的半序列", async () => {
+    const decodeSpy = vi.spyOn(TextDecoder.prototype, "decode");
+    mockFetchStream([JSON.stringify({ type: "result", depth: 6 })]);
+    await analyzeStream({ fen: "x" }, {});
+    expect(decodeSpy.mock.calls.some((args) => args.length === 0)).toBe(true);
+  });
+
   it("无法解析的行被跳过", async () => {
     mockFetchStream(["not json", JSON.stringify({ type: "result", depth: 3 })]);
     const results = [];

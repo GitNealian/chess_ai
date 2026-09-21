@@ -13,6 +13,7 @@
 - **间隔重复（SM-2）**：按错误次数与是否看答案评分，更新 `ease_factor` / `interval` / `repetitions` / `lapses`，到期自动进入今日复习队列。
 - **棋谱库管理**：分类、关键字筛选，显示掌握度（新 / 学习中 / 已掌握）与下次复习日期。
 - **规则引擎**：完整合法性判定（蹩马腿、塞象眼、炮翻山、将帅照面、过河兵、将死/困毙），规则单一真相源在后端。
+- **AI 局面分析**：打谱时逐层加深实时打分，红优/黑优评分 + 优势条 + 棋盘箭头标注双方一步推演（最新结果置顶）。
 
 ## 目录结构
 
@@ -28,10 +29,23 @@ chess/
 │   │   ├── move.py         # 着法表示
 │   │   ├── notation.py     # 中文记谱生成/解析
 │   │   └── parser.py       # 中文 / ICCS / PGN 解析
+│   ├── engine/             # numba 加速的 AI 引擎（位棋盘 + negaScout/PVS）
+│   │   ├── analysis.py     # 对外 analyze / warmup：迭代加深，每层 yield
+│   │   ├── search.py       # 置换表、杀手/历史启发、静态搜索、主搜索
+│   │   ├── movegen.py      # 着法生成、将军检测与合法性
+│   │   ├── position.py     # 局面状态与 make/unmake 增量维护
+│   │   ├── evaluate.py     # 中局 / 残局评估
+│   │   ├── bitboard.py     # 位棋盘原语（90 位打包为两个 int64）
+│   │   ├── tables.py       # 预生成基础表
+│   │   ├── eval_tables.py  # 自动生成的评估表（脚本提取自 Java 源码）
+│   │   ├── zobrist.py      # Zobrist 哈希（固定种子自生成）
+│   │   └── constants.py    # 常量与 site/(x,y) 坐标转换
 │   ├── srs.py              # SM-2 间隔重复调度
 │   ├── routes/
+│   │   ├── engine.py       # 引擎分析 NDJSON 流式接口
 │   │   ├── games.py        # 棋谱 CRUD、解析、PGN 导入、走法校验
 │   │   └── review.py       # 复习队列、提交、统计
+│   ├── scripts/            # 工具脚本（评估表提取、PGN 批量导入）
 │   ├── tests/              # pytest 测试
 │   └── requirements.txt
 ├── frontend/
@@ -51,6 +65,7 @@ chess/
 
 - Python 3.11+
 - Node.js 18+
+- 引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时；无跨进程磁盘缓存，重启进程需重新预热。
 
 ## 后端启动
 
@@ -76,12 +91,14 @@ npm run dev
 ## 测试
 
 ```bash
-# 后端
+# 后端（416 项：415 通过 + 1 跳过；其中引擎相关 253 项）
 cd backend && .venv/bin/python -m pytest
 
-# 前端
+# 前端（94 项）
 cd frontend && npx vitest run
 ```
+
+后端首次运行需等待 numba JIT 编译，整体约 40s；引擎预热耗时见「环境要求」。
 
 ## 生产构建（单端口 5000）
 
@@ -128,11 +145,19 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 | POST | `/api/games/parse` | 解析文本棋谱（预览，不入库） |
 | POST | `/api/games/import-pgn` | PGN 导入 |
 | POST | `/api/games/:id/check-move` | 校验某步是否为正确着法 |
+| POST | `/api/engine/analyze` | 局面分析（NDJSON 流式，逐层返回） |
 | GET | `/api/review/queue` | 今日复习队列 |
 | POST | `/api/review/:gameId/submit` | 提交复习结果并更新调度 |
 | GET | `/api/stats` | 掌握度统计 |
 
 错误统一返回 `{error, detail?, step?}`。
+
+`POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 2000，层边界软时限）。流内依次可能出现：
+
+- `{"type":"result", ...}`：每完成一层一条，含 `depth` / `score_red` / `score_stm` / `mate` / `pv`（每步含 `x1,y1,x2,y2` / `chinese` / `iccs`）/ `time_ms` / `nodes` / `side_to_move`；
+- `{"type":"ping", "elapsed_ms": ...}`：约每 0.3s 的保活行，客户端可忽略；
+- `{"type":"done", "depth":..., "time_ms":..., "reason":...}`：正常结束（`reason` 为 `max_depth` / `time_limit` / `stop`）；
+- `{"type":"error", "message":...}`：参数、FEN 或着法错误。
 
 ## 已知限制
 
@@ -145,6 +170,11 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 掌握度阈值：`repetitions >= 3` 视为「已掌握」，与 `/api/stats` 的 `mastered` 口径一致。
 - 棋谱列表对每条棋谱的复习信息为惰性加载（本地单用户规模下可接受）。
 - 单用户、无登录；数据存于 SQLite。
+- AI 分析目前只接入打谱页（`PracticeView`），其他视图未接入。
+- 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，单层最坏情况可能明显超出。
+- Zobrist 哈希为自生成（固定种子），与 Java 版哈希值不兼容，仅保证引擎内部自洽。
+- mate 分数不入置换表（修正 Java 继承缺陷，避免深层杀步失真）。
+- 黑方着法生成顺序与 Java 版略有差异（按 site 升序扫描），不影响棋力。
 
 ## 设计文档与实现计划
 
