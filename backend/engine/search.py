@@ -107,15 +107,24 @@ Task 11 的主搜索语义（与 Java 一致的关键点）：
   killer → MVV-LVA 吃子 → 历史分混排（排序分在生成时写入 `savePlayChess`）；
   首轮之后的排序由 `_select_best` 动态选择，二者行为一致，首轮差异只影响
   等分着法的尝试顺序、不改变最终分数；
-- 共享 TT 多线程写序：`_write_*`/`_copy_slot`/`set_root_tt` 均最后写 `tt_key`，
-  `get_tt` 以两次 key 一致复核条目；单线程行为不变，多线程仅把
-  「数据已更新、key 未更新」的极短窗口当作未命中（见 Lazy SMP 设计文档）；
+- 共享 TT 多线程写序（Lazy SMP）：`_write_*`/`_copy_slot`/`set_root_tt` 均最后写
+  `tt_key`（写序在 numba 生成的原生代码中成立），`get_tt` 用 `inline="never"`
+  的 `_key_unchanged` 复核两次 key 一致：函数体内先执行 `_tt_read_barrier()`
+  （`~{memory}` 空内联汇编），使 LLVM 无法把复核读与首读做 CSE。`inline="never"`
+  只约束 numba IR 层内联（LLVM 仍会内联本函数，实测）；屏障才是复核必然执行的
+  保证（编译产物中两处 `asm sideeffect`、`tt_key` load 由 2 次增至 4 次）。
+  该方案依赖 x86_64/TSO 的 store-store 顺序：写者先数据后 key、读者复核判定，
+  残余「数据已新、key 未更新」窗口为设计接受的棋力级风险；`_copy_slot` 的
+  读-改-写窗口更宽但也属同一风险等级。`tt_move` 消费点（`nega_scout` 排序）
+  已有 `legal_move` 校验，脏读不会触发非法着法；
 """
 
 import collections
 
 import numpy as np
-from numba import njit
+from llvmlite import ir
+from numba import njit, types
+from numba.extending import intrinsic
 
 from . import bitboard as _bitboard
 from . import constants as C
@@ -276,6 +285,39 @@ def _get_by_hash_item(ctx, play, kind, slot, depth, alpha, beta):
     return FAIL
 
 
+@intrinsic
+def _tt_read_barrier(typingctx):
+    """LLVM 内存屏障（空内联汇编 + `~{memory}` clobber），阻止访存跨点合并。
+
+    背景：读复核是纯函数，若 LLVM 把复核读与 `get_tt` 的首读做 CSE 合并，
+    复核会被整体消除；numba 0.67 下 `inline="never"` 只约束 numba IR 层内联、
+    不产生 LLVM `noinline`，内联与合并的实际发生与否取决于编译上下文。
+    函数体内的屏障使 LLVM 无法跨屏障合并访存，复核读因此必然执行。
+    """
+    sig = types.none()
+
+    def codegen(context, builder, sig, args):
+        fty = ir.FunctionType(ir.VoidType(), [])
+        asm = ir.InlineAsm(fty, "", "~{memory}", side_effect=True)
+        builder.call(asm, [])
+        return context.get_dummy_value()
+
+    return sig, codegen
+
+
+@njit(nogil=True, cache=False, inline="never")
+def _key_unchanged(ctx, play, kind, slot, key):
+    """复核 TT 槽 key 是否仍等于 `key`（多线程读保护）。
+
+    **`inline="never"` 与 `_tt_read_barrier()` 缺一不可**：`inline="never"`
+    只约束 numba IR 层内联，LLVM 仍会把本函数内联进 `get_tt`（numba 0.67
+    实测），两次 `tt_key` 读之间存在被 CSE 合并的理论通道；函数体内的内存
+    屏障使 LLVM 无法跨屏障合并访存，复核读因此必然执行。
+    """
+    _tt_read_barrier()
+    return ctx.tt_key[play, kind, slot] == key
+
+
 @njit(nogil=True, cache=False)
 def get_tt(ctx, play, zob32, zob64, depth, alpha, beta):
     """探测置换表，返回 `(hit, value, move)`。
@@ -286,9 +328,10 @@ def get_tt(ctx, play, zob32, zob64, depth, alpha, beta):
     `value`（仅当 `step 不存在或 step.depth < straight.depth` 时被 STRAIGHT
     覆盖）。`move == 0` 表示无着法。
 
-    共享 TT 无锁读复核：写者把 `tt_key` 放在最后写，读取前后各取一次 key，
-    两次不一致（或首读已不匹配，与单线程语义相同）即视为条目不完整并放弃
-    该槽，保守当作未命中；单线程下 key 不会被并发改动，行为不变。
+    共享 TT 无锁读复核：写者把 `tt_key` 放在最后写，取完数据后用
+    `_key_unchanged`（`inline="never"` + `_tt_read_barrier`，防 LLVM 把复核读
+    与首读做 CSE 消除）再读一次 key；不一致即视为条目不完整并放弃该槽，保守
+    当作未命中；单线程下 key 不会被并发改动，行为不变。
     """
     slot = zob32 & (ctx.tt_key.shape[2] - 1)
     value = 0
@@ -298,13 +341,15 @@ def get_tt(ctx, play, zob32, zob64, depth, alpha, beta):
     step_exists = ctx.tt_exists[play, SLOT_STEP, slot] and step_key == zob64
     if step_exists:
         step_value = _get_by_hash_item(ctx, play, SLOT_STEP, slot, depth, alpha, beta)
-        # 共享 TT 无锁读：写者 key 最后写；两次 key 不一致说明条目正在被
-        # 并发覆盖，放弃本槽（保守当作未命中）。
-        if step_key == ctx.tt_key[play, SLOT_STEP, slot]:
+        if _key_unchanged(ctx, play, SLOT_STEP, slot, step_key):
             if step_value != FAIL:
                 return True, step_value, ctx.tt_move[play, SLOT_STEP, slot]
             move = ctx.tt_move[play, SLOT_STEP, slot]
             value = ctx.tt_value[play, SLOT_STEP, slot]
+        else:
+            # 复核失败：条目正被并发覆盖，本槽视为不存在（也不再影响
+            # STRAIGHT 的 fallback value 覆盖判断）
+            step_exists = False
 
     straight_key = ctx.tt_key[play, SLOT_STRAIGHT, slot]
     straight_exists = ctx.tt_exists[play, SLOT_STRAIGHT, slot] and straight_key == zob64
@@ -312,7 +357,7 @@ def get_tt(ctx, play, zob32, zob64, depth, alpha, beta):
         straight_value = _get_by_hash_item(
             ctx, play, SLOT_STRAIGHT, slot, depth, alpha, beta
         )
-        if straight_key == ctx.tt_key[play, SLOT_STRAIGHT, slot]:
+        if _key_unchanged(ctx, play, SLOT_STRAIGHT, slot, straight_key):
             if straight_value != FAIL:
                 return True, straight_value, ctx.tt_move[play, SLOT_STRAIGHT, slot]
             move = ctx.tt_move[play, SLOT_STRAIGHT, slot]

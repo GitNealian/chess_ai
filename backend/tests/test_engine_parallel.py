@@ -117,9 +117,15 @@ def test_worker_context_rejects_foreign_stop():
 
 
 def test_concurrent_tt_read_write_stays_in_range():
-    """4 线程并发读写同一 TT：不崩、命中分数不越界。"""
+    """4 线程并发读写同一 TT：不崩、命中分数不越界、命中值归属正确。
+
+    覆盖边界：验证不崩溃、分数在合法域、命中时值确为自己写入的条目，并确认
+    复核没有过度保守到命中塌陷；受调度不确定性限制，本用例不直接证明
+    「无任何脏读」（残余窗口见 Lazy SMP 设计文档）。
+    """
     ctx = S.new_context(hash_size=1 << 12)
     errors = []
+    hits = []
 
     def hammer(seed):
         rng = np.random.default_rng(seed)
@@ -132,7 +138,10 @@ def test_concurrent_tt_read_write_stays_in_range():
                 S.set_tt(ctx, play, z32, z64, S.HASH_PV, value, 6, C.pack_move(0, 1))
                 hit, got, _ = S.get_tt(ctx, play, z32, z64, 6, -9999, 9999)
                 if hit:
-                    assert -20000 <= int(got) <= 20000
+                    got = int(got)
+                    assert -20000 <= got <= 20000
+                    assert got == value
+                    hits.append(1)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 
@@ -142,3 +151,4 @@ def test_concurrent_tt_read_write_stays_in_range():
     for t in threads:
         t.join()
     assert errors == []
+    assert sum(hits) > 0

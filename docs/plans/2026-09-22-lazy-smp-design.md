@@ -56,10 +56,11 @@ def new_worker_context(ctx, stop):
 
 多线程共享 TT 的核心风险：写者更新条目时读者读到「新 key + 旧数据」或「旧 key + 新数据」的组合。本项目选择无锁 + 写序保护（不引入锁、不加原子操作）：
 
-- **写侧（先数据后 key）**：`_write_straight`、`_write_step`、`_copy_slot`、`set_root_tt` 调整为先写 `type/value/depth/move/exists`，**最后写 `tt_key`**。
-- **读侧（复核 key）**：`get_tt` 在 STEP/STRAIGHT 槽读到匹配 key、并取完数据后，再读一次 `tt_key`；两次不一致（说明写者正在覆盖）即视为未命中。
-- **残余窗口**：写者数据已更新、key 尚未更新的极短窗口内，读者可能仍以旧 key 匹配到新数据。该窗口内读到的分数/深度/着法仍是合法域内的值（不越界、不崩溃），影响是棋力级而非正确性级；此风险接受并记录在案。
-- 实现后需审计 TT 着法 `tt_move` 的所有使用点（排序优先尝试等）是否都有合法性/列表校验，确保「错值」不会直接触发非法着法。
+- **运行前提 x86_64/TSO**：方案依赖 x86_64 的 store-store 顺序（TSO）——写者按程序顺序提交数据与 key，读者仍可能在数据已可见时读到旧 key，这正是下述残余窗口的物理来源。移植到弱内存序架构（如 ARM）前需重新评估，必要时加 release/acquire 栅栏或直接升级为 payload 打包。
+- **写侧（先数据后 key）**：`_write_straight`、`_write_step`、`_copy_slot`、`set_root_tt` 调整为先写 `type/value/depth/move/exists`，**最后写 `tt_key`**；写序在 numba 生成的原生代码中成立。
+- **读侧（复核 key）**：`get_tt` 在 STEP/STRAIGHT 槽读到匹配 key、并取完数据后，调用 `_key_unchanged` 再读一次 `tt_key`；不一致即视为未命中（STEP 复核失败时该槽按不存在处理，不再抑制 STRAIGHT 的 fallback value 覆盖）。复核函数标记 `inline="never"`（约束 numba IR 层内联），且函数体内先执行 `_tt_read_barrier()`——由 numba `intrinsic` 生成的 `~{memory}` 空内联汇编。实测 numba 0.67 下 `inline="never"` 不会产生 LLVM `noinline`，LLVM 仍会把复核内联进 `get_tt`（复核是纯函数，两次 `tt_key` 读之间无写该数组的调用，存在被 CSE 合并的理论通道）；内存屏障使 LLVM 不能跨屏障合并访存，复核读在编译产物中必然保留。修复提交的 IR 证据：`get_tt` 主函数出现 2 处 `asm sideeffect`，`tt_key` 的 load 由 2 次（仅首读，修复前 a3bd3ee）增至 4 次（2 首读 + 2 复核）。
+- **残余窗口**：写者数据已更新、key 尚未更新的极短窗口内，读者可能仍以旧 key 匹配到新数据。该窗口内读到的分数/深度/着法仍是合法域内的值（不越界、不崩溃），影响是棋力级而非正确性级；`_copy_slot` 的「读源槽 → 写目标槽」读-改-写组合窗口更宽（复制期间源槽与目标槽都可能被并发覆盖），但也属同一风险等级；此风险接受并记录在案。
+- **tt_move 审计（已完成）**：TT 着法的唯一消费点是 `nega_scout` 内的着法排序（先置 head[0] 再参与后续排序），前置 `_movegen.legal_move` 合法性校验，脏读不会触发非法着法。
 - 不加锁理由：每个节点都发生多次 TT 读写，锁开销会直接吃掉并行收益；Stockfish 系的无锁 TT 亦采用同思路。
 
 ## 停旗与中断
