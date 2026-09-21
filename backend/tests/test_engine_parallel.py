@@ -271,3 +271,24 @@ def test_single_thread_starts_no_workers():
         n.startswith("engine-helper-") or n == "engine-stop-forward" for n in names
     )
     list(it)
+
+
+def test_warmup_is_thread_safe(monkeypatch):
+    from engine import warmup
+
+    monkeypatch.setattr(A, "_WARMED", False)
+    errors = []
+
+    def run():
+        try:
+            warmup()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert A._WARMED is True

@@ -184,6 +184,8 @@ _WARMUP_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - -
 
 _WARMED = False
 
+_WARMUP_LOCK = threading.Lock()
+
 
 @dataclasses.dataclass
 class AnalysisResult:
@@ -409,7 +411,7 @@ def analyze(
 
 
 def warmup():
-    """用初始局面触发全链 JIT 编译（幂等）。
+    """用初始局面触发全链 JIT 编译（幂等、并发安全）。
 
     覆盖 `search_depth` 链、`init_root` 的外部默认签名、`clean_tt` 与
     `history_decay`。参数类型与正式调用保持一致（Python int），避免 numba
@@ -418,20 +420,23 @@ def warmup():
     global _WARMED
     if _WARMED:
         return
-    from . import search as _search
+    with _WARMUP_LOCK:
+        if _WARMED:
+            return
+        from . import search as _search
 
-    t0 = time.perf_counter()
-    st = load_position(_WARMUP_FEN)
-    prepare(st)
-    ctx = _search.new_context()
-    stack = _search.new_stack()
-    stack.zob32[0] = st.zob[0]
-    stack.zob64[0] = st.zob[1]
-    # 三参默认签名（外部 Python 调用）与内部调用会各自特化，都要触发。
-    _search.init_root(st, ctx, stack)
-    _search.search_depth(st, ctx, stack, C.ROOT_START_DEPTH)
-    _search.clean_tt(ctx)
-    _search.history_decay(ctx)
-    del ctx, stack, st
-    _WARMED = True
-    _log.debug("engine warmup 完成：%.2fs", time.perf_counter() - t0)
+        t0 = time.perf_counter()
+        st = load_position(_WARMUP_FEN)
+        prepare(st)
+        ctx = _search.new_context()
+        stack = _search.new_stack()
+        stack.zob32[0] = st.zob[0]
+        stack.zob64[0] = st.zob[1]
+        # 三参默认签名（外部 Python 调用）与内部调用会各自特化，都要触发。
+        _search.init_root(st, ctx, stack)
+        _search.search_depth(st, ctx, stack, C.ROOT_START_DEPTH)
+        _search.clean_tt(ctx)
+        _search.history_decay(ctx)
+        del ctx, stack, st
+        _WARMED = True
+        _log.debug("engine warmup 完成：%.2fs", time.perf_counter() - t0)
