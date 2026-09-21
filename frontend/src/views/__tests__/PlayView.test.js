@@ -355,4 +355,21 @@ describe("PlayView", () => {
     await flushPromises();
     expect(analyzeStream).not.toHaveBeenCalled();
   });
+
+  it("getGame 未返回时卸载，resolve 后不发起 probe 与分析", async () => {
+    route.query = { game: "7", ply: "1" };
+    let resolveGame;
+    api.getGame.mockReturnValue(new Promise((r) => { resolveGame = r; }));
+    const wrapper = mountView();
+    wrapper.unmount();
+    resolveGame({
+      id: 7,
+      name: "x",
+      initial_fen: INITIAL_FEN,
+      moves: [{ x1: 1, y1: 2, x2: 4, y2: 2 }],
+    });
+    await flushPromises();
+    expect(api.validateMove).not.toHaveBeenCalled();
+    expect(analyzeStream).not.toHaveBeenCalled();
+  });
 });
