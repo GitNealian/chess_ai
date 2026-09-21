@@ -327,3 +327,47 @@ def test_concurrent_requests_are_serialized(app):
     first_end, first_duration = completions[0]
     second_end, second_duration = completions[1]
     assert second_end - first_end >= min(first_duration, second_duration) * 0.5
+
+
+def test_analyze_threads_parameter(client):
+    messages = read_stream(
+        client,
+        {
+            "fen": INITIAL_FEN,
+            "start_depth": 4,
+            "max_depth": 4,
+            "time_limit_ms": 5000,
+            "threads": 2,
+        },
+    )
+    assert _of_type(messages, "done")[0]["reason"] == "max_depth"
+
+
+def test_analyze_threads_clamped_and_optional(client):
+    # 越界夹逼不报错；非法类型与缺失时回退自动（测试环境 env=1）
+    for threads in (999, "abc", None):
+        payload = {
+            "fen": INITIAL_FEN,
+            "start_depth": 4,
+            "max_depth": 4,
+            "time_limit_ms": 5000,
+        }
+        if threads is not None:
+            payload["threads"] = threads
+        messages = read_stream(client, payload)
+        assert _of_type(messages, "result")
+
+
+def test_analyze_threads_infinity_falls_back(client):
+    # JSON `Infinity` 解析为 float('inf')：不得抛错（_clamp_int 需捕获 OverflowError）
+    messages = read_stream(
+        client,
+        {
+            "fen": INITIAL_FEN,
+            "start_depth": 4,
+            "max_depth": 4,
+            "time_limit_ms": 5000,
+            "threads": float("inf"),
+        },
+    )
+    assert _of_type(messages, "result")

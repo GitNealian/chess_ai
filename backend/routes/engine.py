@@ -22,6 +22,9 @@
   「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（done 的
   `reason` 仍为 `time_limit`）；不保证在时限到达时立即返回；客户端断开后
   则在下一个 ping 周期内停止搜索并释放锁。
+- 请求体可选 `threads`（1..16，越界夹逼；缺省自动：环境变量
+  `ENGINE_THREADS` > `min(cpu-1, 8)`）；`analyze` 内部 Lazy SMP，
+  响应字段不变。
 
 另外提供 `POST /api/engine/validate-move`：无状态走子校验（重放
 `initial_fen + moves` 后校验一步），供「人人对弈」页面调用。该接口只做
@@ -35,13 +38,13 @@ import threading
 import time
 
 import numpy as np
-from flask import Blueprint, Response, jsonify, request, stream_with_context
-
 from chess_engine.board import INITIAL_FEN, Board
 from chess_engine.move import Move
 from chess_engine.notation import move_to_chinese
+from engine import analysis as engine_analysis
 from engine import analyze
 from engine import constants as EC
+from flask import Blueprint, Response, jsonify, request, stream_with_context
 
 engine_bp = Blueprint("engine", __name__)
 
@@ -57,6 +60,8 @@ MIN_DEPTH = EC.ROOT_START_DEPTH  # 4
 MAX_DEPTH = 16
 MIN_TIME_LIMIT_MS = 100
 MAX_TIME_LIMIT_MS = 30000
+MIN_THREADS = 1
+MAX_THREADS = engine_analysis.MAX_THREADS
 
 # 重放着法步数上限（防超长序列放大 CPU）；正常对局数百步足够。
 MAX_REPLAY_MOVES = 1024
@@ -80,7 +85,7 @@ def _clamp_int(raw, default, minimum, maximum):
         return default
     try:
         value = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     return max(minimum, min(maximum, value))
 
@@ -302,6 +307,12 @@ def analyze_position():
                 MIN_TIME_LIMIT_MS,
                 MAX_TIME_LIMIT_MS,
             )
+            threads = _clamp_int(
+                data.get("threads"),
+                None,
+                MIN_THREADS,
+                MAX_THREADS,
+            )
             base_board = Board().load_fen(fen)
         except Exception as exc:  # noqa: BLE001 - 兜底转流内 error 行
             yield _encode({"type": "error", "message": str(exc)})
@@ -318,6 +329,7 @@ def analyze_position():
                     max_depth=max_depth,
                     time_limit_ms=time_limit_ms,
                     stop=stop,
+                    threads=threads,
                 ):
                     events.put(("result", result))
                 events.put(("done", None))
