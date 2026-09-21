@@ -186,8 +186,39 @@ describe("PlayView", () => {
       move: { x1: 7, y1: 9, x2: 6, y2: 7 },
     });
     expect(wrapper.find('[data-test="game-over"]').text()).toContain("红方胜");
+    expect(wrapper.find('[data-test="game-over"]').text()).toContain("如需续下可点悔棋");
     await clickCells(wrapper, [0, 0]);
     expect(api.validateMove).toHaveBeenCalledTimes(1);
+  });
+
+  it("从中间步载入时还原被将军提示", async () => {
+    route.query = { game: "7", ply: "1" };
+    api.getGame.mockResolvedValue({
+      id: 7,
+      name: "x",
+      initial_fen: INITIAL_FEN,
+      moves: [
+        { x1: 1, y1: 2, x2: 4, y2: 2 },
+        { x1: 7, y1: 9, x2: 6, y2: 7 },
+      ],
+    });
+    api.validateMove.mockResolvedValue({
+      legal: true,
+      fen: INITIAL_FEN,
+      side_to_move: "black",
+      chinese: "炮八平五",
+      check: true,
+      game_over: null,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(api.validateMove).toHaveBeenCalledWith({
+      initial_fen: INITIAL_FEN,
+      moves: [],
+      move: { x1: 1, y1: 2, x2: 4, y2: 2 },
+    });
+    expect(wrapper.find('[data-test="turn"]').text()).toContain("被将军");
   });
 
   it("加载失败显示错误并可重试", async () => {

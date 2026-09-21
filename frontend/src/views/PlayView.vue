@@ -17,7 +17,10 @@
       <div class="side">
         <p v-if="!session.state.gameOver" class="turn" data-test="turn">{{ turnText }}</p>
         <p v-if="session.state.hint" class="warn" data-test="hint">{{ session.state.hint }}</p>
-        <p v-if="session.state.gameOver" class="result" data-test="game-over">{{ resultText }}</p>
+        <p v-if="session.state.gameOver" class="result" data-test="game-over">
+          {{ resultText }}
+          <span class="result-hint">如需续下可点悔棋</span>
+        </p>
         <div class="controls">
           <button data-test="undo" :disabled="!session.state.moves.length" @click="undo">悔棋</button>
           <button data-test="flip" @click="flipped = !flipped">翻转棋盘</button>
@@ -294,7 +297,7 @@ async function load() {
         Math.min(Number(route.query.ply) || 0, game.moves.length)
       );
       session.reset({ initial_fen: game.initial_fen, moves: game.moves.slice(0, ply) });
-      if (ply > 0 && ply === game.moves.length) {
+      if (ply > 0) {
         await probePositionState(game, ply);
       }
     } else {
@@ -344,6 +347,13 @@ onUnmounted(() => {
   margin: 0;
   font-weight: 600;
   color: #b91c1c;
+}
+
+.result-hint {
+  margin-left: 6px;
+  font-weight: 400;
+  font-size: 13px;
+  color: #6b5b45;
 }
 
 .controls {

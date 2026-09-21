@@ -71,7 +71,6 @@ function analysisItems(wrapper) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  push.mockClear();
   route.params = { id: "1" };
   streams = [];
   analyzeStream.mockImplementation((payload, handlers = {}) => {
