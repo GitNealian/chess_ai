@@ -24,8 +24,9 @@ from . import constants as C
 from . import eval_tables as T
 from .analysis import END_GAME
 
-# attach_score 定义在 position.py（njit，base_score 增量与全量共用），此处再导出。
-from .position import attach_score
+# attach_score / get_phase 定义在 position.py（njit，base_score 增量与全量共用），
+# attach_score 此处再导出。
+from .position import attach_score, get_phase
 
 __all__ = [
     "attach_score",
@@ -461,7 +462,7 @@ def evaluate(st, play, endgame=False):
     """
     if endgame:
         return evaluate_endgame(st, play)
-    if st.side_to_move[1] == END_GAME:
+    if get_phase(st) == END_GAME:
         return evaluate_endgame(st, play)
     score = np.empty(2, dtype=np.int32)
     score[C.RED] = st.base_score[C.RED]

@@ -17,8 +17,9 @@ Java 参考：
 - mask_* 一律打包成 [lo, hi] 两个 int64，site 0-63 在 lo、64-89 在 hi。
 
 Task 8 扩展（打包存储，见 State docstring）：
-- `piece_scores`（int32[15]，角色 0-14）存放在 `base_score[2:17]`；
-- `phase`（int8[1]）存放在 `side_to_move[1]`；
+- `piece_scores`（int32[15]，角色 0-14）存放在
+  `base_score[_PIECE_SCORES_OFFSET:_BASE_SCORE_STORAGE_LEN]`；
+- `phase`（int8[1]）存放在 `side_to_move[_PHASE_SLOT]`；
 - 二者以 property 视图暴露，njit 热路径按索引访问：numba 按值传递
   namedtuple，直接新增数组字段会让 perft 等热路径传参开销显著上升。
 """
@@ -39,12 +40,22 @@ __all__ = [
     "attach_score",
     "full_base_score",
     "full_zobrist",
+    "get_phase",
     "load_position",
     "make_move",
     "move_is_capture",
     "pseudo_moves",
     "unmake_move",
 ]
+
+# Task 8 打包存储布局（`State` docstring）：
+# base_score[0]/[1] = 红/黑总分，base_score[_PIECE_SCORES_OFFSET + role] = 动态子力；
+# side_to_move[_SIDE_TO_MOVE_SLOT] = 走子方，side_to_move[_PHASE_SLOT] = 阶段。
+_BASE_SCORE_STORAGE_LEN = 17
+_PIECE_SCORES_OFFSET = 2
+_SIDE_TO_MOVE_SLOT = 0
+_PHASE_SLOT = 1
+_SIDE_TO_MOVE_STORAGE_LEN = 2
 
 
 class State(
@@ -56,12 +67,14 @@ class State(
 ):
     """局面状态。
 
-    Task 8 起 `base_score`（int32[17]）尾部承载动态子力、`side_to_move`
-    （int8[2]）尾部承载阶段标志：
+    Task 8 起 `base_score`（int32[_BASE_SCORE_STORAGE_LEN]）尾部承载动态子力、
+    `side_to_move`（int8[2]）尾部承载阶段标志：
 
-    - `base_score[0]`/`[1]`：红/黑 base_score；`base_score[2 + role]`
-      （role 0-14）：当前使用的动态子力值（初值 = `constants.PIECE_SCORES`）；
-    - `side_to_move[0]`：走子方；`side_to_move[1]`：阶段（0=中局、1=残局）。
+    - `base_score[0]`/`[1]`：红/黑 base_score；
+      `base_score[_PIECE_SCORES_OFFSET + role]`（role 0-14）：当前使用的
+      动态子力值（初值 = `constants.PIECE_SCORES`）；
+    - `side_to_move[_SIDE_TO_MOVE_SLOT]`：走子方；
+      `side_to_move[_PHASE_SLOT]`：阶段（0=中局、1=残局）。
 
     `piece_scores`/`phase` 是这两个区间的 property 视图；njit 按值传递
     namedtuple，直接新增数组字段会显著抬高 perft 等热路径的传参开销，故打包。
@@ -72,12 +85,12 @@ class State(
     @property
     def piece_scores(self):
         """动态子力值（int32[15]，索引 = 角色 0..14）。"""
-        return self.base_score[2:17]
+        return self.base_score[_PIECE_SCORES_OFFSET:_BASE_SCORE_STORAGE_LEN]
 
     @property
     def phase(self):
         """阶段标志（int8[1]，0=中局、1=残局）。"""
-        return self.side_to_move[1:2]
+        return self.side_to_move[_PHASE_SLOT : _PHASE_SLOT + 1]
 
 
 # Java Tools.parseFEN 的起始索引表：按字符扫描顺序"取当前值再自增"。
@@ -171,11 +184,12 @@ def load_position(fen):
         mask_all=mask_all,
         mask_personal=mask_personal,
         mask_role=mask_role,
-        base_score=np.zeros(17, dtype=np.int32),
+        base_score=np.zeros(_BASE_SCORE_STORAGE_LEN, dtype=np.int32),
         zob=np.array([z32, z64], dtype=np.int64),
-        # [0] = 走子方；[1] = 阶段标志（Task 8，初值中局 0）
-        side_to_move=np.array([side_to_move, 0], dtype=np.int8),
+        # [_SIDE_TO_MOVE_SLOT] = 走子方；[_PHASE_SLOT] = 阶段（Task 8，初值中局 0）
+        side_to_move=np.zeros(_SIDE_TO_MOVE_STORAGE_LEN, dtype=np.int8),
     )
+    st.side_to_move[_SIDE_TO_MOVE_SLOT] = np.int8(side_to_move)
     # Task 8：动态子力值初值 = 静态子力表副本（phase=0 时与 Java parseFEN 等价）。
     st.piece_scores[:] = C.PIECE_SCORES
     # 与 Java Tools.parseFEN 一致：baseScore 在解析时即初始化为"子力 + 位置"分。
@@ -198,15 +212,24 @@ def _attach_score_phase(phase, role, site):
 
 
 @njit(cache=True)
+def get_phase(st):
+    """当前阶段标志（0=中局、1=残局），即 `side_to_move[_PHASE_SLOT]`。
+
+    njit 中不能访问 `State.phase` property，热路径统一经此 helper 读取。
+    """
+    return st.side_to_move[_PHASE_SLOT]
+
+
+@njit(cache=True)
 def attach_score(st, role, site):
     """棋子位置价值分，按阶段选中局或残局位置表（Task 8）。
 
     对应 Java `EvaluateComputeMiddleGame/EndGame.chessAttachScore`：阶段 0
-    用 MIDDLE 表、阶段 1 用 END 表；阶段值取自 `side_to_move[1]`（即
+    用 MIDDLE 表、阶段 1 用 END 表；阶段值取自 `get_phase(st)`（即
     `st.phase` 视图，njit 中不能访问 property）。role 1-7 红方、8-14 黑方，
     红表 = 黑表行镜像。阶段常量见 `analysis`。
     """
-    return _attach_score_phase(st.side_to_move[1], role, site)
+    return _attach_score_phase(get_phase(st), role, site)
 
 
 def full_base_score(st):
@@ -217,14 +240,16 @@ def full_base_score(st):
     """
     red = 0
     black = 0
-    scores = st.base_score  # [2 + role] = 动态子力
-    phase = int(st.side_to_move[1])
+    scores = st.base_score  # [_PIECE_SCORES_OFFSET + role] = 动态子力
+    phase = int(get_phase(st))
     for site in range(90):
         piece = int(st.board[site])
         if piece == 0:
             continue
         role = int(C.PIECE_ROLES[piece])
-        value = int(scores[2 + role]) + int(_attach_score_phase(phase, role, site))
+        value = int(scores[_PIECE_SCORES_OFFSET + role]) + int(
+            _attach_score_phase(phase, role, site)
+        )
         if piece < C.RED_PIECES_START:
             black += value
         else:
@@ -277,12 +302,12 @@ def make_move(st, m):
     lo_dest, hi_dest = bitboard.site_mask(dest)
 
     # 分数增量（Java L86-98，Task 8 起使用动态子力与当前阶段位置表）
-    phase = st.side_to_move[1]
+    phase = get_phase(st)
     st.base_score[play] -= _attach_score_phase(phase, role, src)
     st.base_score[play] += _attach_score_phase(phase, role, dest)
     if dest_chess != 0:
         dest_play = 1 - play
-        st.base_score[dest_play] -= st.base_score[2 + dest_role]
+        st.base_score[dest_play] -= st.base_score[_PIECE_SCORES_OFFSET + dest_role]
         st.base_score[dest_play] -= _attach_score_phase(phase, dest_role, dest)
 
     # 掩码（Java L87-98）
@@ -352,11 +377,11 @@ def unmake_move(st, m, undo):
     lo_dest, hi_dest = bitboard.site_mask(dest)
 
     # 分数还原
-    phase = st.side_to_move[1]
+    phase = get_phase(st)
     st.base_score[play] -= _attach_score_phase(phase, role, dest)
     st.base_score[play] += _attach_score_phase(phase, role, src)
     if dest_chess != 0:
-        st.base_score[1 - play] += st.base_score[2 + dest_role]
+        st.base_score[1 - play] += st.base_score[_PIECE_SCORES_OFFSET + dest_role]
         st.base_score[1 - play] += _attach_score_phase(phase, dest_role, dest)
 
     # 掩码还原：走子方由目标格迁回源格

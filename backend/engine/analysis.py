@@ -13,8 +13,9 @@ Java 参考：
   `BLACKPLAYSIGN`、红兵传 `REDPLAYSIGN`，即 `getAttackChessesNum(己方)`；
   迁移笔记 5.2 写作"对方攻击子数"系笔误，此处以 Java 源码为准。
 - `st.piece_scores`/`st.phase` 由 `position.State` 以视图 property 提供
-  （分别打包在 `base_score[2:17]`、`side_to_move[1]`），此处可直接读写；
-  njit 热路径按索引访问，理由见 `position` 模块 docstring。
+  （分别打包在 `base_score[_PIECE_SCORES_OFFSET:...]`、
+  `side_to_move[_PHASE_SLOT]`），此处可直接读写；njit 热路径按索引或
+  `position.get_phase` 访问，理由见 `position` 模块 docstring。
 """
 
 import numpy as np
