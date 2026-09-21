@@ -5,22 +5,11 @@
 """
 
 import os
-import threading
 
-import numpy as np
-
-from engine import analyze
 from engine import analysis as A
-from engine import constants as C
-from engine import search as S
 
 INITIAL = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
 MATE_IN_ONE = "3R5/5k1N1/9/9/9/9/9/9/9/4K1R2 w - - 0 1"
-
-
-def _auto_threads():
-    cpus = os.cpu_count() or 1
-    return max(1, min(cpus - 1, 8))
 
 
 def test_resolve_threads_explicit_wins(monkeypatch):
@@ -33,17 +22,41 @@ def test_resolve_threads_env(monkeypatch):
     assert A._resolve_threads(None) == 3
 
 
-def test_resolve_threads_auto(monkeypatch):
+def test_resolve_threads_auto_boundaries(monkeypatch):
     monkeypatch.delenv("ENGINE_THREADS", raising=False)
-    assert A._resolve_threads(None) == _auto_threads()
+    for cpus, expected in ((1, 1), (4, 3), (64, 8)):
+        monkeypatch.setattr(os, "cpu_count", lambda cpus=cpus: cpus)
+        assert A._resolve_threads(None) == expected
 
 
-def test_resolve_threads_clamped():
+def test_resolve_threads_auto_cpu_count_unknown(monkeypatch):
+    monkeypatch.delenv("ENGINE_THREADS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: None)
+    assert A._resolve_threads(None) == 1
+
+
+def test_resolve_threads_clamped(monkeypatch):
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
     assert A._resolve_threads(0) == 1
     assert A._resolve_threads(999) == A.MAX_THREADS
 
 
+def test_resolve_threads_env_edges(monkeypatch):
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    cases = (("", 7), ("0", 1), ("-3", 1), ("999", A.MAX_THREADS), ("3.5", 7))
+    for raw, expected in cases:
+        monkeypatch.setenv("ENGINE_THREADS", raw)
+        assert A._resolve_threads(None) == expected
+
+
 def test_resolve_threads_bad_value_falls_back(monkeypatch):
     monkeypatch.setenv("ENGINE_THREADS", "abc")
-    assert A._resolve_threads(None) == _auto_threads()
-    assert A._resolve_threads("xyz") == _auto_threads()
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    assert A._resolve_threads(None) == 7
+    assert A._resolve_threads("xyz") == 7
+
+
+def test_resolve_threads_non_finite_float_falls_back(monkeypatch):
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    assert A._resolve_threads(float("inf")) == 7
+    assert A._resolve_threads(float("nan")) == 7

@@ -38,7 +38,6 @@ Task 12（`analyze`/`warmup`）语义要点：
 import dataclasses
 import logging
 import os
-import threading
 import time
 
 import numpy as np
@@ -153,7 +152,7 @@ def _resolve_threads(threads):
     """解析并行线程数：显式参数 > 环境变量 `ENGINE_THREADS` > 自动。
 
     自动值 = `max(1, min(cpu_count - 1, 8))`；显式值夹逼到 `[1, MAX_THREADS]`；
-    非法（非整数）值一律回退自动。
+    不可转换为整数的值回退自动；浮点/布尔按 `int()` 语义转换。
     """
     if threads is None:
         raw = os.environ.get("ENGINE_THREADS")
@@ -166,7 +165,7 @@ def _resolve_threads(threads):
         return max(1, min((os.cpu_count() or 1) - 1, _AUTO_THREADS_MAX))
     try:
         threads = int(threads)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return max(1, min((os.cpu_count() or 1) - 1, _AUTO_THREADS_MAX))
     return max(1, min(threads, MAX_THREADS))
 
