@@ -86,4 +86,25 @@ describe("ChessBoard", () => {
     const wrapper = mount(ChessBoard, { props: { position: { pieces: [] } } });
     expect(wrapper.findAll("[data-arrow]").length).toBe(0);
   });
+
+  it("flipped 时坐标上下左右镜像", () => {
+    const normal = mount(ChessBoard, { props: { position } });
+    const flipped = mount(ChessBoard, { props: { position, flipped: true } });
+    const normalTarget = normal.find("[data-cell='0-0']").attributes();
+    const flippedTarget = flipped.find("[data-cell='8-9']").attributes();
+    expect(flippedTarget.x).toBe(normalTarget.x);
+    expect(flippedTarget.y).toBe(normalTarget.y);
+  });
+
+  it("flipped 时点击仍发出真实坐标", async () => {
+    const wrapper = mount(ChessBoard, { props: { position, flipped: true } });
+    await wrapper.find("[data-cell='0-0']").trigger("click");
+    expect(wrapper.emitted("cell-click")[0]).toEqual([0, 0]);
+  });
+
+  it("flipped 时楚河汉界文字旋转 180 度", () => {
+    const wrapper = mount(ChessBoard, { props: { position, flipped: true } });
+    const transform = wrapper.find("text").attributes("transform");
+    expect(transform).toContain("rotate(180");
+  });
 });

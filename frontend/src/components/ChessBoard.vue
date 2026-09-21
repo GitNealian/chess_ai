@@ -6,6 +6,7 @@ const props = defineProps({
   selected: { type: Object, default: null },
   legalTargets: { type: Array, default: () => [] },
   arrows: { type: Array, default: () => [] },
+  flipped: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["cell-click"]);
@@ -15,8 +16,16 @@ const gap = 56;
 const W = margin * 2 + 8 * gap;
 const H = margin * 2 + 9 * gap;
 
-const cellX = (x) => margin + x * gap;
-const cellY = (y) => margin + (9 - y) * gap;
+const mirrorX = (x) => (props.flipped ? 8 - x : x);
+const mirrorY = (y) => (props.flipped ? 9 - y : y);
+
+const cellX = (x) => margin + mirrorX(x) * gap;
+const cellY = (y) => margin + (9 - mirrorY(y)) * gap;
+
+const riverTransform = (x) =>
+  props.flipped
+    ? `rotate(180 ${cellX(x)} ${(cellY(4) + cellY(5)) / 2 + 10})`
+    : undefined;
 
 const uid = Math.random().toString(36).slice(2, 8);
 
@@ -140,6 +149,7 @@ function onSvgClick(event) {
     <text
       :x="cellX(1.5)"
       :y="(cellY(4) + cellY(5)) / 2 + 10"
+      :transform="riverTransform(1.5)"
       text-anchor="middle"
       font-size="26"
       fill="#7a5c3e"
@@ -149,6 +159,7 @@ function onSvgClick(event) {
     <text
       :x="cellX(6.5)"
       :y="(cellY(4) + cellY(5)) / 2 + 10"
+      :transform="riverTransform(6.5)"
       text-anchor="middle"
       font-size="26"
       fill="#7a5c3e"
