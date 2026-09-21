@@ -5,6 +5,7 @@
 """
 
 import os
+import signal
 import threading
 import time
 
@@ -230,7 +231,7 @@ def test_parallel_start_failure_cleans_up(monkeypatch):
         stop=stop,
         threads=4,
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="start failed"):
         next(it)
     time.sleep(0.05)
     leftovers = [
@@ -306,7 +307,28 @@ def test_warmup_is_thread_safe(monkeypatch):
     assert len(calls) == 1
 
 
-def test_warmup_lock_reset_helper_replaces_lock():
+def test_warmup_lock_reset_helper_replaces_lock(monkeypatch):
     old = A._WARMUP_LOCK
+    monkeypatch.setattr(A, "_WARMUP_LOCK", old, raising=False)
     A._reset_warmup_lock_after_fork()
     assert A._WARMUP_LOCK is not old
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="需要 fork")
+def test_warmup_lock_usable_in_forked_child(monkeypatch):
+    """父进程持锁时 fork：子进程 warmup 不应死锁（register_at_fork 护栏）。"""
+    monkeypatch.setattr(A, "_WARMED", False)
+    A._WARMUP_LOCK.acquire()
+    pid = os.fork()
+    if pid == 0:  # 子进程
+        signal.alarm(60)  # 单独运行需真实 JIT（实测 ~20s），留足余量防误杀
+        try:
+            from engine import warmup
+
+            warmup()
+        except BaseException:  # noqa: BLE001
+            os._exit(1)
+        os._exit(0)
+    A._WARMUP_LOCK.release()
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
