@@ -22,14 +22,19 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
     gameOver: null,
   });
   let firstSide = "red";
+  let pending = false;
 
   function rebuild() {
     let board = fenToPieces(state.initialFen);
     for (const move of state.moves) board = applyMove(board, move);
     state.pieces = board;
     state.sideToMove = state.moves.length % 2 === 0 ? firstSide : opposite(firstSide);
+    const last = state.moves[state.moves.length - 1];
+    state.check = Boolean(last?.check);
+    state.gameOver = last?.gameOver || null;
   }
 
+  // 无参调用回到标准开局；载入棋谱时不带 check/gameOver 快照
   function reset({ initial_fen, moves } = {}) {
     state.initialFen = initial_fen || INITIAL_FEN;
     firstSide = sideFromFen(state.initialFen);
@@ -43,35 +48,46 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
 
   async function submit(move) {
     state.hint = "";
+    const snapshot = state.moves.length;
+    pending = true;
     let data;
     try {
       data = await api.validateMove({
         initial_fen: state.initialFen,
-        moves: state.moves.map(({ chinese, ...rest }) => rest),
+        moves: state.moves.map(({ chinese, check, gameOver, ...rest }) => rest),
         move,
       });
     } catch (err) {
-      state.hint =
-        err?.response?.data?.detail || err?.response?.data?.error || "校验失败，请重试";
+      if (state.moves.length === snapshot) {
+        state.hint =
+          err?.response?.data?.detail || err?.response?.data?.error || "校验失败，请重试";
+      }
       return false;
+    } finally {
+      pending = false;
     }
+    if (state.moves.length !== snapshot) return false;
     if (!data.legal) {
       state.hint = data.reason || "着法不合法";
       return false;
     }
-    state.moves.push({ ...move, chinese: data.chinese || "" });
+    state.moves.push({
+      ...move,
+      chinese: data.chinese || "",
+      check: Boolean(data.check),
+      gameOver: data.game_over || null,
+    });
     state.selected = null;
-    state.check = Boolean(data.check);
-    state.gameOver = data.game_over || null;
     rebuild();
     return true;
   }
 
   async function click(x, y) {
-    if (state.gameOver) return false;
+    if (pending || state.gameOver) return false;
     const piece = state.pieces.find((item) => item.x === x && item.y === y);
     if (state.selected) {
       if (piece && piece.side === state.sideToMove) {
+        state.hint = "";
         const same = state.selected.x === x && state.selected.y === y;
         state.selected = same ? null : { x, y };
         return false;
@@ -90,8 +106,6 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
     state.moves.pop();
     state.selected = null;
     state.hint = "";
-    state.check = false;
-    state.gameOver = null;
     rebuild();
   }
 

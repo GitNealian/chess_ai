@@ -51,7 +51,7 @@ describe("createPlaySession", () => {
       move: { x1: 1, y1: 2, x2: 4, y2: 2 },
     });
     expect(session.state.moves).toEqual([
-      { x1: 1, y1: 2, x2: 4, y2: 2, chinese: "炮八平五" },
+      { x1: 1, y1: 2, x2: 4, y2: 2, chinese: "炮八平五", check: false, gameOver: null },
     ]);
     expect(session.state.sideToMove).toBe("black");
     expect(session.state.selected).toBeNull();
@@ -119,5 +119,121 @@ describe("createPlaySession", () => {
     expect(session.state.moves).toHaveLength(2);
     expect(session.state.sideToMove).toBe("red");
     expect(session.state.pieces).toHaveLength(32);
+  });
+
+  it("走子后棋子真的移动到目标格", async () => {
+    api.validateMove.mockResolvedValue(legalResponse());
+    const session = createPlaySession({});
+    await session.click(1, 2);
+    await session.click(4, 2);
+    expect(session.state.pieces.some((p) => p.x === 4 && p.y === 2)).toBe(true);
+    expect(session.state.pieces.some((p) => p.x === 1 && p.y === 2)).toBe(false);
+  });
+
+  it("黑先局面由 initial_fen 推导行棋方", () => {
+    const blackFirst = INITIAL_FEN.replace(" w ", " b ");
+    const session = createPlaySession({ initial_fen: blackFirst });
+    expect(session.state.sideToMove).toBe("black");
+    expect(session.state.pieces).toHaveLength(32);
+  });
+
+  it("续下奇数步时为黑方走棋", () => {
+    const moves = [{ x1: 1, y1: 2, x2: 4, y2: 2 }];
+    const session = createPlaySession({ initial_fen: INITIAL_FEN, moves });
+    expect(session.state.sideToMove).toBe("black");
+  });
+
+  it("payload 会剥离 chinese/check/gameOver 字段", async () => {
+    api.validateMove.mockResolvedValue(legalResponse());
+    const moves = [
+      { x1: 1, y1: 2, x2: 4, y2: 2, chinese: "炮八平五", check: false, gameOver: null },
+    ];
+    const session = createPlaySession({ initial_fen: INITIAL_FEN, moves });
+    await session.click(7, 9);
+    await session.click(6, 7);
+    const payload = api.validateMove.mock.calls[0][0];
+    expect(payload.moves).toEqual([{ x1: 1, y1: 2, x2: 4, y2: 2 }]);
+  });
+
+  it("悔棋恢复上一层的将军与终局状态", async () => {
+    api.validateMove
+      .mockResolvedValueOnce(legalResponse({ check: true }))
+      .mockResolvedValueOnce(
+        legalResponse({ check: false, game_over: { winner: "red", reason: "checkmate" } })
+      );
+    const session = createPlaySession({});
+    await session.click(1, 2);
+    await session.click(4, 2);
+    expect(session.state.check).toBe(true);
+    expect(session.state.gameOver).toBeNull();
+
+    await session.click(7, 9);
+    await session.click(6, 7);
+    expect(session.state.gameOver).toEqual({ winner: "red", reason: "checkmate" });
+
+    session.undo();
+    expect(session.state.gameOver).toBeNull();
+    expect(session.state.check).toBe(true);
+  });
+
+  it("终局后仍可悔棋解除锁定并继续", async () => {
+    api.validateMove.mockResolvedValue(
+      legalResponse({ game_over: { winner: "red", reason: "checkmate" } })
+    );
+    const session = createPlaySession({});
+    await session.click(1, 2);
+    await session.click(4, 2);
+    expect(session.state.gameOver).not.toBeNull();
+    await session.click(7, 9);
+    expect(session.state.selected).toBeNull();
+
+    session.undo();
+    await session.click(7, 2);
+    expect(session.state.selected).toEqual({ x: 7, y: 2 });
+  });
+
+  it("提交飞行中重复点击只发一次请求", async () => {
+    let resolve;
+    api.validateMove.mockImplementation(
+      () => new Promise((r) => { resolve = r; })
+    );
+    const session = createPlaySession({});
+    await session.click(1, 2);
+    const first = session.click(4, 2);
+    const second = session.click(4, 2);
+    resolve(legalResponse());
+    await first;
+    await second;
+    expect(api.validateMove).toHaveBeenCalledTimes(1);
+    expect(session.state.moves).toHaveLength(1);
+  });
+
+  it("提交飞行中悔棋会丢弃过期响应", async () => {
+    api.validateMove.mockResolvedValueOnce(legalResponse());
+    const session = createPlaySession({});
+    await session.click(1, 2);
+    await session.click(4, 2);
+    expect(session.state.moves).toHaveLength(1);
+
+    let resolve;
+    api.validateMove.mockImplementation(
+      () => new Promise((r) => { resolve = r; })
+    );
+    await session.click(7, 9);
+    const pending = session.click(6, 7);
+    session.undo();
+    resolve(legalResponse({ chinese: "马8进7" }));
+    await pending;
+    expect(session.state.moves).toHaveLength(0);
+  });
+
+  it("切换选中时清除非法提示", async () => {
+    api.validateMove.mockResolvedValue({ legal: false, reason: "该棋子不能这样走" });
+    const session = createPlaySession({});
+    await session.click(1, 2);
+    await session.click(1, 3);
+    expect(session.state.hint).toBe("该棋子不能这样走");
+    await session.click(0, 0);
+    expect(session.state.hint).toBe("");
   });
 });
