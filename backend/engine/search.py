@@ -1,4 +1,4 @@
-"""置换表、杀手着法与历史启发表（Task 9）。
+"""置换表、杀手着法与历史启发表（Task 9）；静态搜索（Task 10）。
 
 Java 参考：
 - `TranspositionTable.java`：双槽置换表（STEP 深度替换槽 + STRAIGHT 覆盖槽）、
@@ -6,7 +6,12 @@ Java 参考：
   `setTranZobristOverride`（L264-283）、`setTranZobristOverrideByStep`（L287-315）、
   `setTranZobrist`（L319-330）、`getTranZobrist`（L335-360）、
   `getTranZobristByHashItem`（L361-391）；
-- `CHistoryHeuritic.java`（L11-35）与 `AICoreHandler.moveEnd` L143-147 的 `/512`。
+- `CHistoryHeuritic.java`（L11-35）与 `AICoreHandler.moveEnd` L143-147 的 `/512`；
+- Task 10：`SearchEngine.java` L163-239（`quiescSearch`）、L240-260（`isLongChk`）、
+  L267-273（`isDraw`）、L115-118（`fineEvaluate`）、L123-125（`roughEvaluate`）、
+  `ChessQuiescMove.java` L44-64（`savePlayChess` 的 good/general 分类）、
+  `MoveNodesSort.java` L44-80（`quiescNext` 消费顺序）与 L215-228
+  （`getSortAfterBestMove` 选择排序）、`NodeLink.java`（链结构）。
 
 约定与差异：
 - Java 表是 `HashItem[2][TRANZOBRISTSIZE][2]`（第 3 维 0=`OVERRIDESTEP`、
@@ -28,6 +33,22 @@ Java 参考：
   负数行为不同，故显式处理）。
 
 `Ctx` 中 `stop`/`nodes` 是搜索层（Task 10）的共享标志与节点计数。
+
+Task 10 的静态搜索语义（与 Java 一致的关键点）：
+- 搜索栈 `Stack` 第 ply 层保存的是**走到该局面后**的 zobrist（对应 Java
+  NodeLink 在 `moveOperate` 之后取 `transTable.boardZobrist*`），`is_eat`
+  是该步是否吃子，`chk` 由搜索层设置（该局面是否被将）；
+- `is_checked` 参数表示**当前 ply 层局面是否被将**（上一步走完后的状态）；
+  递归时传 `in_check(st, 1-play)`，即对手（子节点走子方）是否被将，
+  对应 Java L219 的 `chessQuiescMove.checked(1-play)`；
+- 长将回溯范围是 `ply-1 .. 1`：Java 从 `lastLink.getLastLink()` 开始，
+  遇到根节点（`getMoveNode()==null`）终止，根节点不参与比较；
+- `is_draw` 只看双方攻击子（兵卒车马炮）数量是否为 0，**不检查是否吃子**
+  （任务书中"上一步吃子"为误述，此处以 Java L267-273 为准）。即使当前
+  未被将也先判和（Java 顺序：王被吃 → 长将 → 和棋 → 深度保险丝）；
+- 非被将时只消费 good 吃子（`destScore >= 150`）并结束；被将时 good 之后
+  继续消费 general（低价值吃子 + 全部非吃子），对应 `quiescNext` L44-80；
+- `ply >= 64` 返回 `fine_evaluate`，递归深度有界（栈长 68）。
 """
 
 import collections
@@ -36,6 +57,10 @@ import numpy as np
 from numba import njit
 
 from . import constants as C
+from . import eval_tables as _eval_tables
+from . import evaluate as _evaluate
+from . import movegen as _movegen
+from . import position as _position
 
 __all__ = [
     "FAIL",
@@ -43,16 +68,27 @@ __all__ = [
     "HASH_BETA",
     "HASH_PV",
     "MATE_BOUND",
+    "MAX_PLY",
+    "QUIESC_GOOD_SCORE",
     "SLOT_STEP",
     "SLOT_STRAIGHT",
+    "STACK_SIZE",
     "Ctx",
     "N",
+    "Stack",
     "clean_tt",
+    "fine_evaluate",
+    "gen_quiesc_moves",
     "get_tt",
     "history_bonus",
     "history_decay",
     "history_score",
+    "is_draw",
+    "is_long_check",
     "new_context",
+    "new_stack",
+    "quiesc_search",
+    "rough_evaluate",
     "set_root_tt",
     "set_tt",
     "update_killer",
@@ -324,3 +360,279 @@ def history_decay(ctx):
 def history_score(ctx, piece_index, dest):
     """读取历史分（`getCHistory`）：`history[PIECE_KINDS[piece_index]][dest]`。"""
     return ctx.history[C.PIECE_KINDS[piece_index], dest]
+
+
+# --------------------------------------------------------------------------
+# Task 10：搜索栈与静态搜索
+# --------------------------------------------------------------------------
+
+# 搜索栈层数：ply 上限 64，递归中最深写 ply+1 = 65。
+STACK_SIZE = 68
+
+# `ChessQuiescMove.savePlayChess` 的 goodMoveList 门槛：目标"子力 + 位置"分。
+QUIESC_GOOD_SCORE = 150
+
+# 静态搜索深度保险丝（Java L183 `lastLink.depth >= 64`）。
+MAX_PLY = 64
+
+Stack = collections.namedtuple("Stack", "zob32 zob64 is_eat chk pv")
+Stack.__doc__ = """静态搜索栈（对应 Java NodeLink 链 + Task 11 的三角 PV 表）。
+
+- `zob32`/`zob64`：int64[68]，第 ply 层局面的 zobrist（走到该局面**之后**）；
+- `is_eat`：int8[68]，走到该局面的着法是否吃子（长将回溯的截断条件）；
+- `chk`：int8[68]，该局面是否被将（由搜索层设置）；
+- `pv`：int32[68][68] 三角 PV 表（Task 11 使用）。
+
+ply 0 为根节点（Java 根 NodeLink 的 depth=0，moveNode 为空、不参与长将回溯）。
+"""
+
+
+def new_stack():
+    """新建全零搜索栈。"""
+    return Stack(
+        zob32=np.zeros(STACK_SIZE, dtype=np.int64),
+        zob64=np.zeros(STACK_SIZE, dtype=np.int64),
+        is_eat=np.zeros(STACK_SIZE, dtype=np.int8),
+        chk=np.zeros(STACK_SIZE, dtype=np.int8),
+        pv=np.zeros((STACK_SIZE, STACK_SIZE), dtype=np.int32),
+    )
+
+
+@njit(cache=True)
+def fine_evaluate(st, play, ctx):
+    """精确评估（`fineEvaluate` L115-118）：计节点数后按阶段分派 `evaluate`。"""
+    ctx.nodes[0] += 1
+    return _evaluate.evaluate(st, play)
+
+
+@njit(cache=True)
+def rough_evaluate(st, play):
+    """粗评估（`roughEvaluate` L123-125）：`base_score[play] - base_score[1-play]`。"""
+    return st.base_score[play] - st.base_score[1 - play]
+
+
+@njit(cache=True)
+def is_long_check(stack, ply):
+    """长将检测（`isLongChk` L240-260）。
+
+    仅当第 ply 层被将时检测：从 `ply-1` 向根回溯到第 1 层（根节点不参与，
+    对应 Java `getMoveNode()==null` 终止），先比较 zobrist（相等即长将），
+    再判断该层着法是否吃子（吃子截断）。
+    """
+    if stack.chk[ply] == 0:
+        return False
+    t = ply - 1
+    while t > 0:
+        if stack.zob32[t] == stack.zob32[ply] and stack.zob64[t] == stack.zob64[ply]:
+            return True
+        if stack.is_eat[t] != 0:
+            return False
+        t -= 1
+    return False
+
+
+@njit(cache=True)
+def is_draw(st, stack, ply):
+    """和棋判定（`isDraw` L267-273）：双方攻击子（兵卒车马炮）数都为 0。
+
+    `st.attack_def[play, 0]` 即 Java `getAttackChessesNum`（`indexOfAttackAndDefense`
+    中兵/卒与车马炮同为攻击子，士/象/将为防御子）；只依赖局面，不检查是否吃子。
+    `stack`/`ply` 为调用一致性保留（Java 签名带 `lastLink` 但未使用其内容）。
+    """
+    return st.attack_def[C.RED, 0] == 0 and st.attack_def[C.BLACK, 0] == 0
+
+
+@njit(cache=True)
+def _select_best(buf, score, index, count):
+    """从 `index..count-1` 选出最大 score 与 `index` 原地交换（严格大于）。
+
+    复刻 `MoveNodesSort.getSortAfterBestMove` L215-228：等分保留靠前者。
+    """
+    best = index
+    for i in range(index + 1, count):
+        if score[i] > score[best]:
+            best = i
+    if best != index:
+        tm = buf[index]
+        buf[index] = buf[best]
+        buf[best] = tm
+        ts = score[index]
+        score[index] = score[best]
+        score[best] = ts
+
+
+@njit(cache=True)
+def gen_quiesc_moves(
+    st, ctx, play, is_checked, good_buf, good_score, general_buf, general_score
+):
+    """生成静态搜索的 good/general 着法列表，返回 `(good_n, general_n)`。
+
+    复刻 `ChessQuiescMove.savePlayChess` L44-64 与 `MoveNodesSort.quiescNext`
+    L44-80：
+
+    - good：目标格"子力 + 位置"分 `>= 150` 的吃子，排序分 =
+      `destScore - srcScore`（都用静态子力表 `EvaluateCompute.chessBaseScore`）；
+    - general：其余吃子，排序分 = `history[PIECE_KINDS[src]][dest]`；
+    - 被将时（`is_checked`）：在 general 末尾追加全部非吃子（
+      `genNopMoveList` 语义），排序分同样取历史分。
+    """
+    tmp = np.empty(_movegen.MAX_MOVES, dtype=np.int32)
+    n = _movegen.gen_captures_into(st, play, tmp)
+    good_n = 0
+    general_n = 0
+    for i in range(n):
+        m = tmp[i]
+        src = C.move_src(m)
+        dest = C.move_dest(m)
+        dest_chess = st.board[dest]
+        dest_score = _eval_tables.BASE_SCORES[dest_chess] + _position.attach_score(
+            st, C.PIECE_ROLES[dest_chess], dest
+        )
+        src_chess = st.board[src]
+        if dest_score >= QUIESC_GOOD_SCORE:
+            if good_n >= good_buf.shape[0]:
+                continue
+            src_score = _eval_tables.BASE_SCORES[src_chess] + _position.attach_score(
+                st, C.PIECE_ROLES[src_chess], src
+            )
+            good_buf[good_n] = m
+            good_score[good_n] = dest_score - src_score
+            good_n += 1
+        else:
+            if general_n >= general_buf.shape[0]:
+                continue
+            general_buf[general_n] = m
+            general_score[general_n] = ctx.history[C.PIECE_KINDS[src_chess], dest]
+            general_n += 1
+    if is_checked:
+        n = _movegen.gen_moves_into(st, play, tmp, False)
+        for i in range(n):
+            if general_n >= general_buf.shape[0]:
+                break
+            m = tmp[i]
+            dest = C.move_dest(m)
+            if st.board[dest] != 0:
+                continue
+            src = C.move_src(m)
+            general_buf[general_n] = m
+            general_score[general_n] = ctx.history[C.PIECE_KINDS[st.board[src]], dest]
+            general_n += 1
+    return good_n, general_n
+
+
+@njit(cache=True)
+def quiesc_search(st, ctx, stack, alpha, beta, ply, play, is_checked):
+    """静态搜索（`quiescSearch` L163-239），返回 `play` 视角分数。
+
+    按 Java 顺序：王被吃（`-(MAX_SCORE-ply)`）→ 记录 `chk` → 长将（8888）
+    → 和棋（0）→ 深度保险丝（`fine_evaluate`）→ 非被将 stand-pat 并尝试
+    beta 截断 → 依次搜索 good/general 着法（自将被过滤，beta 截断），
+    非被将只搜 good；无合法着法（且非被将无 stand-pat）返回 `-(MAX_SCORE-ply)`。
+
+    递归时子节点 `is_checked` 传 `in_check(st, 1-play)`（对手是否被将），
+    与 Java L219 一致。
+    """
+    if st.all_chess[C.PIECE_STARTS[play]] == C.NOTHING:
+        return -(C.MAX_SCORE - ply)
+    if is_checked:
+        stack.chk[ply] = 1
+    else:
+        stack.chk[ply] = 0
+    if is_long_check(stack, ply):
+        return C.LONG_CHECK_SCORE
+    if is_draw(st, stack, ply):
+        return C.DRAW_SCORE
+    if ply >= MAX_PLY:
+        return fine_evaluate(st, play, ctx)
+
+    best = -C.MAX_SCORE - 2
+    is_move = False
+    if not is_checked:
+        # Java：非被将时 isMove 先置 true，即使无着法也返回 stand-pat
+        is_move = True
+        v = fine_evaluate(st, play, ctx)
+        if v > best:
+            if v >= beta:
+                return v
+            best = v
+            if v > alpha:
+                alpha = v
+
+    good_buf = np.empty(_movegen.MAX_MOVES, dtype=np.int32)
+    good_score = np.empty(_movegen.MAX_MOVES, dtype=np.int32)
+    general_buf = np.empty(_movegen.MAX_MOVES, dtype=np.int32)
+    general_score = np.empty(_movegen.MAX_MOVES, dtype=np.int32)
+    good_n, general_n = gen_quiesc_moves(
+        st, ctx, play, is_checked, good_buf, good_score, general_buf, general_score
+    )
+
+    i = 0
+    while i < good_n:
+        _select_best(good_buf, good_score, i, good_n)
+        m = good_buf[i]
+        i += 1
+        undo = _position.make_move(st, m)
+        if _movegen.in_check(st, play):
+            _position.unmake_move(st, m, undo)
+            continue
+        stack.zob32[ply + 1] = st.zob[0]
+        stack.zob64[ply + 1] = st.zob[1]
+        stack.is_eat[ply + 1] = 1
+        v = -quiesc_search(
+            st,
+            ctx,
+            stack,
+            -beta,
+            -alpha,
+            ply + 1,
+            1 - play,
+            _movegen.in_check(st, 1 - play),
+        )
+        _position.unmake_move(st, m, undo)
+        is_move = True
+        if v > best:
+            best = v
+            if v > alpha:
+                alpha = v
+            if v >= beta:
+                return best
+
+    if is_checked:
+        i = 0
+        while i < general_n:
+            _select_best(general_buf, general_score, i, general_n)
+            m = general_buf[i]
+            i += 1
+            is_eat = st.board[C.move_dest(m)] != 0
+            undo = _position.make_move(st, m)
+            if _movegen.in_check(st, play):
+                _position.unmake_move(st, m, undo)
+                continue
+            stack.zob32[ply + 1] = st.zob[0]
+            stack.zob64[ply + 1] = st.zob[1]
+            if is_eat:
+                stack.is_eat[ply + 1] = 1
+            else:
+                stack.is_eat[ply + 1] = 0
+            v = -quiesc_search(
+                st,
+                ctx,
+                stack,
+                -beta,
+                -alpha,
+                ply + 1,
+                1 - play,
+                _movegen.in_check(st, 1 - play),
+            )
+            _position.unmake_move(st, m, undo)
+            is_move = True
+            if v > best:
+                best = v
+                if v > alpha:
+                    alpha = v
+                if v >= beta:
+                    return best
+
+    if is_move:
+        return best
+    return -(C.MAX_SCORE - ply)
