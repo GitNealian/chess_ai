@@ -65,7 +65,8 @@ chess/
 
 - Python 3.11+
 - Node.js 18+
-- 引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时；无跨进程磁盘缓存，重启进程需重新预热。
+- 引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时。大部分引擎模块启用 numba 磁盘缓存（`backend/engine/__pycache__/`），编译产物可跨进程复用；但**搜索模块（`search.py`）因 numba 0.67「递归 + 跨函数调用 + 磁盘缓存」缺陷不使用磁盘缓存**，因此**每个新进程首次分析仍需 ~20-35s 预热**。建议部署后等预热线程完成（或先发一个浅层分析请求）再对外服务；gunicorn 多 worker 各自独立预热。
+- numba 缓存目录会随源码变更 / numba 升级累积历史编译产物而增长。运行一段时间后可安全删除 `backend/engine/__pycache__/`，代价是下次冷启动重新编译（即上述预热耗时）。
 
 ## 后端启动
 
@@ -91,14 +92,14 @@ npm run dev
 ## 测试
 
 ```bash
-# 后端（416 项：415 通过 + 1 跳过；其中引擎相关 253 项）
+# 后端（417 项：416 通过 + 1 跳过；其中引擎相关 254 项）
 cd backend && .venv/bin/python -m pytest
 
 # 前端（94 项）
 cd frontend && npx vitest run
 ```
 
-后端首次运行需等待 numba JIT 编译，整体约 40s；引擎预热耗时见「环境要求」。
+后端首次运行需等待 numba JIT 编译（搜索模块不使用磁盘缓存，每个新进程都要重新编译），整体约 40s；引擎预热耗时见「环境要求」。
 
 ## 生产构建（单端口 5000）
 
@@ -152,7 +153,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 
 错误统一返回 `{error, detail?, step?}`。
 
-`POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 2000，层边界软时限）。流内依次可能出现：
+`POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 2000，层边界软时限：按「上一层耗时 × 1.5」外推下一层预算，通常完成时间不超过其 ~1.5 倍）。流内依次可能出现：
 
 - `{"type":"result", ...}`：每完成一层一条，含 `depth` / `score_red` / `score_stm` / `mate` / `pv`（每步含 `x1,y1,x2,y2` / `chinese` / `iccs`）/ `time_ms` / `nodes` / `side_to_move`；
 - `{"type":"ping", "elapsed_ms": ...}`：约每 0.3s 的保活行，客户端可忽略；
@@ -171,7 +172,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 棋谱列表对每条棋谱的复习信息为惰性加载（本地单用户规模下可接受）。
 - 单用户、无登录；数据存于 SQLite。
 - AI 分析目前只接入打谱页（`PracticeView`），其他视图未接入。
-- 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，单层最坏情况可能明显超出。
+- 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，完成一层后按「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（通常完成时间不超过其 ~1.5 倍）；若下一层实际耗时相对上一层暴涨，仍可能超出。
 - Zobrist 哈希为自生成（固定种子），与 Java 版哈希值不兼容，仅保证引擎内部自洽。
 - mate 分数不入置换表（修正 Java 继承缺陷，避免深层杀步失真）。
 - 黑方着法生成顺序与 Java 版略有差异（按 site 升序扫描），不影响棋力。

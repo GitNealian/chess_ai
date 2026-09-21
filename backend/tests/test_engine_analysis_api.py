@@ -3,6 +3,7 @@
 覆盖：
 - `analyze` 逐层产出且 depth 单调递增、只在 `>= start_depth` 时产出；
 - 时间上限与 stop 停旗语义（中断层丢弃、已完成层照常产出）；
+- 时间预算外推：上一层耗时 * 1.5 预判超支时不再开始下一层；
 - 红方视角换算、mate 步数上报、PV 为独立拷贝；
 - `warmup` 幂等且第二次近似零开销。
 
@@ -169,6 +170,36 @@ def test_interrupted_layer_is_dropped_and_no_further_depth(monkeypatch):
     assert results[0].score_stm != 999999
     assert calls == [4, 5, 6, 7]
     assert stop[0] == 1
+
+
+def test_time_budget_lookahead_stops_before_next_layer(monkeypatch):
+    """时间预算外推：上一层耗时 * 1.5 预判超支时，不再开始下一层。
+
+    用可控的假 `search_depth`（每层耗时递增，不依赖真实搜索速度）构造：
+    第 7 层结束时累计耗时仍小于 `time_limit_ms`（旧实现会继续发起第 8 层，
+    并在该层结束后才超时截停），但 `elapsed + last_layer * 1.5` 已超预算，
+    因此第 8 层不应被发起。
+    """
+    from engine import analyze
+    from engine import search as S
+
+    # 每层模拟耗时（秒）：第 7 层后触发外推（0.64 + 0.55*1.5 > 1.0）
+    layer_costs = {4: 0.02, 5: 0.02, 6: 0.05, 7: 0.55, 8: 2.0}
+    calls = []
+
+    def fake_search_depth(st, ctx, stack, depth):
+        calls.append(depth)
+        time.sleep(layer_costs.get(depth, 2.0))
+        return np.int64(0), np.int64(0)
+
+    monkeypatch.setattr(S, "search_depth", fake_search_depth)
+    t0 = time.perf_counter()
+    results = list(analyze(INITIAL, start_depth=6, max_depth=16, time_limit_ms=1000))
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    assert [r.depth for r in results] == [6, 7]
+    assert calls == [4, 5, 6, 7]  # 第 8 层未被发起（旧实现会发起后才超时）
+    assert elapsed_ms < 2000  # 未落入第 8 层的 2s 假耗时
 
 
 def test_generator_close_releases_position():

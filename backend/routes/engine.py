@@ -18,9 +18,10 @@
   队列转发结果；主生成器每 `PING_INTERVAL_S` 秒至少 yield 一次保活行，
   让 WSGI 服务器在写失败时能及时 `close` 生成器（真实客户端断开检测的
   关键）；生成器 `finally` 置位停旗，配合 nogil 搜索在毫秒级退出。
-- `time_limit_ms` 是**层边界软时限**：只保证在某一层搜索结束后按累计耗时
-  停止，不保证在时限到达时立即返回；客户端断开后则在下一个 ping 周期内
-  停止搜索并释放锁。
+- `time_limit_ms` 是**层边界软时限**：完成一层后按累计耗时检查，并按
+  「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（done 的
+  `reason` 仍为 `time_limit`）；不保证在时限到达时立即返回；客户端断开后
+  则在下一个 ping 周期内停止搜索并释放锁。
 """
 
 import json
@@ -179,7 +180,9 @@ def _done_reason(last, max_depth, time_limit_ms, stop):
         return "time_limit"
     if stop[0] != 0:
         return "stop"
-    return "max_depth"
+    # last.depth < max_depth 且累计耗时未到时限，只可能是「时间预算外推」
+    # 预判下一层超支而提前停止（见 analysis.analyze），故仍为 time_limit。
+    return "time_limit"
 
 
 @engine_bp.post("/analyze")

@@ -27,6 +27,9 @@ Task 12（`analyze`/`warmup`）语义要点：
   不可信（见 `search_depth` docstring），直接丢弃不产出；**中断契约：
   `stop` 一旦置位，直到生成器结束前不得复位**——内部按 `stop[0]` 判定，
   复用同一停旗数组存在 TOCTOU 窗口；
+- 时限为**层边界软时限 + 时间预算外推**：完成一层后，除检查累计耗时外，
+  还按"上一层耗时 × 1.5"预估下一层；预判超支即不再开始下一层，把单层
+  耗时不可预估的风险收敛到"最后一层最多约为上一层的 1.5 倍"；
 - `start_depth > max_depth` 时提前返回（不加载局面、不分配 `Ctx`/`Stack`）；
 - 每次 `analyze` 新建 `Ctx`（默认 40MB 置换表），生成器结束时显式释放；
 - `warmup` 用初始局面触发全链 JIT 编译并计入日志，`_WARMED` 保证幂等。
@@ -208,8 +211,11 @@ def analyze(
     - `start_depth`：首个产出层；小于 `ROOT_START_DEPTH` 时按 4 处理；
     - `max_depth`：搜索到的最深层，钳位到 `[0, MAX_ANALYSIS_DEPTH]`；
       `start_depth > max_depth` 时无产出（提前返回，不分配搜索对象）；
-    - `time_limit_ms`：总时限；**首个产出层完成后才检查**，因此
-      `time_limit_ms <= 0` 时仍会搜到并产出 `start_depth` 层，然后立即停止；
+    - `time_limit_ms`：层边界软时限。**首个产出层完成后才检查**；此后每完成
+      一层，除累计耗时外还按"上一层耗时 × 1.5"外推下一层预算，预判超支即
+      停止，因此 done 通常不超过 `time_limit_ms` 的 ~1.5 倍（单层实际耗时
+      相对上一层暴涨时仍可能超出）。`time_limit_ms <= 0` 时仍会搜到并产出
+      `start_depth` 层，然后立即停止；
     - `stop`：可选的 `np.int8[1]` 停旗（与 `ctx.stop` 共享，可被其他线程
       在 nogil 搜索中置位）。**中断契约：一旦置位，直到本生成器结束前
       不得复位**；被中断的层不可信、不会产出（当前实现按 `stop[0]` 判定，
@@ -250,12 +256,15 @@ def analyze(
     t0 = time.perf_counter()
     try:
         depth = C.ROOT_START_DEPTH
+        last_layer_ms = 0
         while depth <= max_depth:
             if stop[0] != 0:
                 break
+            layer_t0 = time.perf_counter()
             score, _ = _search.search_depth(st, ctx, stack, depth)
             if stop[0] != 0:
                 break  # 中断层结果不可信，丢弃
+            last_layer_ms = int((time.perf_counter() - layer_t0) * 1000)
             score = int(score)
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
             if depth >= start_depth:
@@ -271,6 +280,12 @@ def analyze(
                     side_to_move=side,
                 )
                 if elapsed_ms >= time_limit_ms or depth >= max_depth:
+                    break
+                # 若上一层耗时 * 1.5 后仍会超出预算，则不再开始下一层
+                # （避免单层耗时远超 time_limit，把 done 收敛到约 1.5 倍内）
+                if last_layer_ms > 0 and (
+                    elapsed_ms + last_layer_ms * 1.5 > time_limit_ms
+                ):
                     break
             depth += 1
     finally:
