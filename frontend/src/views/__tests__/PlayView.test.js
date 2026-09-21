@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import PlayView from "../PlayView.vue";
-import { api } from "../../api";
+import { analyzeStream, api } from "../../api";
 
 const { route, push } = vi.hoisted(() => ({
   route: { query: {} },
@@ -51,9 +51,24 @@ function button(wrapper, test) {
   return wrapper.find(`[data-test="${test}"]`);
 }
 
+let streams = [];
+
+function emitResult(index, payload) {
+  streams[index].handlers.onResult(payload);
+}
+
+function emitDone(index) {
+  streams[index].handlers.onDone({});
+}
+
 describe("PlayView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    streams = [];
+    analyzeStream.mockImplementation((payload, handlers = {}) => {
+      streams.push({ payload, handlers });
+      return Promise.resolve();
+    });
     route.query = {};
     api.validateMove.mockResolvedValue({
       legal: true,
@@ -238,5 +253,59 @@ describe("PlayView", () => {
     expect(api.getGame).toHaveBeenCalledWith("7");
     expect(wrapper.find('[data-test="turn"]').text()).toContain("红方走棋");
     expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(2);
+  });
+
+  it("进入页面自动分析当前局面", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(analyzeStream).toHaveBeenCalledTimes(1);
+    expect(streams[0].payload.initial_fen).toBe(INITIAL_FEN);
+    expect(streams[0].payload.moves).toEqual([]);
+  });
+
+  it("走子后重新分析并展示分数与箭头", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    expect(analyzeStream).toHaveBeenCalledTimes(2);
+    expect(streams[1].payload.moves).toEqual([{ x1: 1, y1: 2, x2: 4, y2: 2 }]);
+
+    emitResult(1, {
+      depth: 8,
+      score_red: 135,
+      mate: null,
+      time_ms: 100,
+      pv: [
+        { x1: 3, y1: 0, x2: 4, y2: 2, chinese: "炮二平五", iccs: "c0e2" },
+        { x1: 1, y1: 9, x2: 2, y2: 7, chinese: "马8进7", iccs: "b9c7" },
+      ],
+    });
+    await nextTick();
+
+    expect(wrapper.find('[data-test="score"]').text()).toContain("+135");
+    expect(board(wrapper).props("arrows")).toHaveLength(2);
+  });
+
+  it("悔棋后重新分析", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    await button(wrapper, "undo").trigger("click");
+    await flushPromises();
+    expect(analyzeStream).toHaveBeenCalledTimes(3);
+    expect(streams[2].payload.moves).toEqual([]);
+  });
+
+  it("分析完成时显示已完成", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    emitDone(0);
+    await nextTick();
+    expect(wrapper.find('[data-test="analysis-status"]').text()).toContain("已完成");
   });
 });
