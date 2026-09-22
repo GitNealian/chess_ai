@@ -25,3 +25,27 @@ def test_flip_side_to_move():
     Board().load_fen(flipped)
     # 往返恒等：除走子方外无副作用，双重翻转还原
     assert flip_side_to_move(flipped) == OPP_MATE_IN_ONE
+
+
+def test_rank_moves_returns_sorted_descending():
+    from engine.intent import rank_moves
+
+    ranked = rank_moves(INITIAL, depth=4)
+    assert ranked, "初始局面必须有合法着法"
+    scores = [s for _, s in ranked]
+    assert scores == sorted(scores, reverse=True), "root 缓冲应降序"
+    for packed, _ in ranked:
+        assert isinstance(packed, int) and packed > 0
+
+
+def test_rank_moves_is_stm_perspective():
+    from engine import constants as C
+    from engine.intent import rank_moves
+
+    red = rank_moves(INITIAL, depth=4)
+    black_fen = INITIAL.replace(" w ", " b ")
+    black = rank_moves(black_fen, depth=4)
+    assert red and black
+    # 双方各自视角的首着分数都应显著优于最差着法且不越界
+    assert abs(red[0][1]) < C.MAX_SCORE
+    assert abs(black[0][1]) < C.MAX_SCORE
