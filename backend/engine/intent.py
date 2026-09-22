@@ -227,7 +227,10 @@ def threat_event(fen, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
     - 搜索在翻转局面（走子方 = 对手）进行：mate>0 = 对手 N ply 杀我方；
     - score_red 为红方视角（对手为红取原值、对手为黑取反）；
     - loss_piece 恒 None：对手连招的威胁以 mate/score 表达，且翻转局面
-      的「我方」语义与原局面相反，不在此统计失子。
+      的「我方」语义与原局面相反，不在此统计失子；
+    - 入参 fen 须为合法 FEN（非法时 ValueError 冒泡，由 routes 层转
+      error 事件）；
+    - depth 须 ≥ 4（与 _search_iteration 契约一致）。
     """
     board = Board().load_fen(fen)
     if board.in_check(board.side_to_move):

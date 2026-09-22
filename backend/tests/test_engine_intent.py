@@ -137,7 +137,7 @@ def test_threat_reports_mate_when_ignoring():
     event = threat_event(STM_MATED_IN_FOUR, depth=6, timeout_ms=30000)
     assert event["type"] == "threat"
     assert event["hint"] is None
-    assert event["outcome"]["mate"] == 3  # spike 实测值（翻转局面红 3 ply 杀黑）
+    assert event["outcome"]["mate"] == 3  # 原局面黑 4-ply 被杀；停一手后红先走，3-ply 即杀（spike 实测）
     assert event["line"], "应产出对手杀线"
     assert event["outcome"]["score_red"] > 9000  # 红方视角将杀分（实测 9996）
 
@@ -159,3 +159,15 @@ def test_threat_timeout_returns_degraded():
     assert event["line"] == []
     assert event["outcome"] is None
     assert event["hint"] is None  # 超时静默降级
+
+
+def test_threat_without_mate_reports_scored_line():
+    from engine.intent import threat_event
+
+    event = threat_event(INITIAL, depth=6, timeout_ms=30000)
+    assert event["type"] == "threat"
+    assert event["hint"] is None
+    assert event["outcome"] is not None
+    assert event["outcome"]["mate"] is None  # 初始局面无杀
+    assert abs(event["outcome"]["score_red"]) < 9000
+    assert event["line"]  # 有威胁线

@@ -755,6 +755,8 @@ git add backend/engine/intent.py backend/tests/test_engine_intent.py
 git commit -m "feat(intent): 意图推演总编排（rank→threat→baits）"
 ```
 
+> **Task 6 执行前必读（性能预算实测备注）**：threat 线 depth=8 在初始局面完整搜索约 2.6s，超出默认 timeout_ms=2000，开局/复杂局面 threat 线会静默降级（line 空）；threat 2s + bait×2 各 2s = 6s 已超「先意图后评分 2-5s」总承诺，且 rank_moves 默认不限时。Task 6 编排时需统筹：各线默认 timeout 建议降为 1500ms 并接受部分线降级，或调低 line_depth；不得为保证全产出而放宽超时（违反「意图先出」承诺）。
+
 ---
 
 ### Task 7: API 端点 `POST /api/engine/intent`
