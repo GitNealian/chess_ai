@@ -38,7 +38,8 @@ Task 12（`analyze`/`warmup`）语义要点：
 并行（Lazy SMP）：`threads > 1` 时按 `_resolve_threads` 解析线程数（显式参数 >
 `ENGINE_THREADS` > 自动），主线程照常迭代加深产出结果，另启动若干辅助线程
 （`_worker_loop`，共享 TT、深度相位错开）与可选的外部停旗转发线程
-（`_forward_stop`）；线程启动失败降级为更少线程/无转发，不影响主线程产出。
+（`_forward_stop`）；线程启动失败降级为更少线程/无转发，不影响主线程产出，
+且降级为无转发时主循环在层边界兜底同步外部停旗（中断契约不失效）。
 设计见 `docs/plans/2026-09-22-lazy-smp-design.md`。
 """
 
@@ -304,6 +305,9 @@ def analyze(
       不得复位**；被中断的层不可信、不会产出（当前实现按 `stop[0]` 判定，
       复用数组存在 TOCTOU 窗口）。搜索中途被置位的层结果直接丢弃；
       层边界置位则正常结束。该数组由调用方持有，`analyze` 只读不改。
+      并行时外部停旗经转发线程同步到总停旗；转发线程启动失败降级时，
+      主循环在层边界兜底读取外部停旗并置位总停旗，层内搜索随总停旗在
+      检查点毫秒级退出，中断契约不因转发降级而失效。
     - `threads`：搜索线程数，`None` 表示自动（显式值 > 环境变量
       `ENGINE_THREADS` > `max(1, min(cpu_count-1, 8))`，夹逼 `[1, MAX_THREADS]`）。
       `threads == 1` 时与串行实现完全一致；`> 1` 时启动辅助线程共享 TT
@@ -400,6 +404,13 @@ def analyze(
         depth = C.ROOT_START_DEPTH
         last_layer_ms = 0
         while depth <= max_depth:
+            # 层边界兜底同步外部停旗：中断路径不只依赖转发线程——转发线程
+            # 启动失败降级为 None 时（资源受限），调用方置位的外部 stop 由
+            # 此处同步进 stop_all，主循环随即 break、辅助线程在 njit 检查点
+            # 毫秒级退出；代价是主线程当前正在搜的层会先跑完才到此处。
+            # 单线程时 stop_all 为 None（search_stop is stop），不触发。
+            if has_external_stop and stop_all is not None and stop[0] != 0:
+                stop_all[0] = 1
             if search_stop[0] != 0:
                 break
             layer_t0 = time.perf_counter()

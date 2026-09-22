@@ -247,6 +247,45 @@ def test_parallel_start_failure_degrades_gracefully(monkeypatch):
     assert leftovers == []
 
 
+def test_parallel_external_stop_works_without_forwarder(monkeypatch):
+    """转发线程启动失败时层边界兜底同步外部停旗：中断仍应亚秒级生效。
+
+    `engine-stop-forward` 被拦截后，外部 stop 只能由主循环层边界兜底读取；
+    无兜底时会一路搜到 max_depth=32（time_limit 触发前可长达 ~60s），
+    15s 上界用于区分两种行为（慢机上也应远低于该值）。
+    """
+    real_start = threading.Thread.start
+
+    def flaky_start(self):
+        if self.name == "engine-stop-forward":
+            raise RuntimeError("no forwarder")
+        return real_start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", flaky_start)
+    stop = np.zeros(1, dtype=np.int8)
+    it = analyze(
+        INITIAL,
+        start_depth=6,
+        max_depth=32,
+        time_limit_ms=60000,
+        stop=stop,
+        threads=4,
+    )
+    first = next(it)
+    assert first.depth >= 6
+    t0 = time.perf_counter()
+    stop[0] = 1
+    list(it)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 15.0
+    leftovers = [
+        t
+        for t in threading.enumerate()
+        if t.name.startswith("engine-helper-") or t.name == "engine-stop-forward"
+    ]
+    assert leftovers == []
+
+
 def test_parallel_repeated_analyses_stay_valid():
     """连续 3 次并行分析：每次都正常产出，层序递增、分数合法域、PV 非空。"""
     for _ in range(3):
