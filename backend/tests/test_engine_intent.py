@@ -23,3 +23,5 @@ def test_flip_side_to_move():
     assert flipped.split()[0] == OPP_MATE_IN_ONE.split()[0]
     # 原局面仍可被规则引擎加载（往返合法）
     Board().load_fen(flipped)
+    # 往返恒等：除走子方外无副作用，双重翻转还原
+    assert flip_side_to_move(flipped) == OPP_MATE_IN_ONE

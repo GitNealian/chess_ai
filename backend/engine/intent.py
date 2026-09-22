@@ -13,13 +13,11 @@ chess_engine 规则引擎；不修改任何搜索/评估模块。
 threading.Timer 置位停旗丢弃该线；事件为 dict（由 routes 层编码 NDJSON）。
 """
 
-from __future__ import annotations
+import threading  # 后续任务：threading.Timer 超时停旗（Task 2）
 
-import threading
+import numpy as np  # 后续任务：stop 停旗数组 np.int8[1]（Task 2）
 
-import numpy as np
-
-from chess_engine.board import Board
+from chess_engine.board import BLACK, RED, Board
 
 __all__ = [
     "flip_side_to_move",
@@ -36,8 +34,11 @@ LINE_PV_LIMIT = 6
 
 
 def flip_side_to_move(fen):
-    """返回走子方翻转后的 FEN（棋盘段不变）；复用规则引擎解析/生成。"""
+    """返回走子方翻转后的 FEN（棋盘段不变）；复用规则引擎解析/生成。
+
+    契约：入参须为合法 FEN，否则 ValueError 冒泡；输出为规则引擎标准化的
+    6 段 FEN（时钟段重写为 ``- - 0 1``，不保留原值）。
+    """
     board = Board().load_fen(fen)
-    clone = board.clone()
-    clone.side_to_move = "black" if board.side_to_move == "red" else "red"
-    return clone.to_fen()
+    board.side_to_move = BLACK if board.side_to_move == RED else RED
+    return board.to_fen()
