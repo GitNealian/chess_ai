@@ -8,9 +8,18 @@ from chess_engine.board import Board
 
 INITIAL = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
 
+# 轮黑方的对称局面（禁止字符串 replace 变换，直接写全量 FEN）。
+INITIAL_BLACK = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR b - - 0 1"
+
 # 红方一步杀（test_engine_search_main.py 穷举用例）改轮黑方：
-# 黑未被将军、黑停一手（红走）即被红一步杀 —— 「对手有一步杀、轮我方」局面。
+# 黑未被将军但无合法着法（将 f9 仅 e9/f8 可去，分别被红车/红马控制）——
+# 困毙局面，rank_moves 对其返回 []（见 test_rank_moves_is_stm_perspective 注）。
 OPP_MATE_IN_ONE = "3R5/5k1N1/9/9/9/9/9/9/9/4K1R2 b - - 0 1"
+
+# 轮黑方被杀局面（test_engine_search_main.py MATE_CHAIN_CASES 3-ply 杀局面
+# 改轮黑）：黑有 2 个合法着法、非困毙，但任意应对 4 ply 内被红强制将杀，
+# 走子方视角最优分为结构性被杀分 -(MAX_SCORE-ply)。
+STM_MATED_IN_FOUR = "3pk4/1R7/2N4N1/4N4/9/9/9/9/9/3K5 b - - 0 1"
 
 
 def test_flip_side_to_move():
@@ -42,10 +51,8 @@ def test_rank_moves_is_stm_perspective():
     from engine import constants as C
     from engine.intent import rank_moves
 
-    red = rank_moves(INITIAL, depth=4)
-    black_fen = INITIAL.replace(" w ", " b ")
-    black = rank_moves(black_fen, depth=4)
-    assert red and black
-    # 双方各自视角的首着分数都应显著优于最差着法且不越界
-    assert abs(red[0][1]) < C.MAX_SCORE
-    assert abs(black[0][1]) < C.MAX_SCORE
+    # 被杀方（黑）视角：最优着法分数必为结构性被杀分（负的大额 mate 分），
+    # 跨机器稳定、锁死「走子方视角」符号语义
+    ranked = rank_moves(STM_MATED_IN_FOUR, depth=4)
+    assert ranked
+    assert ranked[0][1] <= -(C.MAX_SCORE - 100)  # 走子方被将杀：-(MAX_SCORE-ply) 量级

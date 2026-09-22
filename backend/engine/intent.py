@@ -66,10 +66,17 @@ def _search_iteration(fen, *, max_depth, stop, timeout_ms):
 
     超时：threading.Timer 置位 stop，搜索返回后若 stop 被置位则整体丢弃
     （返回 None）——与引擎「中断层不可信」契约一致。
+
+    契约：
+    - stop 必须全零传入且一次性使用：传入已置位的数组会静默返回 None
+      （引擎中断契约「一旦置位不得复位」）；
+    - max_depth 必须 >= EC.ROOT_START_DEPTH（4），否则迭代循环为空、
+      score 保持 None，返回时 int(None) 抛 TypeError；
+    - timeout_ms <= 0 视为不限时（不启动 Timer）。
     """
     engine_analysis.warmup()  # 幂等；避免首测 JIT 阻塞在计时逻辑内
     st = _prepare_engine(fen)
-    ctx = engine_search.new_context()
+    ctx = engine_search.new_context()._replace(stop=stop)
     stack = engine_search.new_stack()
     stack.zob32[0] = st.zob[0]
     stack.zob64[0] = st.zob[1]
@@ -96,6 +103,8 @@ def rank_moves(fen, *, depth=INTENT_RANK_DEPTH, timeout_ms=None):
     """着法排名：[(packed, score_stm)]，分数降序（走子方视角）。
 
     超时/中断返回 ``[]``。score_stm 为该局面走子方视角引擎分。
+    无合法着法的局面（将杀/困毙后）同样返回 ``[]``，与超时降级不可
+    区分——调用方按对局中局面使用即可。
 
     实现注记：搜索结束后的 ctx.root_moves 次序是逐着法选择排序的
     PV-first 痕迹（fail-low 着法的 root_scores 为零窗口上界），并非按
