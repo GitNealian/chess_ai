@@ -15,9 +15,9 @@ threading.Timer 置位停旗丢弃该线；事件为 dict（由 routes 层编码
 
 from collections import Counter
 
-import threading  # 后续任务：threading.Timer 超时停旗（Task 2）
+import threading
 
-import numpy as np  # 后续任务：stop 停旗数组 np.int8[1]（Task 2）
+import numpy as np
 
 from chess_engine.board import BLACK, PIECE_NAMES, RED, Board
 from chess_engine.move import Move
