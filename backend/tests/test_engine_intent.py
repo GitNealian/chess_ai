@@ -189,6 +189,30 @@ def test_select_baits_prefers_captures():
     assert all(b["packed"] != best for b in baits)  # 正着不入选
 
 
+def test_select_baits_window_includes_rank_eighth():
+    from engine.constants import xy_to_site
+    from engine.intent import select_baits
+
+    # 黑王 d9、黑车 c6、红车 c0、红王 e0（无照面）。红方合法非吃子着法
+    # 有车 c0→c1..c5、车 c0→a0/b0/d0、王 e0→e1/f0/f1（d0/d1 与黑王照面
+    # 非法、c0→c6 是吃子），从中取 9 项构造排名：best + 8 个 fillers。
+    # ranked[8]（排名第 8 的非最佳着法）修复前（窗口 7 候选）不入窗，
+    # 修复后（8 候选）应作为「随手」入选。
+    fen = "3k5/9/9/2r6/9/9/9/9/9/2R1K4 w - - 0 1"
+    best = xy_to_site(2, 0) | (xy_to_site(2, 1) << 7)              # 车 c0→c1
+    fillers = [
+        xy_to_site(2, 0) | (xy_to_site(2, y) << 7) for y in (2, 3, 4, 5)
+    ] + [
+        xy_to_site(2, 0) | (xy_to_site(x, 0) << 7) for x in (0, 1, 3)
+    ] + [
+        xy_to_site(4, 0) | (xy_to_site(4, 1) << 7),  # 王 e0→e1
+    ]
+    assert len(fillers) == 8
+    ranked = [(best, 30)] + [(m, -10 - i) for i, m in enumerate(fillers)]
+    baits = select_baits(fen, ranked, max_baits=8)
+    assert {"packed": fillers[-1], "reason": "随手"} in baits
+
+
 def test_select_baits_skips_when_too_few_moves():
     from engine.intent import select_baits
 

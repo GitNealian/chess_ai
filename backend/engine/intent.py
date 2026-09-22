@@ -287,7 +287,7 @@ def select_baits(fen, ranked, *, max_baits=2):
     """
     if len(ranked) < 2:
         return []
-    window = ranked[1:_BAIT_WINDOW]
+    window = ranked[1:_BAIT_WINDOW + 1]
     is_capture = _board_capture_flags(fen, [packed for packed, _ in window])
     baits = []
     for packed, _ in window:
