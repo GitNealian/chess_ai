@@ -21,6 +21,9 @@ OPP_MATE_IN_ONE = "3R5/5k1N1/9/9/9/9/9/9/9/4K1R2 b - - 0 1"
 # 走子方视角最优分为结构性被杀分 -(MAX_SCORE-ply)。
 STM_MATED_IN_FOUR = "3pk4/1R7/2N4N1/4N4/9/9/9/9/9/3K5 b - - 0 1"
 
+# 我方正被将军的局面：黑车 f0 将军红王 d0、轮红（红应将中）。
+MY_IN_CHECK = "4k4/9/9/9/9/9/9/9/9/3K1r3 w - - 0 1"
+
 
 def test_flip_side_to_move():
     from engine.intent import flip_side_to_move
@@ -125,3 +128,34 @@ def test_loss_for_side_returns_none_on_empty_source():
     # 起点取初始局面中路空点 (4,5)：apply_move 抛 ValueError → 返回 None。
     packed = xy_to_site(4, 5) | (xy_to_site(4, 8) << 7)
     assert _loss_for_side(packed_line=[packed], board=board, side="black") is None
+
+
+def test_threat_reports_mate_when_ignoring():
+    from engine.intent import threat_event
+
+    # 我方（黑）停一手 → 红连招杀黑（spike 实测 mate=3）。
+    event = threat_event(STM_MATED_IN_FOUR, depth=6, timeout_ms=30000)
+    assert event["type"] == "threat"
+    assert event["hint"] is None
+    assert event["outcome"]["mate"] == 3  # spike 实测值（翻转局面红 3 ply 杀黑）
+    assert event["line"], "应产出对手杀线"
+    assert event["outcome"]["score_red"] > 9000  # 红方视角将杀分（实测 9996）
+
+
+def test_threat_downgrades_when_in_check():
+    from engine.intent import threat_event
+
+    event = threat_event(MY_IN_CHECK, depth=6, timeout_ms=30000)
+    assert event["line"] == []
+    assert event["outcome"] is None
+    assert event["hint"] == "你正被将军，必须应将"
+
+
+def test_threat_timeout_returns_degraded():
+    from engine.intent import threat_event
+
+    event = threat_event(INITIAL, depth=8, timeout_ms=1)
+    assert event["type"] == "threat"
+    assert event["line"] == []
+    assert event["outcome"] is None
+    assert event["hint"] is None  # 超时静默降级

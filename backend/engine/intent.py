@@ -35,6 +35,7 @@ __all__ = [
     "INTENT_LINE_DEPTH",
     "INTENT_RANK_DEPTH",
     "rank_moves",
+    "threat_event",
 ]
 
 # 排名与推演线的固定深度（浅层足够表达意图，单线程秒级）。
@@ -201,3 +202,52 @@ def _loss_for_side(packed_line, board, side):
     if not lost:
         return None
     return PIECE_NAMES[(side, max(lost, key=lambda k: _PIECE_VALUE[k]))]
+
+
+_THREAT_HINT = "你正被将军，必须应将"
+
+
+def _pv_of(stack, limit=LINE_PV_LIMIT):
+    """stack.pv[0] 头段独立拷贝（0 结尾，上限 limit）。"""
+    pv = []
+    row = stack.pv[0]
+    for i in range(row.shape[0]):
+        m = int(row[i])
+        if m == 0 or len(pv) >= limit:
+            break
+        pv.append(m)
+    return pv
+
+
+def threat_event(fen, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
+    """底线威胁线：我方停一手（完全不理会）后对手的最佳连招。
+
+    - 我方正被将军：无法合法停一手，降级为提示（line 空、outcome None）；
+    - 超时/中断：line 空、hint None、outcome None（静默降级）；
+    - 搜索在翻转局面（走子方 = 对手）进行：mate>0 = 对手 N ply 杀我方；
+    - score_red 为红方视角（对手为红取原值、对手为黑取反）；
+    - loss_piece 恒 None：对手连招的威胁以 mate/score 表达，且翻转局面
+      的「我方」语义与原局面相反，不在此统计失子。
+    """
+    board = Board().load_fen(fen)
+    if board.in_check(board.side_to_move):
+        return {"type": "threat", "line": [], "outcome": None, "hint": _THREAT_HINT}
+
+    flipped = flip_side_to_move(fen)
+    stop = np.zeros(1, dtype=np.int8)
+    result = _search_iteration(
+        flipped, max_depth=depth, stop=stop, timeout_ms=timeout_ms
+    )
+    if result is None:
+        return {"type": "threat", "line": [], "outcome": None, "hint": None}
+    _, _, stack, score, mate = result
+    pv = _pv_of(stack)
+    opponent_is_red = board.side_to_move != RED  # 我方非红 → 对手红
+    my_mated = mate > 0
+    outcome = {
+        "mate": int(mate) if my_mated else None,
+        "loss_piece": None,
+        "score_red": int(score if opponent_is_red else -score),
+    }
+    line = describe_line(pv, Board().load_fen(flipped), limit=LINE_PV_LIMIT)
+    return {"type": "threat", "line": line, "outcome": outcome, "hint": None}
