@@ -171,3 +171,51 @@ def test_threat_without_mate_reports_scored_line():
     assert event["outcome"]["mate"] is None  # 初始局面无杀
     assert abs(event["outcome"]["score_red"]) < 9000
     assert event["line"]  # 有威胁线
+
+
+def test_select_baits_prefers_captures():
+    from engine.constants import xy_to_site
+    from engine.intent import select_baits
+
+    # 黑王 d9、黑车 c6、红车 c0、红王 e0（无照面）；红吃车着法不在排名首位
+    fen = "3k5/9/9/2r6/9/9/9/9/9/2R1K4 w - - 0 1"
+    best = xy_to_site(4, 0) | (xy_to_site(4, 1) << 7)    # 王 e0→e1（假想最佳）
+    capture = xy_to_site(2, 0) | (xy_to_site(2, 6) << 7)  # 车 c0→c6 吃车
+    quiet = xy_to_site(2, 0) | (xy_to_site(2, 3) << 7)    # 车 c0→c3 空移
+    ranked = [(best, 30), (capture, -80), (quiet, -120)]
+    baits = select_baits(fen, ranked, max_baits=2)
+    assert baits[0] == {"packed": capture, "reason": "贪吃"}
+    assert baits[1] == {"packed": quiet, "reason": "随手"}
+    assert all(b["packed"] != best for b in baits)  # 正着不入选
+
+
+def test_select_baits_skips_when_too_few_moves():
+    from engine.intent import select_baits
+
+    # 排名不足 2 个 → 无诱饵
+    assert select_baits("4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1", [(123, 0)], max_baits=2) == []
+
+
+def test_bait_event_reports_punishment_structure():
+    from engine.intent import bait_event, rank_moves, select_baits
+
+    # 初始局面无吃子着法 → 诱饵为「随手」（ranked[1]）
+    ranked = rank_moves(INITIAL, depth=4, timeout_ms=30000)
+    baits = select_baits(INITIAL, ranked, max_baits=1)
+    assert len(baits) == 1 and baits[0]["reason"] == "随手"
+    event = bait_event(INITIAL, baits[0], depth=4, timeout_ms=30000)
+    assert event["type"] == "bait"
+    assert event["bait"]["reason"] == "随手"
+    assert event["bait"]["chinese"] != ""
+    assert isinstance(event["line"], list)
+    assert set(event["outcome"]) == {"mate", "loss_piece", "score_red"}
+
+
+def test_bait_event_timeout_degrades():
+    from engine.intent import bait_event, rank_moves, select_baits
+
+    ranked = rank_moves(INITIAL, depth=4, timeout_ms=30000)
+    bait = {"packed": ranked[1][0], "reason": "随手"}
+    event = bait_event(INITIAL, bait, depth=6, timeout_ms=1)
+    assert event["line"] == []
+    assert event["outcome"] == {"mate": None, "loss_piece": None, "score_red": None}

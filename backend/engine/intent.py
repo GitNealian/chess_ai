@@ -30,11 +30,13 @@ from engine.constants import site_to_xy, xy_to_site
 from engine.position import load_position
 
 __all__ = [
+    "bait_event",
     "describe_line",
     "flip_side_to_move",
     "INTENT_LINE_DEPTH",
     "INTENT_RANK_DEPTH",
     "rank_moves",
+    "select_baits",
     "threat_event",
 ]
 
@@ -143,6 +145,15 @@ def _packed_to_move(packed):
     return Move(x1, y1, x2, y2)
 
 
+def _move_chinese(board, move):
+    """中文记谱；非法着法/异常局面（ValueError）回退 ICCS。"""
+    iccs = f"{chr(97 + move.x1)}{move.y1}{chr(97 + move.x2)}{move.y2}"
+    try:
+        return move_to_chinese(board, move)
+    except ValueError:
+        return iccs
+
+
 def describe_line(packed_line, base_board, limit=LINE_PV_LIMIT):
     """packed 着法序列 → [{x1,y1,x2,y2,iccs,chinese}]（中文失败回退 ICCS）。
 
@@ -157,12 +168,8 @@ def describe_line(packed_line, base_board, limit=LINE_PV_LIMIT):
     for packed in packed_line[:limit]:
         move = _packed_to_move(int(packed))
         iccs = f"{chr(97 + move.x1)}{move.y1}{chr(97 + move.x2)}{move.y2}"
-        chinese = iccs
+        chinese = iccs if board is None else _move_chinese(board, move)
         if board is not None:
-            try:
-                chinese = move_to_chinese(board, move)
-            except ValueError:
-                chinese = iccs
             try:
                 board.apply_move(move)
             except ValueError:
@@ -254,3 +261,89 @@ def threat_event(fen, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
     }
     line = describe_line(pv, Board().load_fen(flipped), limit=LINE_PV_LIMIT)
     return {"type": "threat", "line": line, "outcome": outcome, "hint": None}
+
+
+# 只在排名前 N 内找诱饵（排名太靠后的着法无诱骗性）。
+_BAIT_WINDOW = 8
+
+
+def _board_capture_flags(fen, packed_list):
+    """在根局面判定各着法是否吃子（规则引擎 piece_at，结构信号）。"""
+    board = Board().load_fen(fen)
+    flags = {}
+    for packed in packed_list:
+        move = _packed_to_move(packed)
+        flags[packed] = board.piece_at(move.x2, move.y2) is not None
+    return flags
+
+
+def select_baits(fen, ranked, *, max_baits=2):
+    """从排名挑诱饵着法：吃子优先（贪吃），再补靠前的非吃子（随手）。
+
+    - `ranked`：`rank_moves` 输出（降序），首名视为正着不入选；
+    - 不比较分数差：root_scores 对 fail-low 着法是零窗口上界，分差不可靠
+      （Task 2 实测），「诱人程度」以吃子结构信号表达；
+    - 只看排名前 `_BAIT_WINDOW`；候选不足按实际数量产出。
+    """
+    if len(ranked) < 2:
+        return []
+    window = ranked[1:_BAIT_WINDOW]
+    is_capture = _board_capture_flags(fen, [packed for packed, _ in window])
+    baits = []
+    for packed, _ in window:
+        if is_capture[packed]:
+            baits.append({"packed": packed, "reason": "贪吃"})
+            if len(baits) >= max_baits:
+                return baits
+    for packed, _ in window:
+        if all(b["packed"] != packed for b in baits):
+            baits.append({"packed": packed, "reason": "随手"})
+            if len(baits) >= max_baits:
+                return baits
+    return baits
+
+
+def bait_event(fen, bait, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
+    """诱饵线：我方走诱饵着法后对手的最佳惩罚连招。
+
+    - 搜索局面 = 我方走诱饵后（走子方 = 对手），PV 首着即对手惩罚着手；
+    - mate>0 = 对手 N ply 内杀我方；score_red 统一红方视角；
+    - loss_piece：对比走线前后**我方**（原局面走子方）子力；
+    - 超时/中断：line 空、outcome 全 None（静默降级）；
+    - `bait` 来自 `select_baits`（含 packed/reason）。
+    """
+    root = Board().load_fen(fen)
+    my_side = root.side_to_move
+    move = _packed_to_move(int(bait["packed"]))
+    probe = root.clone()
+    probe.apply_move(move)  # 诱饵来自合法排名着法；apply 失败应尽早暴露
+    bait_fen = probe.to_fen()
+
+    iccs = f"{chr(97 + move.x1)}{move.y1}{chr(97 + move.x2)}{move.y2}"
+    payload = {
+        "type": "bait",
+        "bait": {
+            "x1": move.x1, "y1": move.y1, "x2": move.x2, "y2": move.y2,
+            "iccs": iccs,
+            "chinese": _move_chinese(root, move),
+            "reason": bait["reason"],
+        },
+        "line": [],
+        "outcome": {"mate": None, "loss_piece": None, "score_red": None},
+    }
+    stop = np.zeros(1, dtype=np.int8)
+    result = _search_iteration(
+        bait_fen, max_depth=depth, stop=stop, timeout_ms=timeout_ms
+    )
+    if result is None:
+        return payload
+    _, _, stack, score, mate = result
+    pv = _pv_of(stack)
+    opponent_is_red = my_side != RED
+    payload["outcome"]["score_red"] = int(score if opponent_is_red else -score)
+    if mate > 0:
+        payload["outcome"]["mate"] = int(mate)
+    line_board = Board().load_fen(bait_fen)
+    payload["outcome"]["loss_piece"] = _loss_for_side(pv, line_board, my_side)
+    payload["line"] = describe_line(pv, line_board, limit=LINE_PV_LIMIT)
+    return payload
