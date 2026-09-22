@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import PracticeView from "../PracticeView.vue";
-import { analyzeStream, api } from "../../api";
+import { analyzeStream, api, intentStream } from "../../api";
 
 const { route, push } = vi.hoisted(() => ({
   route: { params: { id: "1" } },
@@ -14,6 +14,7 @@ vi.mock("../../api", () => ({
     getGame: vi.fn(),
   },
   analyzeStream: vi.fn(),
+  intentStream: vi.fn(),
 }));
 
 vi.mock("vue-router", () => ({
@@ -52,6 +53,7 @@ const moves = [
 ];
 
 let streams = [];
+let intentStreams = [];
 
 function emitResult(index, payload) {
   streams[index].handlers.onResult(payload);
@@ -65,6 +67,10 @@ function emitError(index, error) {
   streams[index].handlers.onError(error);
 }
 
+function emitIntentDone(index) {
+  intentStreams[index].handlers.onDone({});
+}
+
 function analysisItems(wrapper) {
   return wrapper.findAll('[data-test="analysis-item"]');
 }
@@ -73,8 +79,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   route.params = { id: "1" };
   streams = [];
+  intentStreams = [];
   analyzeStream.mockImplementation((payload, handlers = {}) => {
     streams.push({ payload, handlers });
+    return Promise.resolve();
+  });
+  intentStream.mockImplementation((payload, handlers = {}) => {
+    intentStreams.push({ payload, handlers });
+    handlers.onDone?.({});
     return Promise.resolve();
   });
   api.getGame.mockResolvedValue({
@@ -388,6 +400,15 @@ describe("PracticeView AI 分析", () => {
     expect(streams[0].handlers.signal.aborted).toBe(true);
   });
 
+  it("组件卸载时中止进行中的意图流", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(intentStreams[0].handlers.signal.aborted).toBe(false);
+    wrapper.unmount();
+    expect(intentStreams[0].handlers.signal.aborted).toBe(true);
+  });
+
   it("加载失败时不发起分析", async () => {
     api.getGame.mockRejectedValueOnce(new Error("boom"));
     mountView();
@@ -417,5 +438,73 @@ describe("PracticeView AI 分析", () => {
       moves: moves.slice(0, 2),
       ply: 0,
     });
+  });
+
+  it("意图流未完成时评分不启动，完成后才启动（先意图后评分）", async () => {
+    intentStream.mockImplementation((payload, handlers = {}) => {
+      intentStreams.push({ payload, handlers });
+      return Promise.resolve();
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(intentStream).toHaveBeenCalledTimes(1);
+    expect(intentStreams[0].payload).toEqual({
+      initial_fen: INITIAL_FEN,
+      moves,
+      ply: 0,
+    });
+    expect(analyzeStream).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-test="intent-status"]').text()).toContain("推演中");
+
+    emitIntentDone(0);
+    await flushPromises();
+
+    expect(analyzeStream).toHaveBeenCalledTimes(1);
+    expect(streams[0].payload).toEqual({
+      initial_fen: INITIAL_FEN,
+      moves,
+      ply: 0,
+    });
+  });
+
+  it("翻步时旧意图流被中止，迟到 onDone 不触发评分", async () => {
+    intentStream.mockImplementation((payload, handlers = {}) => {
+      intentStreams.push({ payload, handlers });
+      return Promise.resolve();
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "next").trigger("click");
+    await nextTick();
+
+    expect(intentStreams).toHaveLength(2);
+    expect(intentStreams[0].handlers.signal.aborted).toBe(true);
+    expect(analyzeStream).not.toHaveBeenCalled();
+
+    emitIntentDone(0);
+    await flushPromises();
+    expect(analyzeStream).not.toHaveBeenCalled();
+
+    emitIntentDone(1);
+    await flushPromises();
+    expect(analyzeStream).toHaveBeenCalledTimes(1);
+    expect(streams[0].payload.ply).toBe(1);
+  });
+
+  it("意图流失败静默降级，评分照常启动", async () => {
+    intentStream.mockImplementation((payload, handlers = {}) => {
+      intentStreams.push({ payload, handlers });
+      return Promise.resolve();
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    intentStreams[0].handlers.onError(new Error("引擎不可用"));
+    await flushPromises();
+
+    expect(analyzeStream).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-test="intent-error"]').text()).toContain("引擎不可用");
   });
 });

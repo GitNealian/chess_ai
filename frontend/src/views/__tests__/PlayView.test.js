@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import PlayView from "../PlayView.vue";
-import { analyzeStream, api } from "../../api";
+import { analyzeStream, api, intentStream } from "../../api";
 
 const { route, push } = vi.hoisted(() => ({
   route: { query: {} },
@@ -16,6 +16,7 @@ vi.mock("../../api", () => ({
     createGame: vi.fn(),
   },
   analyzeStream: vi.fn(),
+  intentStream: vi.fn(),
 }));
 
 vi.mock("vue-router", () => ({
@@ -52,6 +53,7 @@ function button(wrapper, test) {
 }
 
 let streams = [];
+let intentStreams = [];
 
 function emitResult(index, payload) {
   streams[index].handlers.onResult(payload);
@@ -61,12 +63,22 @@ function emitDone(index) {
   streams[index].handlers.onDone({});
 }
 
+function emitIntentDone(index) {
+  intentStreams[index].handlers.onDone({});
+}
+
 describe("PlayView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     streams = [];
+    intentStreams = [];
     analyzeStream.mockImplementation((payload, handlers = {}) => {
       streams.push({ payload, handlers });
+      return Promise.resolve();
+    });
+    intentStream.mockImplementation((payload, handlers = {}) => {
+      intentStreams.push({ payload, handlers });
+      handlers.onDone?.({});
       return Promise.resolve();
     });
     route.query = {};
@@ -379,6 +391,80 @@ describe("PlayView", () => {
     await flushPromises();
     wrapper.unmount();
     expect(streams[0].handlers.signal.aborted).toBe(true);
+  });
+
+  it("意图流未完成时评分不启动，完成后才启动（先意图后评分）", async () => {
+    intentStream.mockImplementation((payload, handlers = {}) => {
+      intentStreams.push({ payload, handlers });
+      return Promise.resolve();
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(intentStream).toHaveBeenCalledTimes(1);
+    expect(intentStreams[0].payload.initial_fen).toBe(INITIAL_FEN);
+    expect(intentStreams[0].payload.moves).toEqual([]);
+    expect(analyzeStream).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-test="intent-status"]').text()).toContain("推演中");
+
+    emitIntentDone(0);
+    await flushPromises();
+
+    expect(analyzeStream).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-test="intent-status"]').exists()).toBe(false);
+  });
+
+  it("意图流失败静默降级，评分照常启动", async () => {
+    intentStream.mockImplementation((payload, handlers = {}) => {
+      intentStreams.push({ payload, handlers });
+      return Promise.resolve();
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    intentStreams[0].handlers.onError(new Error("引擎不可用"));
+    await flushPromises();
+
+    expect(analyzeStream).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-test="intent-error"]').text()).toContain("引擎不可用");
+  });
+
+  it("走子时旧意图流被中止，迟到 onDone 不触发评分", async () => {
+    intentStream.mockImplementation((payload, handlers = {}) => {
+      intentStreams.push({ payload, handlers });
+      return Promise.resolve();
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    expect(intentStreams).toHaveLength(1);
+    expect(analyzeStream).not.toHaveBeenCalled();
+
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    expect(intentStreams[0].handlers.signal.aborted).toBe(true);
+    expect(intentStreams).toHaveLength(2);
+    expect(analyzeStream).not.toHaveBeenCalled();
+
+    emitIntentDone(0);
+    await flushPromises();
+    expect(analyzeStream).not.toHaveBeenCalled();
+
+    emitIntentDone(1);
+    await flushPromises();
+    expect(analyzeStream).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-test="analysis-status"]').text()).toContain("分析中");
+  });
+
+  it("组件卸载时中止进行中的意图流", async () => {
+    intentStream.mockImplementation((payload, handlers = {}) => {
+      intentStreams.push({ payload, handlers });
+      return Promise.resolve();
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    wrapper.unmount();
+    expect(intentStreams[0].handlers.signal.aborted).toBe(true);
   });
 
   it("分析失败时显示失败原因", async () => {

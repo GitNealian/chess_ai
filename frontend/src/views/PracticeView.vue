@@ -10,6 +10,7 @@
       <div class="layout">
         <ChessBoard :position="{ pieces }" :arrows="arrows" />
         <div class="side">
+          <IntentPanel v-if="intent.status !== 'idle'" :intent="intent" />
           <div class="analysis" data-test="analysis">
             <div class="score-row">
               <span class="score-text" data-test="score">{{ scoreText }}</span>
@@ -55,7 +56,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ChessBoard from "../components/ChessBoard.vue";
-import { analyzeStream, api } from "../api";
+import IntentPanel from "../components/IntentPanel.vue";
+import { analyzeStream, api, intentStream } from "../api";
 import { applyMove, fenToPieces } from "../utils/chess";
 
 const route = useRoute();
@@ -80,6 +82,14 @@ function emptyAnalysis(status) {
 const analysis = ref(emptyAnalysis("idle"));
 let controller = null;
 let requestToken = 0;
+
+function emptyIntent(status) {
+  return { status, rank: null, threat: null, baits: [], error: "" };
+}
+
+const intent = ref(emptyIntent("idle"));
+let intentController = null;
+let intentToken = 0;
 
 const pieces = computed(() => {
   if (!game.value) return [];
@@ -122,6 +132,51 @@ function startAnalysis() {
         if (token !== requestToken) return;
         analysis.value.status = "error";
         analysis.value.error = e?.message || "未知错误";
+      },
+    }
+  );
+}
+
+function stopIntent() {
+  intentToken += 1;
+  if (intentController) {
+    intentController.abort();
+    intentController = null;
+  }
+}
+
+function startIntent() {
+  stopIntent();
+  if (!game.value) return;
+  const token = intentToken;
+  intent.value = emptyIntent("running");
+  intentController = new AbortController();
+  intentStream(
+    { initial_fen: game.value.initial_fen, moves: game.value.moves, ply: ply.value },
+    {
+      signal: intentController.signal,
+      onRank: (r) => {
+        if (token !== intentToken) return;
+        intent.value.rank = r;
+      },
+      onThreat: (r) => {
+        if (token !== intentToken) return;
+        intent.value.threat = r;
+      },
+      onBait: (r) => {
+        if (token !== intentToken) return;
+        intent.value.baits.push(r);
+      },
+      onDone: () => {
+        if (token !== intentToken) return;
+        intent.value.status = "done";
+        startAnalysis();
+      },
+      onError: (e) => {
+        if (token !== intentToken) return;
+        intent.value.status = "error";
+        intent.value.error = e?.message || "";
+        startAnalysis();
       },
     }
   );
@@ -183,7 +238,9 @@ function startPlay() {
 
 async function load() {
   stopAnalysis();
+  stopIntent();
   analysis.value = emptyAnalysis("idle");
+  intent.value = emptyIntent("idle");
   loading.value = true;
   error.value = false;
   try {
@@ -194,13 +251,16 @@ async function load() {
   } finally {
     loading.value = false;
   }
-  if (game.value) startAnalysis();
+  if (game.value) startIntent();
 }
 
-watch(ply, startAnalysis);
+watch(ply, startIntent);
 
 onMounted(load);
-onUnmounted(stopAnalysis);
+onUnmounted(() => {
+  stopAnalysis();
+  stopIntent();
+});
 </script>
 
 <style scoped>

@@ -61,7 +61,7 @@ const bestText = computed(() => {
       推演中…
     </p>
     <p v-else-if="intent.status === 'error'" class="intent-status" data-test="intent-error">
-      推演失败：{{ intent.error }}
+      推演失败：{{ intent.error || "请稍后重试" }}
     </p>
     <template v-else-if="intent.status === 'done'">
       <p v-if="hintText" class="intent-item intent-hint" data-test="intent-hint">{{ hintText }}</p>

@@ -23,6 +23,13 @@ describe("IntentPanel", () => {
     expect(wrapper.find('[data-test="intent-error"]').text()).toContain("参数错误");
   });
 
+  it("error 态 error 为空字符串时显示兜底文案", () => {
+    const wrapper = mount(IntentPanel, {
+      props: { intent: { status: "error", error: "" } },
+    });
+    expect(wrapper.find('[data-test="intent-error"]').text()).toBe("推演失败：请稍后重试");
+  });
+
   it("done + hint 优先显示提示，不显示若不理会", () => {
     const wrapper = mount(IntentPanel, {
       props: {

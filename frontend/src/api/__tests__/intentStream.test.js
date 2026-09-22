@@ -129,4 +129,26 @@ describe("intentStream", () => {
     await intentStream({}, { onRank: (m) => ranks.push(m) });
     expect(ranks[0].best.chinese).toBe("士四进五");
   });
+
+  it("最后一个 chunk 的半个中文字符由下一 chunk 补全", async () => {
+    const encoder = new TextEncoder();
+    const full = encoder.encode('{"type":"threat","hint":"你正被将军"}\n');
+    mockFetchChunks([full.slice(0, full.length - 4), full.slice(full.length - 4)]);
+    const threats = [];
+    await intentStream({}, { onThreat: (m) => threats.push(m) });
+    expect(threats[0].hint).toBe("你正被将军");
+  });
+
+  it("无法解析的行被跳过", async () => {
+    mockFetchStream([
+      "not json",
+      JSON.stringify({ type: "rank", best: { chinese: "马八进七" }, list: [] }),
+    ]);
+    const ranks = [];
+    const errors = [];
+    await intentStream({}, { onRank: (m) => ranks.push(m), onError: (e) => errors.push(e) });
+    expect(ranks).toHaveLength(1);
+    expect(ranks[0].best.chinese).toBe("马八进七");
+    expect(errors).toEqual([]);
+  });
 });

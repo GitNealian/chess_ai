@@ -26,6 +26,7 @@
           <button data-test="flip" @click="flipped = !flipped">翻转棋盘</button>
           <button data-test="save" @click="openSave">保存到棋谱库</button>
         </div>
+        <IntentPanel v-if="intent.status !== 'idle'" :intent="intent" />
         <div class="analysis" data-test="analysis">
           <div class="score-row">
             <span class="score-text" data-test="score">{{ scoreText }}</span>
@@ -81,7 +82,8 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ChessBoard from "../components/ChessBoard.vue";
-import { analyzeStream, api } from "../api";
+import IntentPanel from "../components/IntentPanel.vue";
+import { analyzeStream, api, intentStream } from "../api";
 import { createPlaySession } from "../stores/play";
 
 const route = useRoute();
@@ -107,6 +109,14 @@ function emptyAnalysis(status) {
 const analysis = ref(emptyAnalysis("idle"));
 let controller = null;
 let requestToken = 0;
+
+function emptyIntent(status) {
+  return { status, rank: null, threat: null, baits: [], error: "" };
+}
+
+const intent = ref(emptyIntent("idle"));
+let intentController = null;
+let intentToken = 0;
 
 const arrows = computed(() => {
   const out = [];
@@ -189,6 +199,53 @@ function startAnalysis() {
   );
 }
 
+function stopIntent() {
+  intentToken += 1;
+  if (intentController) {
+    intentController.abort();
+    intentController = null;
+  }
+}
+
+function startIntent() {
+  stopIntent();
+  const token = intentToken;
+  intent.value = emptyIntent("running");
+  intentController = new AbortController();
+  intentStream(
+    {
+      initial_fen: session.state.initialFen,
+      moves: session.state.moves.map(({ chinese, check, gameOver, ...rest }) => rest),
+    },
+    {
+      signal: intentController.signal,
+      onRank: (r) => {
+        if (token !== intentToken) return;
+        intent.value.rank = r;
+      },
+      onThreat: (r) => {
+        if (token !== intentToken) return;
+        intent.value.threat = r;
+      },
+      onBait: (r) => {
+        if (token !== intentToken) return;
+        intent.value.baits.push(r);
+      },
+      onDone: () => {
+        if (token !== intentToken) return;
+        intent.value.status = "done";
+        startAnalysis();
+      },
+      onError: (e) => {
+        if (token !== intentToken) return;
+        intent.value.status = "error";
+        intent.value.error = e?.message || "";
+        startAnalysis();
+      },
+    }
+  );
+}
+
 const turnText = computed(() => {
   if (session.state.gameOver) return "";
   const side = session.state.sideToMove === "red" ? "红方" : "黑方";
@@ -210,13 +267,13 @@ function describe(move, index) {
 }
 
 async function onCellClick(x, y) {
-  if (await session.click(x, y)) startAnalysis();
+  if (await session.click(x, y)) startIntent();
 }
 
 function undo() {
   if (!session.state.moves.length) return;
   session.undo();
-  startAnalysis();
+  startIntent();
 }
 
 const showSave = ref(false);
@@ -285,7 +342,9 @@ async function probePositionState(game, ply) {
 
 async function load() {
   stopAnalysis();
+  stopIntent();
   analysis.value = emptyAnalysis("idle");
+  intent.value = emptyIntent("idle");
   loading.value = true;
   error.value = false;
   try {
@@ -310,13 +369,14 @@ async function load() {
   }
   if (disposed) return;
   loading.value = false;
-  startAnalysis();
+  startIntent();
 }
 
 onMounted(load);
 onUnmounted(() => {
   disposed = true;
   stopAnalysis();
+  stopIntent();
 });
 </script>
 
