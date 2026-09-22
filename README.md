@@ -15,6 +15,7 @@
 - **规则引擎**：完整合法性判定（蹩马腿、塞象眼、炮翻山、将帅照面、过河兵、将死/困毙），规则单一真相源在后端。
 - **人人对弈**：同屏双人轮流走子，支持翻转棋盘（黑方视角）、悔棋、每步自动 AI 分析；可从空白开局，也可从任意棋谱的当前步续下；对局可手动保存到棋谱库。
 - **AI 局面分析**：打谱与对弈时逐层加深实时打分，红优/黑优评分 + 优势条 + 棋盘箭头标注双方一步推演（最新结果置顶）。
+- **对手意图推演**：走子后先推演对手连招——底线威胁（若不理会）与圈套分支（若贪吃/随手棋中计），再进行 AI 评分分析。
 
 ## 目录结构
 
@@ -95,10 +96,10 @@ npm run dev
 ## 测试
 
 ```bash
-# 后端（428 项：427 通过 + 1 跳过；其中引擎相关 254 项）
+# 后端（486 项：485 通过 + 1 跳过）
 cd backend && .venv/bin/python -m pytest
 
-# 前端（149 项）
+# 前端（176 项）
 cd frontend && npx vitest run
 ```
 
@@ -150,6 +151,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 | POST | `/api/games/import-pgn` | PGN 导入 |
 | POST | `/api/games/:id/check-move` | 校验某步是否为正确着法 |
 | POST | `/api/engine/analyze` | 局面分析（NDJSON 流式，逐层返回；可选 threads 1..16） |
+| POST | `/api/engine/intent` | 对手意图推演（NDJSON 流式：rank/threat/bait 事件） |
 | POST | `/api/engine/validate-move` | 无状态走子校验（返回新局面 / 中文记谱 / 将军 / 终局） |
 | GET | `/api/review/queue` | 今日复习队列 |
 | POST | `/api/review/:gameId/submit` | 提交复习结果并更新调度 |
@@ -166,6 +168,15 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 
 `POST /api/engine/validate-move` 为无状态走子校验（供人人对弈页调用）：请求体 `{ "initial_fen"?, "moves"?, "move" }`，重放 `initial_fen + moves`（缺省初始局面 / 空序列）后校验 `move`。合法返回 `{ "legal": true, "fen", "side_to_move", "chinese", "check", "game_over" }`，其中 `check` 为走子后对方是否被将军、`game_over` 为 `{ "winner", "reason": "checkmate" | "stalemate" }` 或 `null`（中国象棋困毙判负），`chinese` 生成失败时回退 ICCS；非法着法返回 200 `{ "legal": false, "reason" }`（"起点没有棋子" / "该棋子不属于行棋方" / "该棋子不能这样走" / "不能送将"）；参数、FEN 或重放序列错误返回 400 `{ "error", "detail"? }`（`moves` 上限 1024 步）。
 
+`POST /api/engine/intent` 为对手意图推演（供对弈 / 打谱页走子后调用）：定位局面的方式与 `/api/engine/analyze` 一致（`fen`，或 `initial_fen` + `moves` + `ply`）；可选 `time_limit_ms`（默认 1500，范围 500–5000，每条推演线的限时）与 `max_baits`（默认 2，范围 1–3，诱饵分支上限）。流内依次产出：
+
+- `{"type":"rank", ...}`：正着参考——`best` 与前 5 着法 `list`，每项含坐标 / `chinese` / `iccs` 及走子方视角 `score_stm`、红方视角 `score_red`；
+- `{"type":"threat", ...}`：底线威胁线——我方「完全不理会」时对手的最佳连招与结局；我方正被将军时 `line` 为空数组并带 `hint` 提示（必须应将）；
+- `{"type":"bait", ...}`：每条诱饵一个事件，`bait` 含着法与 `reason`（"贪吃" / "随手"），`line` 为对手惩罚连招，`outcome` 含 `mate` / `loss_piece` / `score_red`；
+- `{"type":"done"|"error"|"ping", ...}`：与 `/analyze` 语义一致。
+
+结局语义：`outcome.mate` 为正数表示我方 N 步内被绝杀；`loss_piece` 为该线终点我方损失的最大子力中文名；`score_red` 为该线终点红方视角引擎分。该接口与 `/analyze` 共享同一把分析锁——同刻只有一个引擎重任务流；前端走子后先发意图请求，意图流 `done` 后再发起评分分析（意图失败静默降级，不影响评分）。
+
 ## 已知限制
 
 - 前端「棋盘摆子」入口不校验着法合法性；后端保存时会校验并拒绝非法序列（错误信息带步号）。
@@ -178,6 +189,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 棋谱列表对每条棋谱的复习信息为惰性加载（本地单用户规模下可接受）。
 - 单用户、无登录；数据存于 SQLite。
 - AI 分析接入打谱页与对弈页；录入 / 默写视图未接入。
+- 意图推演基于浅层搜索（固定深度 6、每线限时默认 1500ms），线路精度有限；诱饵筛选为启发式；「跳一手」威胁线结论仅在「我方完全不作为」前提下成立；推演与评分共享分析锁，前端先意图后评分串行触发。
 - 人人对弈为同屏双人，不联网、不自动保存（手动保存到棋谱库）；不判定长将、重复局面和棋；从棋谱续下的将军/终局提示由一次探测请求恢复，悔棋到该步之前时提示不恢复（着法合法性始终由后端保证）。
 - 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，完成一层后按「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（通常完成时间不超过其 ~1.5 倍）；若下一层实际耗时相对上一层暴涨，仍可能超出。
 - 并行分析下 `nodes` 仅统计主线程，且结果非确定性（同局面多次分析的分数/PV 可能微变，将杀步数可能 ±1 ply 级偏差）。

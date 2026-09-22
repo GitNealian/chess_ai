@@ -30,6 +30,11 @@
 `initial_fen + moves` 后校验一步），供「人人对弈」页面调用。该接口只做
 请求内局面推演、无共享可变状态，因此**不获取 `_ANALYZE_LOCK`**（避免
 分析进行中无法走子），也不触发引擎搜索。
+
+另提供 `POST /api/engine/intent`：对手意图推演（NDJSON 流式，事件为
+`rank` / `threat` / `bait` / `done` / `error` / `ping`），复用同一把
+`_ANALYZE_LOCK`，与 /analyze 互斥（同刻只有一个引擎重任务流）；前端走子
+后先意图后评分串行触发，意图失败静默降级、不影响评分分析。
 """
 
 import json
