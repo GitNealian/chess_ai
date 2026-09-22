@@ -287,7 +287,7 @@ def test_intent_events_sequence_on_mated_side():
     kinds = [e["type"] for e in events]
     assert kinds[0] == "rank"
     assert "threat" in kinds
-    assert kinds[-1] in ("bait", "threat")
+    assert kinds[-1] == "bait"  # 实测该局面 kinds=['rank','threat','bait']
     assert kinds.index("rank") < kinds.index("threat")
     rank = events[0]
     assert rank["best"] and rank["list"]
@@ -295,6 +295,9 @@ def test_intent_events_sequence_on_mated_side():
         assert set(item) >= {"x1", "y1", "x2", "y2", "iccs", "chinese", "score_stm", "score_red"}
     threat = next(e for e in events if e["type"] == "threat")
     assert threat["outcome"]["mate"] == 3  # 与 threat_event 单测一致（我方停一手后红 3-ply 杀）
+    bait = events[-1]
+    assert bait["bait"]["reason"] in ("贪吃", "随手")
+    assert isinstance(bait["line"], list)
 
 
 def test_intent_events_rank_scores_monotonic():
@@ -352,3 +355,37 @@ def test_intent_events_respects_external_stop():
         )
     )
     assert events == []
+
+
+def test_intent_events_stop_between_lines():
+    import numpy as np
+
+    from engine.intent import intent_events
+
+    stop = np.zeros(1, dtype=np.int8)
+    gen = intent_events(
+        STM_MATED_IN_FOUR,
+        max_baits=1,
+        rank_depth=4,
+        line_depth=6,
+        per_line_timeout_ms=30000,
+        stop=stop,
+    )
+    first = next(gen)  # rank 产出
+    stop[0] = 1
+    rest = list(gen)
+    assert rest == []  # 线间检查点：threat 不再开始
+    assert first["type"] == "rank"
+
+
+def test_intent_events_default_params_yield_full_stream():
+    from engine.intent import intent_events
+
+    # 默认参数（rank/line depth 6、1500ms/线）在开局局面必须全产出，
+    # 锁死「静默空流」回归（曾因 depth 8 超 rank 预算而空流）
+    events = list(intent_events(INITIAL))
+    kinds = [e["type"] for e in events]
+    assert kinds[0] == "rank"
+    assert "threat" in kinds
+    threat = next(e for e in events if e["type"] == "threat")
+    assert threat["line"]  # threat 线完整产出而非超时降级

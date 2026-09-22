@@ -42,8 +42,12 @@ __all__ = [
 ]
 
 # 排名与推演线的固定深度（浅层足够表达意图，单线程秒级）。
-INTENT_RANK_DEPTH = 8
-INTENT_LINE_DEPTH = 8
+# 实测依据：depth 8 单线在常见局面超 1500ms 预算（开局 rank 2338ms、
+# 中局整流 5191ms 且 threat/bait 全降级为静默空流）；6 为实测兼顾
+# 质量与「意图先出 2-5s」承诺的值（开局 rank 49ms，line_depth=6 时
+# threat/bait 均在 1500ms 内完整产出，全线 0.5-1.0s）。
+INTENT_RANK_DEPTH = 6
+INTENT_LINE_DEPTH = 6
 
 # 展示线长度上限（ply，含对手与我方交替着法）。
 LINE_PV_LIMIT = 6
@@ -319,15 +323,10 @@ def bait_event(fen, bait, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
     probe.apply_move(move)  # 诱饵来自合法排名着法；apply 失败应尽早暴露
     bait_fen = probe.to_fen()
 
-    iccs = f"{chr(97 + move.x1)}{move.y1}{chr(97 + move.x2)}{move.y2}"
     payload = {
         "type": "bait",
-        "bait": {
-            "x1": move.x1, "y1": move.y1, "x2": move.x2, "y2": move.y2,
-            "iccs": iccs,
-            "chinese": _move_chinese(root, move),
-            "reason": bait["reason"],
-        },
+        "bait": {**_move_payload(int(bait["packed"]), root),
+                 "reason": bait["reason"]},
         "line": [],
         "outcome": {"mate": None, "loss_piece": None, "score_red": None},
     }
@@ -371,23 +370,26 @@ def intent_events(fen, *, max_baits=2, rank_depth=INTENT_RANK_DEPTH,
     - 任何单线超时/失败不中断整流：已产出事件保留，后续线照常（除非
       外部 stop 置位）；rank 失败（含困毙无着法）直接结束；
     - `stop`：可选 np.int8[1] 外部停旗（routes 层取消/客户端断开），
-      置位后不再开始后续线；各线内部另有独立超时停旗，二者独立；
+      置位后不再开始后续线（预置位则一条线都不开始，含 rank）；各线
+      内部另有独立超时停旗，二者独立——stop 置位发生在某线内部时该线
+      跑完（≤ 一线超时），线间检查点生效；
     - `per_line_timeout_ms` 默认 1500：宁可降级也不拖慢「意图先出」
       （性能预算实测备注见实现计划文档 Task 6 节）。
     """
     board = Board().load_fen(fen)
     external_stop = stop if stop is not None else np.zeros(1, dtype=np.int8)
+    if external_stop[0] != 0:  # 预置位：连 rank 都不开始
+        return
 
     ranked = rank_moves(fen, depth=rank_depth, timeout_ms=per_line_timeout_ms)
     if not ranked or external_stop[0] != 0:
         return
     my_is_red = board.side_to_move == RED
-    to_red = (lambda s: s) if my_is_red else (lambda s: -s)
     rank_items = []
     for packed, s in ranked[:_RANK_LIST_LIMIT]:
         item = _move_payload(packed, board)
         item["score_stm"] = int(s)
-        item["score_red"] = int(to_red(s))
+        item["score_red"] = int(s if my_is_red else -s)
         rank_items.append(item)
     yield {"type": "rank", "best": rank_items[0], "list": rank_items}
     if external_stop[0] != 0:
