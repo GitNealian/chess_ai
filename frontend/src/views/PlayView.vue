@@ -208,6 +208,8 @@ function stopIntent() {
 }
 
 function startIntent() {
+  stopAnalysis();
+  analysis.value = emptyAnalysis("idle");
   stopIntent();
   const token = intentToken;
   intent.value = emptyIntent("running");

@@ -67,6 +67,13 @@ function emitIntentDone(index) {
   intentStreams[index].handlers.onDone({});
 }
 
+function stubHangingIntentStream(streams) {
+  intentStream.mockImplementation((payload, handlers = {}) => {
+    streams.push({ payload, handlers });
+    return Promise.resolve();
+  });
+}
+
 describe("PlayView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -394,10 +401,7 @@ describe("PlayView", () => {
   });
 
   it("意图流未完成时评分不启动，完成后才启动（先意图后评分）", async () => {
-    intentStream.mockImplementation((payload, handlers = {}) => {
-      intentStreams.push({ payload, handlers });
-      return Promise.resolve();
-    });
+    stubHangingIntentStream(intentStreams);
     const wrapper = mountView();
     await flushPromises();
 
@@ -415,10 +419,7 @@ describe("PlayView", () => {
   });
 
   it("意图流失败静默降级，评分照常启动", async () => {
-    intentStream.mockImplementation((payload, handlers = {}) => {
-      intentStreams.push({ payload, handlers });
-      return Promise.resolve();
-    });
+    stubHangingIntentStream(intentStreams);
     const wrapper = mountView();
     await flushPromises();
 
@@ -430,10 +431,7 @@ describe("PlayView", () => {
   });
 
   it("走子时旧意图流被中止，迟到 onDone 不触发评分", async () => {
-    intentStream.mockImplementation((payload, handlers = {}) => {
-      intentStreams.push({ payload, handlers });
-      return Promise.resolve();
-    });
+    stubHangingIntentStream(intentStreams);
     const wrapper = mountView();
     await flushPromises();
     expect(intentStreams).toHaveLength(1);
@@ -457,10 +455,7 @@ describe("PlayView", () => {
   });
 
   it("组件卸载时中止进行中的意图流", async () => {
-    intentStream.mockImplementation((payload, handlers = {}) => {
-      intentStreams.push({ payload, handlers });
-      return Promise.resolve();
-    });
+    stubHangingIntentStream(intentStreams);
     const wrapper = mountView();
     await flushPromises();
     wrapper.unmount();

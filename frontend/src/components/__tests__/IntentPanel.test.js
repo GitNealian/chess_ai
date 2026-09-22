@@ -118,6 +118,16 @@ describe("IntentPanel", () => {
     expect(wrapper.find('[data-test="intent-best"]').text()).toBe("正着参考：士四进五");
   });
 
+  it("done 且无任何内容时显示本次推演无结果", () => {
+    const wrapper = mount(IntentPanel, {
+      props: { intent: { status: "done", rank: null, threat: null, baits: [], error: "" } },
+    });
+    expect(wrapper.find('[data-test="intent-empty"]').text()).toBe("本次推演无结果");
+    expect(wrapper.find('[data-test="intent-hint"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="intent-threat"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="intent-best"]').exists()).toBe(false);
+  });
+
   it("idle 时无内容行", () => {
     const wrapper = mount(IntentPanel, { props: { intent: { status: "idle" } } });
     expect(wrapper.findAll(".intent-item")).toHaveLength(0);

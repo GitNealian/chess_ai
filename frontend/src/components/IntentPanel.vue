@@ -65,6 +65,13 @@ const bestText = computed(() => {
     </p>
     <template v-else-if="intent.status === 'done'">
       <p v-if="hintText" class="intent-item intent-hint" data-test="intent-hint">{{ hintText }}</p>
+      <p
+        v-else-if="!hintText && !threatText && !baitItems.length && !bestText"
+        class="intent-status"
+        data-test="intent-empty"
+      >
+        本次推演无结果
+      </p>
       <p v-if="threatText" class="intent-item" data-test="intent-threat">
         {{ threatText }}
         <span v-if="threatOutcome" class="outcome">{{ threatOutcome }}</span>

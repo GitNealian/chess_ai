@@ -146,6 +146,8 @@ function stopIntent() {
 }
 
 function startIntent() {
+  stopAnalysis();
+  analysis.value = emptyAnalysis("idle");
   stopIntent();
   if (!game.value) return;
   const token = intentToken;
