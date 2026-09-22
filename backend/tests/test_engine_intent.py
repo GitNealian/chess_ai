@@ -218,6 +218,10 @@ def test_select_baits_skips_when_too_few_moves():
 
     # 排名不足 2 个 → 无诱饵
     assert select_baits("4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1", [(123, 0)], max_baits=2) == []
+    # max_baits <= 0 病态输入 → 无诱饵（早退在前，不触碰候选着法）
+    ranked = [(123, 0), (456, -10)]
+    assert select_baits("4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1", ranked, max_baits=0) == []
+    assert select_baits("4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1", ranked, max_baits=-1) == []
 
 
 def test_bait_event_reports_punishment_structure():
@@ -243,3 +247,25 @@ def test_bait_event_timeout_degrades():
     event = bait_event(INITIAL, bait, depth=6, timeout_ms=1)
     assert event["line"] == []
     assert event["outcome"] == {"mate": None, "loss_piece": None, "score_red": None}
+
+
+# 贪吃→被吃回走向的锁定局面（REPL spike 实测）：黑将 d9、黑马 c5、黑车 f5、
+# 红车 c0、红王 e0。黑车控制 f 列使红王仅剩帅五进一，红方共 9 个着法——
+# 吃马（车换马，子力最差着法）恰排名第 9 落入诱饵窗口；黑车 f5→c5 吃回
+# 后红方无车可再吃回，「贪吃→被吃回」走向稳定。
+BAIT_LOSS_CASE = "3k5/9/9/9/2n2r3/9/9/9/9/2R1K4 w - - 0 1"
+
+
+def test_bait_event_loss_piece_is_my_side():
+    from engine.intent import bait_event, rank_moves, select_baits
+
+    fen = BAIT_LOSS_CASE
+    baits = select_baits(fen, rank_moves(fen, depth=4, timeout_ms=30000), max_baits=3)
+    greed = next(b for b in baits if b["reason"] == "贪吃")
+    event = bait_event(fen, greed, depth=6, timeout_ms=30000)
+    # 红车 c0→c5 吃黑马（黑马在 c5，中文记谱 spike 实测为「车七进五」）
+    assert event["bait"]["chinese"] == "车七进五"
+    # 黑车 f5 吃回红车：loss_piece 是我方（红，原局面走子方）丢的车
+    assert event["outcome"]["loss_piece"] == "车"
+    assert event["outcome"]["score_red"] < -100
+    assert event["line"] and event["line"][0]["chinese"].startswith("车")  # 对手首着吃回

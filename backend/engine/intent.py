@@ -243,7 +243,10 @@ def threat_event(fen, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
     if board.in_check(board.side_to_move):
         return {"type": "threat", "line": [], "outcome": None, "hint": _THREAT_HINT}
 
-    flipped = flip_side_to_move(fen)
+    # 翻转走子方构造「停一手」局面（clone 自 board，同一 FEN 只解析一次）
+    flipped_board = board.clone()
+    flipped_board.side_to_move = BLACK if board.side_to_move == RED else RED
+    flipped = flipped_board.to_fen()
     stop = np.zeros(1, dtype=np.int8)
     result = _search_iteration(
         flipped, max_depth=depth, stop=stop, timeout_ms=timeout_ms
@@ -259,7 +262,7 @@ def threat_event(fen, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
         "loss_piece": None,
         "score_red": int(score if opponent_is_red else -score),
     }
-    line = describe_line(pv, Board().load_fen(flipped), limit=LINE_PV_LIMIT)
+    line = describe_line(pv, flipped_board)  # describe_line 内部自行 clone
     return {"type": "threat", "line": line, "outcome": outcome, "hint": None}
 
 
@@ -272,7 +275,7 @@ def _board_capture_flags(fen, packed_list):
     board = Board().load_fen(fen)
     flags = {}
     for packed in packed_list:
-        move = _packed_to_move(packed)
+        move = _packed_to_move(int(packed))
         flags[packed] = board.piece_at(move.x2, move.y2) is not None
     return flags
 
@@ -283,24 +286,20 @@ def select_baits(fen, ranked, *, max_baits=2):
     - `ranked`：`rank_moves` 输出（降序），首名视为正着不入选；
     - 不比较分数差：root_scores 对 fail-low 着法是零窗口上界，分差不可靠
       （Task 2 实测），「诱人程度」以吃子结构信号表达；
-    - 只看排名前 `_BAIT_WINDOW`；候选不足按实际数量产出。
+    - 只看排名前 `_BAIT_WINDOW`；候选不足按实际数量产出；
+    - `max_baits <= 0` 视为不要诱饵，返回 ``[]``。
     """
-    if len(ranked) < 2:
+    if len(ranked) < 2 or max_baits <= 0:
         return []
     window = ranked[1:_BAIT_WINDOW + 1]
     is_capture = _board_capture_flags(fen, [packed for packed, _ in window])
-    baits = []
-    for packed, _ in window:
-        if is_capture[packed]:
-            baits.append({"packed": packed, "reason": "贪吃"})
-            if len(baits) >= max_baits:
-                return baits
-    for packed, _ in window:
-        if all(b["packed"] != packed for b in baits):
-            baits.append({"packed": packed, "reason": "随手"})
-            if len(baits) >= max_baits:
-                return baits
-    return baits
+    ordered = [packed for packed, _ in window if is_capture[packed]] + [
+        packed for packed, _ in window if not is_capture[packed]
+    ]
+    return [
+        {"packed": p, "reason": "贪吃" if is_capture[p] else "随手"}
+        for p in ordered[:max_baits]
+    ]
 
 
 def bait_event(fen, bait, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
@@ -345,5 +344,5 @@ def bait_event(fen, bait, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
         payload["outcome"]["mate"] = int(mate)
     line_board = Board().load_fen(bait_fen)
     payload["outcome"]["loss_piece"] = _loss_for_side(pv, line_board, my_side)
-    payload["line"] = describe_line(pv, line_board, limit=LINE_PV_LIMIT)
+    payload["line"] = describe_line(pv, line_board)
     return payload
