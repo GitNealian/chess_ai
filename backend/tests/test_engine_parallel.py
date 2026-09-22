@@ -217,27 +217,35 @@ def test_parallel_start_failure_degrades_gracefully(monkeypatch):
     """单个辅助线程 start() 失败：跳过该线程继续尝试后续，分析正常产出。
 
     `engine-helper-2` 抛错、`engine-helper-1/3` 照常启动（max_depth=8 使
-    i=3 仍在范围内，覆盖 `continue` 后继续启动后续线程的降级语义）。
+    i=3 仍在范围内）；断言成功启动的线程名，锁定「跳过失败线程后继续启动
+    后续」的 `continue` 语义（改成 `break` 时 `engine-helper-3` 不会启动）。
     """
     real_start = threading.Thread.start
+    started = []
 
     def flaky_start(self):
         if self.name == "engine-helper-2":
             raise RuntimeError("start failed")
-        return real_start(self)
+        real_start(self)
+        started.append(self.name)
 
     monkeypatch.setattr(threading.Thread, "start", flaky_start)
+    stop = np.zeros(1, dtype=np.int8)
     results = list(
         analyze(
             INITIAL,
             start_depth=6,
             max_depth=8,
             time_limit_ms=5000,
+            stop=stop,
             threads=4,
         )
     )
     assert results
     assert all(r.pv for r in results)
+    assert "engine-helper-1" in started
+    assert "engine-helper-3" in started  # continue 语义：跳过失败的 2 后仍启动 3
+    assert "engine-helper-2" not in started
     time.sleep(0.05)
     leftovers = [
         t

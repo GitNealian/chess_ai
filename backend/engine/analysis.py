@@ -407,8 +407,10 @@ def analyze(
             # 层边界兜底同步外部停旗：中断路径不只依赖转发线程——转发线程
             # 启动失败降级为 None 时（资源受限），调用方置位的外部 stop 由
             # 此处同步进 stop_all，主循环随即 break、辅助线程在 njit 检查点
-            # 毫秒级退出；代价是主线程当前正在搜的层会先跑完才到此处。
-            # 单线程时 stop_all 为 None（search_stop is stop），不触发。
+            # 毫秒级退出。转发降级路径的中断延迟上界 = 主线程当前正在搜索
+            # 的层剩余时间（层内检查点只在 stop_all 置位后生效）；正常路径
+            # 由转发线程 10ms 内同步，延迟毫秒级。单线程时 stop_all 为
+            # None（search_stop is stop），不触发。
             if has_external_stop and stop_all is not None and stop[0] != 0:
                 stop_all[0] = 1
             if search_stop[0] != 0:
