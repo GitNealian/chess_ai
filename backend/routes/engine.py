@@ -44,6 +44,7 @@ from chess_engine.notation import move_to_chinese
 from engine import analysis as engine_analysis
 from engine import analyze
 from engine import constants as EC
+from engine.intent import intent_events
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
 engine_bp = Blueprint("engine", __name__)
@@ -404,6 +405,7 @@ MAX_INTENT_TIMEOUT_MS = 5000
 MIN_INTENT_BAITS = 1
 MAX_INTENT_BAITS = 3
 DEFAULT_INTENT_TIMEOUT_MS = 1500  # 与 intent_events 默认一致（实测预算口径）
+DEFAULT_INTENT_BAITS = 2  # 与 intent_events 默认一致
 
 
 @engine_bp.post("/intent")
@@ -429,7 +431,7 @@ def intent_position():
             )
             max_baits = _clamp_int(
                 data.get("max_baits"),
-                2,
+                DEFAULT_INTENT_BAITS,
                 MIN_INTENT_BAITS,
                 MAX_INTENT_BAITS,
             )
@@ -442,8 +444,6 @@ def intent_position():
 
         def worker():
             try:
-                from engine.intent import intent_events
-
                 for event in intent_events(
                     fen,
                     max_baits=max_baits,
