@@ -395,3 +395,101 @@ def analyze_position():
                 stop[0] = 1
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+
+
+# ---- 对手意图推演（新端点：复用锁与流式骨架，不改既有函数） ---------
+
+MIN_INTENT_TIMEOUT_MS = 500
+MAX_INTENT_TIMEOUT_MS = 5000
+MIN_INTENT_BAITS = 1
+MAX_INTENT_BAITS = 3
+DEFAULT_INTENT_TIMEOUT_MS = 1500  # 与 intent_events 默认一致（实测预算口径）
+
+
+@engine_bp.post("/intent")
+def intent_position():
+    """对手意图推演：NDJSON 流式（rank → threat → bait* → done）。
+
+    复用 `_ANALYZE_LOCK` 与 /analyze 互斥：意图与评分永不并发（设计承诺）；
+    事件由 `engine.intent.intent_events` 产出原样转发。客户端断开经
+    finally 置位停旗，生成器在线边界停止产出。
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体必须是 JSON 对象"}), 400
+
+    def generate():
+        try:
+            fen = _resolve_fen(data)
+            timeout_ms = _clamp_int(
+                data.get("time_limit_ms"),
+                DEFAULT_INTENT_TIMEOUT_MS,
+                MIN_INTENT_TIMEOUT_MS,
+                MAX_INTENT_TIMEOUT_MS,
+            )
+            max_baits = _clamp_int(
+                data.get("max_baits"),
+                2,
+                MIN_INTENT_BAITS,
+                MAX_INTENT_BAITS,
+            )
+        except Exception as exc:  # noqa: BLE001 - 兜底转流内 error 行
+            yield _encode({"type": "error", "message": str(exc)})
+            return
+
+        stop = np.zeros(1, dtype=np.int8)
+        events = queue.Queue()
+
+        def worker():
+            try:
+                from engine.intent import intent_events
+
+                for event in intent_events(
+                    fen,
+                    max_baits=max_baits,
+                    per_line_timeout_ms=timeout_ms,
+                    stop=stop,
+                ):
+                    events.put(("event", event))
+                events.put(("done", None))
+            except Exception as exc:  # noqa: BLE001 - 转流内 error 行
+                events.put(("error", exc))
+
+        with _ANALYZE_LOCK:
+            t0 = time.perf_counter()
+            threading.Thread(
+                target=worker, name="engine-intent", daemon=True
+            ).start()
+            try:
+                while True:
+                    try:
+                        kind, payload = events.get(timeout=PING_INTERVAL_S)
+                    except queue.Empty:
+                        yield _encode(
+                            {
+                                "type": "ping",
+                                "elapsed_ms": int(
+                                    (time.perf_counter() - t0) * 1000
+                                ),
+                            }
+                        )
+                        continue
+                    if kind == "event":
+                        yield _encode(payload)
+                    elif kind == "done":
+                        yield _encode(
+                            {
+                                "type": "done",
+                                "time_ms": int(
+                                    (time.perf_counter() - t0) * 1000
+                                ),
+                            }
+                        )
+                        break
+                    else:
+                        yield _encode({"type": "error", "message": str(payload)})
+                        break
+            finally:
+                stop[0] = 1
+
+    return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
