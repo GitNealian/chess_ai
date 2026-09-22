@@ -56,3 +56,30 @@ def test_rank_moves_is_stm_perspective():
     ranked = rank_moves(STM_MATED_IN_FOUR, depth=4)
     assert ranked
     assert ranked[0][1] <= -(C.MAX_SCORE - 100)  # 走子方被将杀：-(MAX_SCORE-ply) 量级
+
+
+def test_describe_line_yields_chinese_moves():
+    from engine.intent import describe_line, rank_moves
+
+    ranked = rank_moves(INITIAL, depth=4)
+    board = Board().load_fen(INITIAL)
+    items = describe_line([ranked[0][0]], board, limit=3)
+    assert len(items) == 1
+    item = items[0]
+    assert set(item) == {"x1", "y1", "x2", "y2", "iccs", "chinese"}
+    assert item["iccs"] != "" and item["chinese"] != ""
+
+
+def test_loss_for_side_reports_capture_loss():
+    from engine.constants import xy_to_site
+    from engine.intent import _loss_for_side
+
+    # 黑车 c6 与红车 c0 同列相望（c1..c5 空）：红车 c0→c6 吃车后黑方丢车。
+    fen = "4k4/9/9/2r6/9/9/9/9/9/2R1K4 w - - 0 1"
+    board = Board().load_fen(fen)
+    src = xy_to_site(2, 0)  # 红车 c0
+    dest = xy_to_site(2, 6)  # 黑车 c6
+    packed = src | (dest << 7)
+    assert _loss_for_side(packed_line=[packed], board=board, side="black") == "车"
+    # 空线无失子
+    assert _loss_for_side(packed_line=[], board=board, side="black") is None

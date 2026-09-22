@@ -13,18 +13,24 @@ chess_engine 规则引擎；不修改任何搜索/评估模块。
 threading.Timer 置位停旗丢弃该线；事件为 dict（由 routes 层编码 NDJSON）。
 """
 
+from collections import Counter
+
 import threading  # 后续任务：threading.Timer 超时停旗（Task 2）
 
 import numpy as np  # 后续任务：stop 停旗数组 np.int8[1]（Task 2）
 
 from chess_engine.board import BLACK, RED, Board
+from chess_engine.move import Move
+from chess_engine.notation import move_to_chinese
 
 from engine import analysis as engine_analysis
 from engine import constants as EC
 from engine import search as engine_search
+from engine.constants import site_to_xy, xy_to_site
 from engine.position import load_position
 
 __all__ = [
+    "describe_line",
     "flip_side_to_move",
     "INTENT_LINE_DEPTH",
     "INTENT_RANK_DEPTH",
@@ -121,3 +127,71 @@ def rank_moves(fen, *, depth=INTENT_RANK_DEPTH, timeout_ms=None):
     ]
     ranked.sort(key=lambda item: item[1], reverse=True)
     return ranked
+
+
+# 我方棋子价值序（loss_piece 取丢失的最大子）。
+_PIECE_VALUE = {"K": 7, "R": 6, "C": 5, "N": 4, "P": 3, "A": 2, "B": 1}
+_ROLE_CN_RED = {"K": "帅", "A": "仕", "B": "相", "N": "马", "R": "车", "C": "炮", "P": "兵"}
+_ROLE_CN_BLACK = {"K": "将", "A": "士", "B": "象", "N": "马", "R": "车", "C": "炮", "P": "卒"}
+
+
+def _packed_to_move(packed):
+    """packed 着法 → Move（低 7 位起点 site、高位终点 site）。"""
+    x1, y1 = site_to_xy(packed & 127)
+    x2, y2 = site_to_xy(packed >> 7)
+    return Move(x1, y1, x2, y2)
+
+
+def describe_line(packed_line, base_board, limit=LINE_PV_LIMIT):
+    """packed 着法序列 → [{x1,y1,x2,y2,iccs,chinese}]（中文失败回退 ICCS）。
+
+    逐着在副本局面推进以生成上下文相关的中文记谱；任一着 apply 失败
+    （非法/异常局面）后不再尝试后续中文，仅出坐标。
+    """
+    items = []
+    board = base_board.clone()
+    for packed in packed_line[:limit]:
+        move = _packed_to_move(int(packed))
+        iccs = f"{chr(97 + move.x1)}{move.y1}{chr(97 + move.x2)}{move.y2}"
+        chinese = iccs
+        if board is not None:
+            try:
+                chinese = move_to_chinese(board, move)
+            except ValueError:
+                chinese = iccs
+            try:
+                board.apply_move(move)
+            except ValueError:
+                board = None
+        items.append(
+            {"x1": move.x1, "y1": move.y1, "x2": move.x2, "y2": move.y2,
+             "iccs": iccs, "chinese": chinese}
+        )
+    return items
+
+
+def _my_pieces(board, side):
+    return sorted(
+        (kind, x, y) for (x, y), (s, kind) in board.grid.items() if s == side
+    )
+
+
+def _loss_for_side(packed_line, board, side):
+    """线走完后 `side` 方丢失的最大子中文名（无失子返回 None）。
+
+    走线前后的 `side` 方子力按数量差统计（同种多子无法区分个体）；
+    apply 失败视为局面异常，保守返回 None。
+    """
+    before = Counter(kind for kind, _, _ in _my_pieces(board, side))
+    probe = board.clone()
+    for packed in packed_line:
+        try:
+            probe.apply_move(_packed_to_move(int(packed)))
+        except ValueError:
+            return None
+    after = Counter(kind for kind, _, _ in _my_pieces(probe, side))
+    lost = list((before - after).elements())
+    if not lost:
+        return None
+    role_cn = _ROLE_CN_RED if side == "red" else _ROLE_CN_BLACK
+    return role_cn[max(lost, key=lambda k: _PIECE_VALUE[k])]
