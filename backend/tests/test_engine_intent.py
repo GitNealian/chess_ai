@@ -68,6 +68,23 @@ def test_describe_line_yields_chinese_moves():
     item = items[0]
     assert set(item) == {"x1", "y1", "x2", "y2", "iccs", "chinese"}
     assert item["iccs"] != "" and item["chinese"] != ""
+    assert item["chinese"] != item["iccs"], "中文记谱应真正生成而非回退 ICCS"
+
+
+def test_describe_line_limit_truncates():
+    from engine.constants import xy_to_site
+    from engine.intent import describe_line
+
+    # 手工构造初始局面两个合法 packed（src | dest << 7）：
+    # 红炮 (7,2)→(4,2) 炮二平五、黑炮 (7,7)→(4,7) 炮8平5。
+    red_cannon = xy_to_site(7, 2) | (xy_to_site(4, 2) << 7)
+    black_cannon = xy_to_site(7, 7) | (xy_to_site(4, 7) << 7)
+    board = Board().load_fen(INITIAL)
+    full = describe_line([red_cannon, black_cannon], board)
+    assert len(full) == 2
+    assert full[0]["chinese"] == "炮二平五"
+    assert full[1]["chinese"] != full[1]["iccs"]
+    assert len(describe_line([red_cannon, black_cannon], board, limit=1)) == 1
 
 
 def test_loss_for_side_reports_capture_loss():
@@ -83,3 +100,28 @@ def test_loss_for_side_reports_capture_loss():
     assert _loss_for_side(packed_line=[packed], board=board, side="black") == "车"
     # 空线无失子
     assert _loss_for_side(packed_line=[], board=board, side="black") is None
+
+
+def test_loss_for_side_picks_most_valuable_among_multiple():
+    from engine.constants import xy_to_site
+    from engine.intent import _loss_for_side
+
+    # 最小局面：红车 a0 连走两着先吃黑士 a2 再吃黑兵 a9——
+    # 黑同丢[士,兵]，价值序对齐 PIECE_SCORES 后应报更贵的「士」。
+    fen = "p3k4/9/9/9/9/9/9/a8/9/R3K4 w - - 0 1"
+    board = Board().load_fen(fen)
+    take_advisor = xy_to_site(0, 0) | (xy_to_site(0, 2) << 7)
+    take_pawn = xy_to_site(0, 2) | (xy_to_site(0, 9) << 7)
+    assert _loss_for_side(
+        packed_line=[take_advisor, take_pawn], board=board, side="black"
+    ) == "士"
+
+
+def test_loss_for_side_returns_none_on_empty_source():
+    from engine.constants import xy_to_site
+    from engine.intent import _loss_for_side
+
+    board = Board().load_fen(INITIAL)
+    # 起点取初始局面中路空点 (4,5)：apply_move 抛 ValueError → 返回 None。
+    packed = xy_to_site(4, 5) | (xy_to_site(4, 8) << 7)
+    assert _loss_for_side(packed_line=[packed], board=board, side="black") is None

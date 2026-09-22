@@ -19,7 +19,7 @@ import threading  # 后续任务：threading.Timer 超时停旗（Task 2）
 
 import numpy as np  # 后续任务：stop 停旗数组 np.int8[1]（Task 2）
 
-from chess_engine.board import BLACK, RED, Board
+from chess_engine.board import BLACK, PIECE_NAMES, RED, Board
 from chess_engine.move import Move
 from chess_engine.notation import move_to_chinese
 
@@ -129,10 +129,10 @@ def rank_moves(fen, *, depth=INTENT_RANK_DEPTH, timeout_ms=None):
     return ranked
 
 
-# 我方棋子价值序（loss_piece 取丢失的最大子）。
-_PIECE_VALUE = {"K": 7, "R": 6, "C": 5, "N": 4, "P": 3, "A": 2, "B": 1}
-_ROLE_CN_RED = {"K": "帅", "A": "仕", "B": "相", "N": "马", "R": "车", "C": "炮", "P": "兵"}
-_ROLE_CN_BLACK = {"K": "将", "A": "士", "B": "象", "N": "马", "R": "车", "C": "炮", "P": "卒"}
+# 我方棋子价值序（loss_piece 取丢失的最大子）；相对序对齐
+# engine.constants.PIECE_SCORES（兵 < 士＝象 < 马 < 炮 < 车 < 将）；
+# 不入引擎常量以保持编排层纯 Python。
+_PIECE_VALUE = {"K": 7, "R": 6, "C": 5, "N": 4, "A": 3, "B": 3, "P": 2}
 
 
 def _packed_to_move(packed):
@@ -147,6 +147,9 @@ def describe_line(packed_line, base_board, limit=LINE_PV_LIMIT):
 
     逐着在副本局面推进以生成上下文相关的中文记谱；任一着 apply 失败
     （非法/异常局面）后不再尝试后续中文，仅出坐标。
+
+    降级语义与 routes._pv_payload 对齐（评分 PV 展示在 routes 层、
+    意图连招展示在此处，有意分离）。
     """
     items = []
     board = base_board.clone()
@@ -171,6 +174,7 @@ def describe_line(packed_line, base_board, limit=LINE_PV_LIMIT):
 
 
 def _my_pieces(board, side):
+    # sorted 固定顺序，使 _loss_for_side 同分取最大时结果确定。
     return sorted(
         (kind, x, y) for (x, y), (s, kind) in board.grid.items() if s == side
     )
@@ -180,7 +184,10 @@ def _loss_for_side(packed_line, board, side):
     """线走完后 `side` 方丢失的最大子中文名（无失子返回 None）。
 
     走线前后的 `side` 方子力按数量差统计（同种多子无法区分个体）；
-    apply 失败视为局面异常，保守返回 None。
+    起点无子等 apply 拒绝时返回 None（apply_move 不校验着法形状，
+    输入须来自引擎合法着法）。
+
+    side 取值 "red"/"black"，其余值静默按黑方处理——调用方须传小写。
     """
     before = Counter(kind for kind, _, _ in _my_pieces(board, side))
     probe = board.clone()
@@ -193,5 +200,4 @@ def _loss_for_side(packed_line, board, side):
     lost = list((before - after).elements())
     if not lost:
         return None
-    role_cn = _ROLE_CN_RED if side == "red" else _ROLE_CN_BLACK
-    return role_cn[max(lost, key=lambda k: _PIECE_VALUE[k])]
+    return PIECE_NAMES[(side, max(lost, key=lambda k: _PIECE_VALUE[k]))]
