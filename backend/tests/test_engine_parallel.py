@@ -213,7 +213,12 @@ def test_parallel_stop_leaves_no_worker_threads():
     assert leftovers == []
 
 
-def test_parallel_start_failure_cleans_up(monkeypatch):
+def test_parallel_start_failure_degrades_gracefully(monkeypatch):
+    """单个辅助线程 start() 失败：跳过该线程继续尝试后续，分析正常产出。
+
+    `engine-helper-2` 抛错、`engine-helper-1/3` 照常启动（max_depth=8 使
+    i=3 仍在范围内，覆盖 `continue` 后继续启动后续线程的降级语义）。
+    """
     real_start = threading.Thread.start
 
     def flaky_start(self):
@@ -222,17 +227,17 @@ def test_parallel_start_failure_cleans_up(monkeypatch):
         return real_start(self)
 
     monkeypatch.setattr(threading.Thread, "start", flaky_start)
-    stop = np.zeros(1, dtype=np.int8)
-    it = analyze(
-        INITIAL,
-        start_depth=6,
-        max_depth=32,
-        time_limit_ms=60000,
-        stop=stop,
-        threads=4,
+    results = list(
+        analyze(
+            INITIAL,
+            start_depth=6,
+            max_depth=8,
+            time_limit_ms=5000,
+            threads=4,
+        )
     )
-    with pytest.raises(RuntimeError, match="start failed"):
-        next(it)
+    assert results
+    assert all(r.pv for r in results)
     time.sleep(0.05)
     leftovers = [
         t
@@ -240,6 +245,26 @@ def test_parallel_start_failure_cleans_up(monkeypatch):
         if t.name.startswith("engine-helper-") or t.name == "engine-stop-forward"
     ]
     assert leftovers == []
+
+
+def test_parallel_repeated_analyses_stay_valid():
+    """连续 3 次并行分析：每次都正常产出，层序递增、分数合法域、PV 非空。"""
+    for _ in range(3):
+        results = list(
+            analyze(
+                INITIAL,
+                start_depth=6,
+                max_depth=6,
+                time_limit_ms=5000,
+                threads=4,
+            )
+        )
+        assert results
+        depths = [r.depth for r in results]
+        assert depths == sorted(depths)
+        for r in results:
+            assert abs(int(r.score_stm)) <= C.MAX_SCORE + 100
+            assert r.pv
 
 
 def test_parallel_generator_close_leaves_no_worker_threads():
@@ -319,16 +344,19 @@ def test_warmup_lock_usable_in_forked_child(monkeypatch):
     """父进程持锁时 fork：子进程 warmup 不应死锁（register_at_fork 护栏）。"""
     monkeypatch.setattr(A, "_WARMED", False)
     A._WARMUP_LOCK.acquire()
-    pid = os.fork()
-    if pid == 0:  # 子进程
-        signal.alarm(60)  # 单独运行需真实 JIT（实测 ~20s），留足余量防误杀
-        try:
-            from engine import warmup
+    try:
+        pid = os.fork()
+        if pid == 0:  # 子进程
+            signal.alarm(60)  # 单独运行需真实 JIT（实测 ~20s），留足余量防误杀
+            try:
+                from engine import warmup
 
-            warmup()
-        except BaseException:  # noqa: BLE001
-            os._exit(1)
-        os._exit(0)
-    A._WARMUP_LOCK.release()
+                warmup()
+            except BaseException:  # noqa: BLE001
+                os._exit(1)
+            os._exit(0)
+    finally:
+        # 断言/异常路径也必须释放：父进程持锁会挂起后续 warmup 用例。
+        A._WARMUP_LOCK.release()
     _, status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(status) == 0

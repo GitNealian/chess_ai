@@ -344,12 +344,14 @@ def test_concurrent_requests_are_serialized(app):
 
 
 def test_analyze_threads_parameter(client):
+    # max_depth=6 使辅助线程（首个深度 5）真正启动，覆盖 API 路径的 Lazy SMP；
+    # max_depth=4 时辅助线程因 first_depth=5 > max_depth 而零启动。
     messages = read_stream(
         client,
         {
             "fen": INITIAL_FEN,
             "start_depth": 4,
-            "max_depth": 4,
+            "max_depth": 6,
             "time_limit_ms": 5000,
             "threads": 2,
         },

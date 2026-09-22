@@ -34,6 +34,12 @@ Task 12（`analyze`/`warmup`）语义要点：
 - 每次 `analyze` 新建 `Ctx`（默认 40MB 置换表），生成器结束时显式释放；
 - `warmup` 用初始局面触发全链 JIT 编译并计入日志，`_WARMED` + `_WARMUP_LOCK`
   保证幂等与并发安全（含 fork 后重建）。
+
+并行（Lazy SMP）：`threads > 1` 时按 `_resolve_threads` 解析线程数（显式参数 >
+`ENGINE_THREADS` > 自动），主线程照常迭代加深产出结果，另启动若干辅助线程
+（`_worker_loop`，共享 TT、深度相位错开）与可选的外部停旗转发线程
+（`_forward_stop`）；线程启动失败降级为更少线程/无转发，不影响主线程产出。
+设计见 `docs/plans/2026-09-22-lazy-smp-design.md`。
 """
 
 import dataclasses
@@ -53,7 +59,6 @@ __all__ = [
     "MAX_THREADS",
     "MIDDLE_GAME",
     "AnalysisResult",
-    "_resolve_threads",
     "analyze",
     "dynamic_piece_scores",
     "phase_of",
@@ -304,6 +309,8 @@ def analyze(
       `threads == 1` 时与串行实现完全一致；`> 1` 时启动辅助线程共享 TT
       （Lazy SMP），结果只取主线程，`nodes` 只统计主线程；并行结果存在
       非确定性（同局面分数/PV 可能微变），中断与时限语义不变。
+      单个线程 `start()` 失败不使分析失败：转发线程降级为无转发、辅助线程
+      降级为更少线程，主线程照常产出（资源受限环境下默认并行档仍可用）。
 
     产出：`AnalysisResult` 迭代器。`Ctx` 为生成器局部变量，提前关闭
     （`break`/`GeneratorExit`）或耗尽时在 `finally` 中释放。
@@ -351,8 +358,11 @@ def analyze(
 
     t0 = time.perf_counter()
     try:
-        # 线程启动在 try 内：启动过程中任何异常（如 start() 失败）都会走
-        # finally 置位总停旗并回收已启动的线程，不泄漏无法停止的后台线程。
+        # 线程启动在 try 内：启动段任何异常都会走 finally 置位总停旗并回收
+        # 已启动的线程，不泄漏无法停止的后台线程。单个 start() 失败单独
+        # 降级处理（转发线程降级为无转发、辅助线程降级为更少线程），不让
+        # 资源受限（如 pids 限制）把整个分析拖垮：辅助线程失败不影响主线程
+        # 结果，是设计承诺的降级语义。
         if threads > 1:
             if has_external_stop:
                 forwarder = threading.Thread(
@@ -361,7 +371,11 @@ def analyze(
                     name="engine-stop-forward",
                     daemon=True,
                 )
-                forwarder.start()
+                try:
+                    forwarder.start()
+                except Exception:  # noqa: BLE001 - 降级为无转发
+                    _log.debug("外部停旗转发线程启动失败，降级为无转发", exc_info=True)
+                    forwarder = None
             for i in range(1, threads):
                 first_depth = C.ROOT_START_DEPTH + i
                 if first_depth > max_depth:
@@ -372,7 +386,15 @@ def analyze(
                     name=f"engine-helper-{i}",
                     daemon=True,
                 )
-                helper.start()
+                try:
+                    helper.start()
+                except Exception:  # noqa: BLE001 - 降级为更少线程
+                    _log.debug(
+                        "Lazy SMP 辅助线程 %d 启动失败，降级为更少线程",
+                        i,
+                        exc_info=True,
+                    )
+                    continue
                 helpers.append(helper)
 
         depth = C.ROOT_START_DEPTH
@@ -413,10 +435,12 @@ def analyze(
         if stop_all is not None:
             stop_all[0] = 1
         # 只 join 真正启动过的线程：start() 失败的线程 join 会抛 RuntimeError，
-        # 掩盖启动时的原始异常。
+        # 掩盖启动时的原始异常。总等待预算统一为 5s（T=16 时逐个 join(2.0)
+        # 最坏会串行阻塞约 30s）；正常路径线程在毫秒级退出，预算不生效。
+        deadline = time.monotonic() + 5.0
         for helper in helpers:
             if helper.ident is not None:
-                helper.join(timeout=2.0)
+                helper.join(timeout=max(0.05, deadline - time.monotonic()))
         if forwarder is not None and forwarder.ident is not None:
             forwarder.join(timeout=0.5)
         del ctx, stack, st

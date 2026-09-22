@@ -248,7 +248,9 @@ def new_worker_context(ctx, stop):
     `ctx.stop` 为同一数组，保证各线程停旗联动）；
     独立：killer/history/nodes 与根着法缓冲（避免线程间互相干扰排序状态）。
     实现为「默认独立、显式共享」：先按同尺寸 `new_context` 新建，再逐个
-    替换 TT 六数组为共享引用，避免 `Ctx` 未来新增字段时被静默共享。
+    替换 TT 六数组为共享引用，避免 `Ctx` 未来新增字段时被静默共享。临时
+    `new_context(...)` 仅作字段模板、其数组随即被共享引用替换（`np.zeros`
+    为惰性零页且模板未被写入，不产生真实内存增长，也无泄漏）。
 
     仅限 Python 层调用：numba 不支持 namedtuple 的 `_replace`。
     """
