@@ -56,6 +56,56 @@ export async function analyzeStream(payload, { signal, onResult, onDone, onError
   }
 }
 
+export async function intentStream(
+  payload,
+  { signal, onRank, onThreat, onBait, onDone, onError } = {}
+) {
+  try {
+    const response = await fetch("/api/engine/intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || data.error || `意图推演请求失败（${response.status}）`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const handleLine = (line) => {
+      const text = line.trim();
+      if (!text) return;
+      let msg;
+      try {
+        msg = JSON.parse(text);
+      } catch {
+        return;
+      }
+      if (msg.type === "rank") onRank?.(msg);
+      else if (msg.type === "threat") onThreat?.(msg);
+      else if (msg.type === "bait") onBait?.(msg);
+      else if (msg.type === "done") onDone?.(msg);
+      else if (msg.type === "error") onError?.(new Error(msg.message || "意图推演失败"));
+      // ping 忽略
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      lines.forEach(handleLine);
+    }
+    buffer += decoder.decode();
+    handleLine(buffer);
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    onError?.(err);
+  }
+}
+
 export const api = {
   listGames: (params) => http.get("/games", { params }).then((r) => r.data),
   getGame: (id) => http.get(`/games/${id}`).then((r) => r.data),
