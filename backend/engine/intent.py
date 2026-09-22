@@ -35,6 +35,7 @@ __all__ = [
     "flip_side_to_move",
     "INTENT_LINE_DEPTH",
     "INTENT_RANK_DEPTH",
+    "intent_events",
     "rank_moves",
     "select_baits",
     "threat_event",
@@ -346,3 +347,58 @@ def bait_event(fen, bait, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
     payload["outcome"]["loss_piece"] = _loss_for_side(pv, line_board, my_side)
     payload["line"] = describe_line(pv, line_board)
     return payload
+
+
+# rank 事件最多带前 N 个着法（正着 + 备选对照）。
+_RANK_LIST_LIMIT = 5
+
+
+def _move_payload(packed, board):
+    """单着法 → 坐标 + ICCS + 中文（在 board 局面上下文生成记谱）。"""
+    move = _packed_to_move(int(packed))
+    iccs = f"{chr(97 + move.x1)}{move.y1}{chr(97 + move.x2)}{move.y2}"
+    return {
+        "x1": move.x1, "y1": move.y1, "x2": move.x2, "y2": move.y2,
+        "iccs": iccs, "chinese": _move_chinese(board, move),
+    }
+
+
+def intent_events(fen, *, max_baits=2, rank_depth=INTENT_RANK_DEPTH,
+                  line_depth=INTENT_LINE_DEPTH, per_line_timeout_ms=1500,
+                  stop=None):
+    """意图推演总编排：依次产出 rank → threat → bait* 事件 dict。
+
+    - 任何单线超时/失败不中断整流：已产出事件保留，后续线照常（除非
+      外部 stop 置位）；rank 失败（含困毙无着法）直接结束；
+    - `stop`：可选 np.int8[1] 外部停旗（routes 层取消/客户端断开），
+      置位后不再开始后续线；各线内部另有独立超时停旗，二者独立；
+    - `per_line_timeout_ms` 默认 1500：宁可降级也不拖慢「意图先出」
+      （性能预算实测备注见实现计划文档 Task 6 节）。
+    """
+    board = Board().load_fen(fen)
+    external_stop = stop if stop is not None else np.zeros(1, dtype=np.int8)
+
+    ranked = rank_moves(fen, depth=rank_depth, timeout_ms=per_line_timeout_ms)
+    if not ranked or external_stop[0] != 0:
+        return
+    my_is_red = board.side_to_move == RED
+    to_red = (lambda s: s) if my_is_red else (lambda s: -s)
+    rank_items = []
+    for packed, s in ranked[:_RANK_LIST_LIMIT]:
+        item = _move_payload(packed, board)
+        item["score_stm"] = int(s)
+        item["score_red"] = int(to_red(s))
+        rank_items.append(item)
+    yield {"type": "rank", "best": rank_items[0], "list": rank_items}
+    if external_stop[0] != 0:
+        return
+
+    yield threat_event(fen, depth=line_depth, timeout_ms=per_line_timeout_ms)
+    if external_stop[0] != 0:
+        return
+
+    for bait in select_baits(fen, ranked, max_baits=max_baits):
+        if external_stop[0] != 0:
+            return
+        yield bait_event(fen, bait, depth=line_depth,
+                         timeout_ms=per_line_timeout_ms)

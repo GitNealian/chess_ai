@@ -269,3 +269,86 @@ def test_bait_event_loss_piece_is_my_side():
     assert event["outcome"]["loss_piece"] == "车"
     assert event["outcome"]["score_red"] < -100
     assert event["line"] and event["line"][0]["chinese"].startswith("车")  # 对手首着吃回
+
+
+def test_intent_events_sequence_on_mated_side():
+    from engine.intent import intent_events
+
+    # STM_MATED_IN_FOUR：轮黑、黑有合法着法、黑被 4-ply 杀
+    events = list(
+        intent_events(
+            STM_MATED_IN_FOUR,
+            max_baits=1,
+            rank_depth=4,
+            line_depth=6,
+            per_line_timeout_ms=30000,
+        )
+    )
+    kinds = [e["type"] for e in events]
+    assert kinds[0] == "rank"
+    assert "threat" in kinds
+    assert kinds[-1] in ("bait", "threat")
+    assert kinds.index("rank") < kinds.index("threat")
+    rank = events[0]
+    assert rank["best"] and rank["list"]
+    for item in rank["list"]:
+        assert set(item) >= {"x1", "y1", "x2", "y2", "iccs", "chinese", "score_stm", "score_red"}
+    threat = next(e for e in events if e["type"] == "threat")
+    assert threat["outcome"]["mate"] == 3  # 与 threat_event 单测一致（我方停一手后红 3-ply 杀）
+
+
+def test_intent_events_rank_scores_monotonic():
+    from engine.intent import intent_events
+
+    events = list(
+        intent_events(
+            INITIAL,
+            max_baits=1,
+            rank_depth=4,
+            line_depth=6,
+            per_line_timeout_ms=30000,
+        )
+    )
+    rank = events[0]
+    scores = [item["score_stm"] for item in rank["list"]]
+    assert scores == sorted(scores, reverse=True)
+    # 初始局面轮红：score_red 与 score_stm 同号（红方视角 = 走子方视角）
+    assert all(
+        (i["score_red"] >= 0) == (i["score_stm"] >= 0) for i in rank["list"]
+    )
+
+
+def test_intent_events_stalemate_yields_no_events():
+    from engine.intent import intent_events
+
+    # OPP_MATE_IN_ONE 实为困毙局面（黑无合法着法）→ rank_moves 返回 [] → 无事件
+    events = list(
+        intent_events(
+            OPP_MATE_IN_ONE,
+            max_baits=1,
+            rank_depth=4,
+            line_depth=6,
+            per_line_timeout_ms=30000,
+        )
+    )
+    assert events == []
+
+
+def test_intent_events_respects_external_stop():
+    import numpy as np
+
+    from engine.intent import intent_events
+
+    stop = np.zeros(1, dtype=np.int8)
+    stop[0] = 1  # 预置位：一条线都不应开始
+    events = list(
+        intent_events(
+            STM_MATED_IN_FOUR,
+            max_baits=1,
+            rank_depth=4,
+            line_depth=6,
+            per_line_timeout_ms=30000,
+            stop=stop,
+        )
+    )
+    assert events == []
