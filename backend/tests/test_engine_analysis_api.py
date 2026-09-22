@@ -219,3 +219,26 @@ def test_warmup_idempotent():
     t0 = time.perf_counter()
     warmup()  # 不抛异常
     assert (time.perf_counter() - t0) < 0.5  # 已预热，第二次近似零开销
+
+
+def test_analyze_hash_size_override():
+    from engine import analyze
+
+    results = list(
+        analyze(
+            INITIAL,
+            start_depth=6,
+            max_depth=6,
+            time_limit_ms=5000,
+            hash_size=1 << 10,
+        )
+    )
+    assert results and results[-1].depth == 6
+
+
+def test_analyze_hash_size_must_be_power_of_two():
+    from engine import analyze
+
+    with pytest.raises(ValueError):
+        list(analyze(INITIAL, max_depth=6, hash_size=1000))
+

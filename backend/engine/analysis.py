@@ -287,6 +287,7 @@ def analyze(
     time_limit_ms=C.DEFAULT_TIME_LIMIT_MS,
     stop=None,
     threads=None,
+    hash_size=None,
 ):
     """逐层迭代加深分析生成器：每完成一层（且 `depth >= start_depth`）产出一个结果。
 
@@ -315,6 +316,8 @@ def analyze(
       非确定性（同局面分数/PV 可能微变），中断与时限语义不变。
       单个线程 `start()` 失败不使分析失败：转发线程降级为无转发、辅助线程
       降级为更少线程，主线程照常产出（资源受限环境下默认并行档仍可用）。
+    - `hash_size`：置换表槽数（须为 2 的幂），`None` 用引擎默认（`search.N`）；
+      供基准/实验对比用，不暴露到 API。
 
     产出：`AnalysisResult` 迭代器。`Ctx` 为生成器局部变量，提前关闭
     （`break`/`GeneratorExit`）或耗尽时在 `finally` 中释放。
@@ -351,7 +354,11 @@ def analyze(
     # 总停旗：并行时所有搜索线程共享；串行时直接复用外部停旗（现状）。
     stop_all = np.zeros(1, dtype=np.int8) if threads > 1 else None
     search_stop = stop_all if stop_all is not None else stop
-    ctx = _search.new_context()._replace(stop=search_stop)
+    ctx = (
+        _search.new_context()._replace(stop=search_stop)
+        if hash_size is None
+        else _search.new_context(hash_size=hash_size)._replace(stop=search_stop)
+    )
     stack = _search.new_stack()
     stack.zob32[0] = st.zob[0]
     stack.zob64[0] = st.zob[1]
