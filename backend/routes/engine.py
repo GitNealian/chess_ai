@@ -38,6 +38,7 @@
 """
 
 import json
+import logging
 import queue
 import threading
 import time
@@ -46,6 +47,7 @@ import numpy as np
 from chess_engine.board import INITIAL_FEN, Board
 from chess_engine.move import Move
 from chess_engine.notation import move_to_chinese
+from chess_engine.rules import validate_setup
 from engine import analysis as engine_analysis
 from engine import analyze
 from engine import constants as EC
@@ -53,6 +55,8 @@ from engine.intent import intent_events
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
 engine_bp = Blueprint("engine", __name__)
+
+_log = logging.getLogger(__name__)
 
 # 整个分析过程（含流式产出）持锁：第二个请求排队等待。
 _ANALYZE_LOCK = threading.Lock()
@@ -498,3 +502,151 @@ def intent_position():
                 stop[0] = 1
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+
+
+# ---- 摆子规则校验（新端点） -----------------------------------------
+
+VALID_SIDES = ("red", "black")
+VALID_KINDS = ("K", "A", "B", "N", "R", "C", "P")
+MAX_POSITION_PIECES = 32
+
+
+def _is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+@engine_bp.post("/validate-position")
+def validate_position():
+    """校验摆子局面是否符合摆子规则，合法则返回对应 FEN。"""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体必须是 JSON 对象"}), 400
+
+    pieces = data.get("pieces")
+    if not isinstance(pieces, list):
+        return jsonify({"error": "pieces 必须是数组"}), 400
+    if len(pieces) > MAX_POSITION_PIECES:
+        return jsonify({"error": f"pieces 最多 {MAX_POSITION_PIECES} 个"}), 400
+    side = data.get("side_to_move", "red")
+    if side not in VALID_SIDES:
+        return jsonify({"error": "side_to_move 必须是 red 或 black"}), 400
+
+    board = Board.empty()
+    seen = set()
+    for index, raw in enumerate(pieces, start=1):
+        if not isinstance(raw, dict):
+            return jsonify(
+                {"error": "棋子格式错误", "detail": f"第 {index} 个棋子格式错误"}
+            ), 400
+        x, y = raw.get("x"), raw.get("y")
+        if not _is_int(x) or not _is_int(y) or not (0 <= x < 9 and 0 <= y < 10):
+            return jsonify(
+                {"error": "棋子坐标错误", "detail": f"第 {index} 个棋子坐标越界"}
+            ), 400
+        if (x, y) in seen:
+            return jsonify(
+                {"error": "棋子坐标重复", "detail": f"第 {index} 个棋子坐标与前面重复"}
+            ), 400
+        seen.add((x, y))
+        piece_side, kind = raw.get("side"), raw.get("kind")
+        if piece_side not in VALID_SIDES or kind not in VALID_KINDS:
+            return jsonify(
+                {"error": "棋子类型错误", "detail": f"第 {index} 个棋子类型非法"}
+            ), 400
+        board.set_piece(x, y, (piece_side, kind))
+    board.side_to_move = side
+
+    errors = validate_setup(board)
+    if not errors and not board.has_legal_move(board.side_to_move):
+        errors.append("行棋方无合法着法")
+    if errors:
+        return jsonify({"valid": False, "errors": errors})
+    return jsonify({"valid": True, "fen": board.to_fen()})
+
+
+# ---- 引擎走子（新端点） ---------------------------------------------
+
+BEST_MOVE_LEVELS = {
+    "easy": {"max_depth": 5, "time_limit_ms": 300},
+    "normal": {"max_depth": 7, "time_limit_ms": 1000},
+    "hard": {"max_depth": 11, "time_limit_ms": 2500},
+}
+DEFAULT_BEST_MOVE_LEVEL = "normal"
+BEST_MOVE_START_DEPTH = EC.ROOT_START_DEPTH  # 4
+
+
+@engine_bp.post("/best-move")
+def best_move():
+    """返回当前局面的引擎最佳着法（一次性 JSON，持 _ANALYZE_LOCK）。"""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体必须是 JSON 对象"}), 400
+    data = dict(data)
+    data.setdefault("initial_fen", INITIAL_FEN)
+    try:
+        fen = _resolve_fen(data)
+    except _RequestError as exc:
+        return jsonify({"error": "局面无效", "detail": str(exc)}), 400
+
+    level = data.get("level")
+    if level not in BEST_MOVE_LEVELS:
+        level = DEFAULT_BEST_MOVE_LEVEL
+    conf = BEST_MOVE_LEVELS[level]
+
+    board = Board().load_fen(fen)
+    if not board.has_legal_move(board.side_to_move):
+        return jsonify({"legal": False, "reason": "当前局面无合法着法"})
+
+    stop = np.zeros(1, dtype=np.int8)
+    last = None
+    try:
+        with _ANALYZE_LOCK:
+            for result in analyze(
+                fen,
+                start_depth=BEST_MOVE_START_DEPTH,
+                max_depth=conf["max_depth"],
+                time_limit_ms=conf["time_limit_ms"],
+                stop=stop,
+            ):
+                last = result
+    except Exception:  # noqa: BLE001 - 兜底转 legal:false，不冒泡为 500
+        _log.exception("best-move 引擎搜索失败")
+        return jsonify({"legal": False, "reason": "引擎未给出着法"})
+
+    if last is None or not last.pv:
+        return jsonify({"legal": False, "reason": "引擎未给出着法"})
+
+    x1, y1, x2, y2 = _move_to_xy(last.pv[0])
+    move = Move(x1, y1, x2, y2)
+    if not board.is_legal(move):
+        return jsonify({"legal": False, "reason": "引擎给出的着法不合法"})
+
+    mover = board.side_to_move
+    iccs = f"{chr(97 + x1)}{y1}{chr(97 + x2)}{y2}"
+    try:
+        chinese = move_to_chinese(board, move)
+    except ValueError:
+        chinese = iccs
+    board.apply_move(move)
+    opponent = board.side_to_move
+    check = board.in_check(opponent)
+    game_over = None
+    if not board.has_legal_move(opponent):
+        game_over = {"winner": mover, "reason": "checkmate" if check else "stalemate"}
+    return jsonify(
+        {
+            "legal": True,
+            "move": {
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+                "iccs": iccs,
+                "chinese": chinese,
+            },
+            "fen": board.to_fen(),
+            "side_to_move": opponent,
+            "check": check,
+            "game_over": game_over,
+        }
+    )
