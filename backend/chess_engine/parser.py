@@ -6,6 +6,7 @@ from chess_engine.notation import parse_chinese
 
 _ICCS_RE = re.compile(r"^[a-i][0-9][a-i][0-9]$")
 _RESULT_TOKENS = ("*", "1-0", "0-1", "1/2-1/2")
+_DOTS_RE = re.compile(r"^\.+$")
 
 
 def _normalize_iccs(text):
@@ -30,7 +31,7 @@ def _tokenize(text):
     cleaned = re.sub(r"\d+\.(\.\.)?", " ", text)
     return [
         token for token in cleaned.split()
-        if token and token not in _RESULT_TOKENS
+        if token and token not in _RESULT_TOKENS and not _DOTS_RE.match(token)
     ]
 
 
@@ -71,6 +72,7 @@ def parse_pgn(text):
             raise ValueError(f"FEN 头无效：{exc}") from exc
     moves = parse_moves(board, "\n".join(body_lines))
     return {
+        "title": headers.get("Title", ""),
         "event": headers.get("Event", ""),
         "red_player": headers.get("Red", ""),
         "black_player": headers.get("Black", ""),
