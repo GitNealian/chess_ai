@@ -16,6 +16,8 @@
 - **人人对弈**：同屏双人轮流走子，支持翻转棋盘（黑方视角）、悔棋、每步自动 AI 分析；可从空白开局，也可从任意棋谱的当前步续下；对局可手动保存到棋谱库。
 - **AI 局面分析**：打谱与对弈时逐层加深实时打分，红优/黑优评分 + 优势条 + 棋盘箭头标注双方一步推演（最新结果置顶）。
 - **对手意图推演**：走子后先推演对手连招——底线威胁（若不理会）与圈套分支（若贪吃/随手棋中计），再进行 AI 评分分析。
+- **人机对战**：对弈页可让引擎执红或执黑（三档难度：简单 / 普通 / 困难），引擎计算后自动走子；保留实时分析 / 意图面板。
+- **局面编辑**：对弈页可手动摆子（棋子面板选取 + 点击落子 / 点击已有棋子移除，含清空棋盘与标准开局），摆子局面经后端完整摆子规则校验后选定行棋方直接开局。
 
 ## 目录结构
 
@@ -30,6 +32,7 @@ chess/
 │   │   ├── fen.py          # 中国象棋 FEN
 │   │   ├── move.py         # 着法表示
 │   │   ├── notation.py     # 中文记谱生成/解析
+│   │   ├── rules.py        # 摆子合法性校验（validate_setup）
 │   │   └── parser.py       # 中文 / ICCS / PGN 解析
 │   ├── engine/             # numba 加速的 AI 引擎（位棋盘 + negaScout/PVS）
 │   │   ├── analysis.py     # 对外 analyze / warmup：迭代加深，每层 yield
@@ -52,7 +55,7 @@ chess/
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── components/     # ChessBoard.vue（SVG 自绘）
+│   │   ├── components/     # ChessBoard.vue（SVG 自绘）、PiecePalette.vue（摆子面板）
 │   │   ├── views/          # Library / Editor / Practice / Review / Play
 │   │   ├── stores/         # Pinia：library / practice；play 对弈会话（reactive 工厂）
 │   │   ├── api/            # axios 封装
@@ -96,10 +99,10 @@ npm run dev
 ## 测试
 
 ```bash
-# 后端（486 项：485 通过 + 1 跳过）
+# 后端（508 项：507 通过 + 1 跳过）
 cd backend && .venv/bin/python -m pytest
 
-# 前端（176 项）
+# 前端（208 项）
 cd frontend && npx vitest run
 ```
 
@@ -153,6 +156,8 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 | POST | `/api/engine/analyze` | 局面分析（NDJSON 流式，逐层返回；可选 threads 1..16） |
 | POST | `/api/engine/intent` | 对手意图推演（NDJSON 流式：rank/threat/bait 事件） |
 | POST | `/api/engine/validate-move` | 无状态走子校验（返回新局面 / 中文记谱 / 将军 / 终局） |
+| POST | `/api/engine/best-move` | 引擎最佳着法（一次性 JSON，三档难度，供人机对战） |
+| POST | `/api/engine/validate-position` | 摆子规则校验（返回合法 FEN 或错误列表） |
 | GET | `/api/review/queue` | 今日复习队列 |
 | POST | `/api/review/:gameId/submit` | 提交复习结果并更新调度 |
 | GET | `/api/stats` | 掌握度统计 |
@@ -177,6 +182,10 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 
 结局语义：`outcome.mate` 为正数表示我方 N 步内被绝杀；`loss_piece` 为该线终点我方损失的最大子力中文名；`score_red` 为该线终点红方视角引擎分。该接口与 `/analyze` 共享同一把分析锁——同刻只有一个引擎重任务流；前端走子后先发意图请求，意图流 `done` 后再发起评分分析（意图失败静默降级，不影响评分）。
 
+`POST /api/engine/best-move` 为引擎走子（供人机对战调用）：定位局面的方式与 `/api/engine/analyze` 一致（`fen`，或 `initial_fen` + `moves`；缺省初始局面），可选 `level`（`easy` / `normal` / `hard`，缺省或非法按 `normal`，分别映射搜索深度 5/7/11、层边界软时限 300/1000/2500ms）。返回 200 `{ "legal": true, "move": { "x1", "y1", "x2", "y2", "iccs", "chinese" }, "fen", "side_to_move", "check", "game_over" }`，语义与 `/validate-move` 一致；当前局面无合法着法或引擎未给出着法时返回 `{ "legal": false, "reason" }`；参数 / 局面错误返回 400。该接口持 `_ANALYZE_LOCK`，与 `/analyze`、`/intent` 互斥。
+
+`POST /api/engine/validate-position` 为摆子规则校验（供对弈页编辑局面调用）：请求体 `{ "pieces": [{ "x", "y", "side", "kind" }], "side_to_move" }`（`side ∈ red/black`，`kind ∈ K/A/B/N/R/C/P`；坐标不得重复，`pieces` 上限 32）。合法返回 `{ "valid": true, "fen" }`；不合法返回 `{ "valid": false, "errors": [...] }`。校验规则：帅 / 将各恰好一个，各兵种数量不超初始配置，帅 / 将士 / 仕在九宫内，相 / 象必须落在己方象位，兵 / 卒未过河时（红 y∈{3,4}、黑 y∈{5,6}）必须在初始偶数列上，不得照面，任何一方不得处于被将军状态，行棋方不得无合法着法（困毙）。参数结构错误返回 400。
+
 ## 已知限制
 
 - 前端「棋盘摆子」入口不校验着法合法性；后端保存时会校验并拒绝非法序列（错误信息带步号）。
@@ -191,6 +200,9 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - AI 分析接入打谱页与对弈页；录入 / 默写视图未接入。
 - 意图推演基于浅层搜索（固定深度 6、每线限时默认 1500ms），线路精度有限；诱饵筛选为启发式；「跳一手」威胁线结论仅在「我方完全不作为」前提下成立；推演与评分共享分析锁，前端先意图后评分串行触发。
 - 人人对弈为同屏双人，不联网、不自动保存（手动保存到棋谱库）；不判定长将、重复局面和棋；从棋谱续下的将军/终局提示由一次探测请求恢复，悔棋到该步之前时提示不恢复（着法合法性始终由后端保证）。
+- 人机对战为本地引擎自动走子，不联网；引擎思考期间棋盘锁定并显示提示；AI 模式悔棋会撤销到玩家回合（通常连带撤销引擎刚走的一步），不自动补走，引擎执红时保留引擎首着；引擎走子失败后点棋盘可重试；难度固定三档，不可自定义深度 / 时限。
+- `best-move` 为同步请求（持分析锁），前端在卸载 / 切换模式 / 悔棋时会 abort 等待，但服务端搜索仍会跑完该次请求（无客户端断开检测）；`hard` 档最坏约数秒。
+- 局面编辑不持久化（应用后仅作为当前对局初始局面，可手动保存到棋谱库）；摆子校验不含长将、重复局面等残局题特殊规则；进入编辑会清空当前对局（需确认）。
 - 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，完成一层后按「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（通常完成时间不超过其 ~1.5 倍）；若下一层实际耗时相对上一层暴涨，仍可能超出。
 - 并行分析下 `nodes` 仅统计主线程，且结果非确定性（同局面多次分析的分数/PV 可能微变，将杀步数可能 ±1 ply 级偏差）。
 - 显式线程数（含环境变量 `ENGINE_THREADS`）不按核数降级（夹逼 1..16），低核机器上设大值会线程超订；不设时自动取 `max(1, min(cpu_count-1, 8))`，需要完全串行可用 `ENGINE_THREADS=1`。容器内 `os.cpu_count()` 返回宿主机可见逻辑核数、不感知 cgroup CPU 配额，自动档在容器中也可能超订，容器部署建议显式设置 `ENGINE_THREADS`。
@@ -204,4 +216,5 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 移动端适配：`docs/plans/2026-09-19-mobile-responsive-design.md`
 - AI 引擎：`docs/plans/2026-09-20-ai-engine-design.md` / `docs/plans/2026-09-20-ai-engine-implementation.md`
 - 人人对弈：`docs/plans/2026-09-21-play-mode-design.md` / `docs/plans/2026-09-21-play-mode-implementation.md`
+- 人机对战与局面编辑：`docs/plans/2026-09-22-ai-play-and-board-editor-design.md` / `docs/plans/2026-09-22-ai-play-and-board-editor-implementation.md`
 - Lazy SMP 并行搜索：`docs/plans/2026-09-22-lazy-smp-design.md` / `docs/plans/2026-09-22-lazy-smp-implementation.md`
