@@ -251,3 +251,57 @@ describe("createPlaySession", () => {
     expect(session.state.hint).toBe("");
   });
 });
+
+describe("applyEngineMove", () => {
+  it("直接追加引擎着法并重建局面", () => {
+    const session = createPlaySession({});
+    session.applyEngineMove({
+      x1: 1,
+      y1: 2,
+      x2: 4,
+      y2: 2,
+      chinese: "炮二平五",
+      check: false,
+      game_over: null,
+    });
+    expect(session.state.moves).toHaveLength(1);
+    expect(session.state.moves[0].chinese).toBe("炮二平五");
+    expect(session.state.sideToMove).toBe("black");
+  });
+
+  it("记录终局快照", () => {
+    const session = createPlaySession({});
+    session.applyEngineMove({
+      x1: 1,
+      y1: 2,
+      x2: 4,
+      y2: 2,
+      chinese: "炮二平五",
+      check: true,
+      game_over: { winner: "red", reason: "checkmate" },
+    });
+    expect(session.state.gameOver).toEqual({ winner: "red", reason: "checkmate" });
+  });
+});
+
+describe("reset generation", () => {
+  it("提交中 reset 后迟到响应不写入着法", async () => {
+    let resolveMove;
+    api.validateMove.mockReturnValue(new Promise((r) => { resolveMove = r; }));
+    const session = createPlaySession({});
+    await session.click(1, 2);
+    const pending = session.click(4, 2);
+    session.reset({});
+    resolveMove({
+      legal: true,
+      fen: INITIAL_FEN,
+      side_to_move: "black",
+      chinese: "炮二平五",
+      check: false,
+      game_over: null,
+    });
+    const result = await pending;
+    expect(result).toBe(false);
+    expect(session.state.moves).toHaveLength(0);
+  });
+});

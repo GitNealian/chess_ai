@@ -14,6 +14,8 @@ vi.mock("../../api", () => ({
     getGame: vi.fn(),
     validateMove: vi.fn(),
     createGame: vi.fn(),
+    bestMove: vi.fn(),
+    validatePosition: vi.fn(),
   },
   analyzeStream: vi.fn(),
   intentStream: vi.fn(),
@@ -50,6 +52,16 @@ async function clickCells(wrapper, ...coords) {
 
 function button(wrapper, test) {
   return wrapper.find(`[data-test="${test}"]`);
+}
+
+function mockBlackReply() {
+  api.bestMove.mockResolvedValue({
+    legal: true,
+    move: { x1: 1, y1: 7, x2: 4, y2: 7, chinese: "炮8平5", iccs: "b7e7" },
+    side_to_move: "red",
+    check: false,
+    game_over: null,
+  });
 }
 
 let streams = [];
@@ -94,6 +106,14 @@ describe("PlayView", () => {
       fen: INITIAL_FEN,
       side_to_move: "black",
       chinese: "炮二平五",
+      check: false,
+      game_over: null,
+    });
+    api.bestMove.mockResolvedValue({
+      legal: true,
+      move: { x1: 1, y1: 2, x2: 4, y2: 2, chinese: "炮二平五", iccs: "b2e2" },
+      fen: INITIAL_FEN,
+      side_to_move: "black",
       check: false,
       game_over: null,
     });
@@ -626,5 +646,428 @@ describe("PlayView", () => {
     resolveCreate({ id: 9 });
     await flushPromises();
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("引擎执红时点击后立即走子", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+
+    expect(api.bestMove).toHaveBeenCalledWith(
+      expect.objectContaining({ level: "normal", moves: [] }),
+      expect.anything()
+    );
+    expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(1);
+    expect(wrapper.find('[data-test="turn"]').text()).toContain("黑方走棋");
+    expect(board(wrapper).props("flipped")).toBe(true);
+  });
+
+  it("引擎执黑时用户走子后引擎自动应着", async () => {
+    mockBlackReply();
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-black").trigger("click");
+    await flushPromises();
+    expect(api.bestMove).not.toHaveBeenCalled();
+
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    expect(api.bestMove).toHaveBeenCalledTimes(1);
+    expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(2);
+    const pieces = board(wrapper).props("position").pieces;
+    expect(pieces).toContainEqual(
+      expect.objectContaining({ x: 4, y: 7, side: "black", kind: "C" })
+    );
+    expect(pieces).not.toContainEqual(
+      expect.objectContaining({ x: 1, y: 7, side: "black", kind: "C" })
+    );
+  });
+
+  it("引擎思考中锁定棋盘并显示提示", async () => {
+    let resolveMove;
+    api.bestMove.mockReturnValue(new Promise((r) => { resolveMove = r; }));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-red").trigger("click");
+    await nextTick();
+    expect(wrapper.find('[data-test="engine-thinking"]').exists()).toBe(true);
+
+    await clickCells(wrapper, [1, 9]);
+    expect(api.validateMove).not.toHaveBeenCalled();
+
+    resolveMove({
+      legal: true,
+      move: { x1: 1, y1: 2, x2: 4, y2: 2, chinese: "炮二平五" },
+      side_to_move: "black",
+      check: false,
+      game_over: null,
+    });
+    await flushPromises();
+    expect(wrapper.find('[data-test="engine-thinking"]').exists()).toBe(false);
+  });
+
+  it("难度选择传递给 best-move", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('[data-test="level"]').setValue("hard");
+    await button(wrapper, "engine-black").trigger("click");
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+    expect(api.bestMove).toHaveBeenCalledWith(
+      expect.objectContaining({ level: "hard" }),
+      expect.anything()
+    );
+  });
+
+  it("已有对局时进入人机需确认，取消则不变", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+    expect(api.bestMove).not.toHaveBeenCalled();
+    expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(1);
+    confirmSpy.mockRestore();
+  });
+
+  it("进入编辑并落子、移除", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(true);
+
+    await wrapper.find('[data-piece="black-R"]').trigger("click");
+    await clickCells(wrapper, [4, 4]);
+    expect(board(wrapper).props("position").pieces).toContainEqual(
+      expect.objectContaining({ x: 4, y: 4, side: "black", kind: "R" })
+    );
+
+    await clickCells(wrapper, [4, 4]);
+    expect(board(wrapper).props("position").pieces).not.toContainEqual(
+      expect.objectContaining({ x: 4, y: 4, side: "black", kind: "R" })
+    );
+  });
+
+  it("应用合法局面后以该 FEN 开局", async () => {
+    const fen = "3k5/9/9/9/9/9/9/9/9/3K5 b - - 0 1";
+    api.validatePosition.mockResolvedValue({ valid: true, fen });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+    await wrapper.find('[data-test="edit-side"]').setValue("black");
+    await button(wrapper, "edit-apply").trigger("click");
+    await flushPromises();
+
+    expect(api.validatePosition).toHaveBeenCalledWith(
+      expect.objectContaining({ side_to_move: "black" }),
+      expect.anything()
+    );
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="turn"]').text()).toContain("黑方走棋");
+  });
+
+  it("应用非法局面时展示错误并停留在编辑", async () => {
+    api.validatePosition.mockResolvedValue({
+      valid: false,
+      errors: ["红方必须有且仅有一个帅"],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+    await button(wrapper, "edit-apply").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="edit-error"]').text()).toContain(
+      "红方必须有且仅有一个帅"
+    );
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(true);
+  });
+
+  it("已有对局时进入编辑需确认，取消则不变", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(false);
+    confirmSpy.mockRestore();
+  });
+
+  it("引擎走子致终局时显示结果并锁定棋盘", async () => {
+    api.bestMove.mockResolvedValue({
+      legal: true,
+      move: { x1: 1, y1: 2, x2: 4, y2: 2, chinese: "炮二平五" },
+      side_to_move: "black",
+      check: true,
+      game_over: { winner: "red", reason: "checkmate" },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="game-over"]').text()).toContain("红方胜");
+    await clickCells(wrapper, [1, 9]);
+    expect(api.validateMove).not.toHaveBeenCalled();
+  });
+
+  it("引擎走子致将军时显示被将军", async () => {
+    api.bestMove.mockResolvedValue({
+      legal: true,
+      move: { x1: 1, y1: 2, x2: 4, y2: 2, chinese: "炮二平五" },
+      side_to_move: "black",
+      check: true,
+      game_over: null,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="turn"]').text()).toContain("被将军");
+  });
+
+  it("引擎思考中悔棋按钮禁用", async () => {
+    let resolveMove;
+    api.bestMove.mockReturnValue(new Promise((r) => { resolveMove = r; }));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-black").trigger("click");
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="engine-thinking"]').exists()).toBe(true);
+    expect(button(wrapper, "undo").attributes("disabled")).toBeDefined();
+
+    resolveMove({
+      legal: true,
+      move: { x1: 1, y1: 9, x2: 2, y2: 7, chinese: "马8进7" },
+      side_to_move: "red",
+      check: false,
+      game_over: null,
+    });
+    await flushPromises();
+    expect(wrapper.find('[data-test="engine-thinking"]').exists()).toBe(false);
+  });
+
+  it("编辑态点引擎入口会退出编辑并开始人机", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(true);
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+    confirmSpy.mockRestore();
+
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(false);
+    expect(api.bestMove).toHaveBeenCalled();
+  });
+
+  it("编辑态进入人机需确认，取消则保留编辑", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await button(wrapper, "engine-red").trigger("click");
+    await nextTick();
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(true);
+    expect(api.bestMove).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("引擎走子后重新触发意图与评分分析", async () => {
+    mockBlackReply();
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "engine-black").trigger("click");
+    await flushPromises();
+
+    const intentCalls = intentStream.mock.calls.length;
+    const analyzeCalls = analyzeStream.mock.calls.length;
+
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+
+    expect(intentStream.mock.calls.length).toBeGreaterThan(intentCalls);
+    expect(analyzeStream.mock.calls.length).toBeGreaterThan(analyzeCalls);
+  });
+
+  it("AI 模式悔棋撤销到玩家回合", async () => {
+    mockBlackReply();
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "engine-black").trigger("click");
+    await flushPromises();
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+    expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(2);
+
+    await button(wrapper, "undo").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(0);
+    expect(wrapper.find('[data-test="turn"]').text()).toContain("红方走棋");
+  });
+
+  it("取消编辑恢复人机模式", async () => {
+    mockBlackReply();
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "engine-black").trigger("click");
+    await flushPromises();
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(true);
+
+    await button(wrapper, "edit-cancel").trigger("click");
+    await flushPromises();
+
+    await clickCells(wrapper, [1, 2], [4, 2]);
+    await flushPromises();
+    expect(api.bestMove).toHaveBeenCalled();
+  });
+
+  it("引擎走子失败时显示提示", async () => {
+    api.bestMove.mockRejectedValue({ response: { data: { detail: "引擎繁忙" } } });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="hint"]').text()).toContain("引擎繁忙");
+  });
+
+  it("引擎思考中卸载后旧响应不抛错", async () => {
+    let resolveMove;
+    api.bestMove.mockReturnValue(new Promise((r) => { resolveMove = r; }));
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "engine-red").trigger("click");
+    await nextTick();
+    wrapper.unmount();
+    resolveMove({
+      legal: true,
+      move: { x1: 1, y1: 2, x2: 4, y2: 2, chinese: "炮二平五" },
+      side_to_move: "black",
+      check: false,
+      game_over: null,
+    });
+    await flushPromises();
+  });
+
+  it("引擎走子失败后点棋盘可重试", async () => {
+    api.bestMove.mockRejectedValueOnce({ response: { data: { detail: "引擎繁忙" } } });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="hint"]').text()).toContain("引擎繁忙");
+
+    await clickCells(wrapper, [4, 4]);
+    await flushPromises();
+
+    expect(api.bestMove).toHaveBeenCalledTimes(2);
+    expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(1);
+  });
+
+  it("引擎执红且仅剩首着时悔棋禁用", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll('[data-test="move-list"] li')).toHaveLength(1);
+    expect(button(wrapper, "undo").attributes("disabled")).toBeDefined();
+  });
+
+  it("应用局面在途时取消编辑不替换对局", async () => {
+    let resolveValidate;
+    api.validatePosition.mockReturnValue(new Promise((r) => { resolveValidate = r; }));
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+    await button(wrapper, "edit-apply").trigger("click");
+    await flushPromises();
+    await button(wrapper, "edit-cancel").trigger("click");
+    await nextTick();
+
+    resolveValidate({ valid: true, fen: "3k5/9/9/9/9/9/9/9/9/3K5 b - - 0 1" });
+    await flushPromises();
+
+    expect(board(wrapper).props("position").pieces).toHaveLength(32);
+    expect(wrapper.find('[data-test="turn"]').text()).toContain("红方走棋");
+  });
+
+  it("引擎思考超时时显示超时提示", async () => {
+    api.bestMove.mockRejectedValue({ code: "ECONNABORTED" });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="hint"]').text()).toContain("超时");
+  });
+
+  it("引擎返回无着法时提示", async () => {
+    api.bestMove.mockResolvedValue({ legal: false, reason: "当前局面无合法着法" });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await button(wrapper, "engine-red").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="hint"]').text()).toContain("无合法着法");
+  });
+
+  it("取消后重新进入编辑，旧应用响应不覆盖新编辑", async () => {
+    let resolveValidate;
+    api.validatePosition.mockReturnValue(new Promise((r) => { resolveValidate = r; }));
+    const wrapper = mountView();
+    await flushPromises();
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+    await button(wrapper, "edit-apply").trigger("click");
+    await flushPromises();
+    await button(wrapper, "edit-cancel").trigger("click");
+    await nextTick();
+    await button(wrapper, "edit").trigger("click");
+    await nextTick();
+
+    resolveValidate({ valid: true, fen: "3k5/9/9/9/9/9/9/9/9/3K5 b - - 0 1" });
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="editor-panel"]').exists()).toBe(true);
+    expect(board(wrapper).props("position").pieces).toHaveLength(32);
   });
 });

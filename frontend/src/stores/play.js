@@ -23,6 +23,7 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
   });
   let firstSide = "red";
   let pending = false;
+  let generation = 0;
 
   function rebuild() {
     let board = fenToPieces(state.initialFen);
@@ -36,6 +37,8 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
 
   // 无参调用回到标准开局；载入棋谱时不带 check/gameOver 快照
   function reset({ initial_fen, moves } = {}) {
+    generation += 1;
+    pending = false;
     state.initialFen = initial_fen || INITIAL_FEN;
     firstSide = sideFromFen(state.initialFen);
     state.moves = (moves || []).map((move) => ({ ...move }));
@@ -49,6 +52,7 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
   async function submit(move) {
     state.hint = "";
     const snapshot = state.moves.length;
+    const gen = generation;
     pending = true;
     let data;
     try {
@@ -58,7 +62,7 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
         move,
       });
     } catch (err) {
-      if (state.moves.length === snapshot) {
+      if (generation === gen && state.moves.length === snapshot) {
         state.hint =
           err?.response?.data?.detail || err?.response?.data?.error || "校验失败，请重试";
       }
@@ -66,6 +70,7 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
     } finally {
       pending = false;
     }
+    if (generation !== gen) return false;
     if (state.moves.length !== snapshot) return false;
     if (!data.legal) {
       state.hint = data.reason || "着法不合法";
@@ -119,7 +124,23 @@ export function createPlaySession({ initial_fen: initialFen, moves: initialMoves
     state.gameOver = gameOver || null;
   }
 
+  // 引擎着法由后端 best-move 保证合法，直接应用并重建（不再调 validate-move）
+  function applyEngineMove(move) {
+    state.moves.push({
+      x1: move.x1,
+      y1: move.y1,
+      x2: move.x2,
+      y2: move.y2,
+      chinese: move.chinese || "",
+      check: Boolean(move.check),
+      gameOver: move.game_over || null,
+    });
+    state.selected = null;
+    state.hint = "";
+    rebuild();
+  }
+
   reset({ initial_fen: initialFen, moves: initialMoves });
 
-  return { state, click, undo, reset, applyState };
+  return { state, click, undo, reset, applyState, applyEngineMove };
 }

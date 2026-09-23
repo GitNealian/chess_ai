@@ -5,6 +5,9 @@ const http = axios.create({ baseURL: "/api" });
 http.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (axios.isCancel(error) || error?.code === "ECONNABORTED") {
+      return Promise.reject(error);
+    }
     const data = error.response?.data;
     const message = data?.detail || data?.error || "请求失败";
     window.dispatchEvent(new CustomEvent("app-toast", { detail: message }));
@@ -119,4 +122,7 @@ export const api = {
   submitReview: (id, data) => http.post(`/review/${id}/submit`, data).then((r) => r.data),
   stats: () => http.get("/stats").then((r) => r.data),
   validateMove: (data) => http.post("/engine/validate-move", data).then((r) => r.data),
+  bestMove: (data, config) => http.post("/engine/best-move", data, config).then((r) => r.data),
+  validatePosition: (data, config) =>
+    http.post("/engine/validate-position", data, config).then((r) => r.data),
 };

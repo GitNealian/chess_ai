@@ -8,9 +8,9 @@
     </div>
     <div v-else class="layout">
       <ChessBoard
-        :position="{ pieces: session.state.pieces }"
-        :selected="session.state.selected"
-        :arrows="arrows"
+        :position="{ pieces: editing ? editPieces : session.state.pieces }"
+        :selected="editing ? null : session.state.selected"
+        :arrows="editing ? [] : arrows"
         :flipped="flipped"
         @cell-click="onCellClick"
       />
@@ -22,9 +22,43 @@
           <span class="result-hint">如需续下可点悔棋</span>
         </p>
         <div class="controls">
-          <button data-test="undo" :disabled="!session.state.moves.length" @click="undo">悔棋</button>
-          <button data-test="flip" @click="flipped = !flipped">翻转棋盘</button>
-          <button data-test="save" @click="openSave">保存到棋谱库</button>
+          <button data-test="undo" :disabled="undoDisabled" @click="undo">悔棋</button>
+          <button data-test="flip" :disabled="engineThinking" @click="flipped = !flipped">翻转棋盘</button>
+          <button data-test="save" :disabled="engineThinking || editing" @click="openSave">保存到棋谱库</button>
+        </div>
+        <div class="ai-controls">
+          <label class="level-label">
+            难度
+            <select v-model="level" data-test="level" :disabled="engineThinking || editing">
+              <option v-for="l in LEVELS" :key="l.value" :value="l.value">{{ l.label }}</option>
+            </select>
+          </label>
+          <button data-test="engine-red" :disabled="engineThinking" @click="enterAi('red')">引擎执红</button>
+          <button data-test="engine-black" :disabled="engineThinking" @click="enterAi('black')">引擎执黑</button>
+          <button data-test="edit" :disabled="engineThinking || editing" @click="enterEdit">编辑局面</button>
+        </div>
+        <p v-if="engineThinking" class="warn" data-test="engine-thinking">引擎思考中…</p>
+        <div v-if="editing" class="editor-panel" data-test="editor-panel">
+          <PiecePalette
+            :selected="palette"
+            @select="onPaletteSelect"
+            @clear="editPieces = []"
+            @initial="loadInitialEdit"
+          />
+          <label class="level-label">
+            行棋方
+            <select v-model="editSide" data-test="edit-side">
+              <option value="red">红先</option>
+              <option value="black">黑先</option>
+            </select>
+          </label>
+          <p v-for="(err, i) in editError" :key="i" class="warn" data-test="edit-error">
+            {{ err }}
+          </p>
+          <div class="modal-actions">
+            <button data-test="edit-cancel" @click="cancelEdit">取消</button>
+            <button data-test="edit-apply" :disabled="applying" @click="applyPosition">应用局面</button>
+          </div>
         </div>
         <IntentPanel v-if="intent.status !== 'idle'" :intent="intent" />
         <div class="analysis" data-test="analysis">
@@ -83,8 +117,10 @@ import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ChessBoard from "../components/ChessBoard.vue";
 import IntentPanel from "../components/IntentPanel.vue";
+import PiecePalette from "../components/PiecePalette.vue";
 import { analyzeStream, api, intentStream } from "../api";
 import { createPlaySession } from "../stores/play";
+import { INITIAL_FEN, LABELS, fenToPieces } from "../utils/chess";
 
 const route = useRoute();
 const router = useRouter();
@@ -117,6 +153,26 @@ function emptyIntent(status) {
 const intent = ref(emptyIntent("idle"));
 let intentController = null;
 let intentToken = 0;
+
+const LEVELS = [
+  { value: "easy", label: "简单" },
+  { value: "normal", label: "普通" },
+  { value: "hard", label: "困难" },
+];
+
+const mode = ref("human");
+const engineSide = ref(null);
+const level = ref("normal");
+const engineThinking = ref(false);
+
+const editing = ref(false);
+const editPieces = ref([]);
+const palette = ref(null);
+const editSide = ref("red");
+const editError = ref([]);
+const applying = ref(false);
+let editPrev = null;
+let editToken = 0;
 
 const arrows = computed(() => {
   const out = [];
@@ -174,7 +230,7 @@ function startAnalysis() {
   analyzeStream(
     {
       initial_fen: session.state.initialFen,
-      moves: session.state.moves.map(({ chinese, check, gameOver, ...rest }) => rest),
+      moves: movePayload(),
     },
     {
       signal: controller.signal,
@@ -217,7 +273,7 @@ function startIntent() {
   intentStream(
     {
       initial_fen: session.state.initialFen,
-      moves: session.state.moves.map(({ chinese, check, gameOver, ...rest }) => rest),
+      moves: movePayload(),
     },
     {
       signal: intentController.signal,
@@ -268,15 +324,243 @@ function describe(move, index) {
   return `${index + 1}. ${text}`;
 }
 
+function isEngineTurn() {
+  return (
+    mode.value === "ai" &&
+    !session.state.gameOver &&
+    session.state.sideToMove === engineSide.value
+  );
+}
+
 async function onCellClick(x, y) {
-  if (await session.click(x, y)) startIntent();
+  if (editing.value) return onEditClick(x, y);
+  if (engineThinking.value) return;
+  if (isEngineTurn()) {
+    // 引擎回合未在思考（如上次请求失败）时，点棋盘即重试引擎走子
+    await runEngineMove();
+    return;
+  }
+  if (await session.click(x, y)) {
+    if (isEngineTurn()) await runEngineMove();
+    else startIntent();
+  }
+}
+
+let engineController = null;
+let engineToken = 0;
+
+function stopEngine() {
+  engineToken += 1;
+  if (engineController) {
+    engineController.abort();
+    engineController = null;
+  }
+}
+
+function isCancel(err) {
+  return (
+    err?.name === "CanceledError" ||
+    err?.code === "ERR_CANCELED" ||
+    err?.name === "AbortError"
+  );
+}
+
+function movePayload() {
+  return session.state.moves.map(({ chinese, check, gameOver, ...rest }) => rest);
+}
+
+async function runEngineMove() {
+  if (engineThinking.value || session.state.gameOver) return;
+  engineThinking.value = true;
+  stopIntent();
+  stopAnalysis();
+  stopEngine();
+  const token = engineToken;
+  analysis.value = emptyAnalysis("idle");
+  intent.value = emptyIntent("idle");
+  engineController = new AbortController();
+  try {
+    const data = await api.bestMove(
+      {
+        initial_fen: session.state.initialFen,
+        moves: movePayload(),
+        level: level.value,
+      },
+      { signal: engineController.signal, timeout: 15000 }
+    );
+    if (disposed || token !== engineToken) return;
+    if (data.legal) {
+      session.applyEngineMove({
+        ...data.move,
+        check: data.check,
+        game_over: data.game_over,
+      });
+    } else {
+      session.state.hint = data.reason || "引擎未能走子";
+    }
+  } catch (err) {
+    if (isCancel(err)) return;
+    if (!disposed && token === engineToken) {
+      session.state.hint =
+        err?.code === "ECONNABORTED"
+          ? "引擎思考超时，请重试"
+          : err?.response?.data?.detail || "引擎走子失败";
+    }
+  } finally {
+    if (token === engineToken) {
+      engineController = null;
+      engineThinking.value = false;
+    }
+  }
+  if (disposed || token !== engineToken) return;
+  if (!session.state.gameOver) startIntent();
+}
+
+async function enterAi(side) {
+  if (
+    (session.state.moves.length || editing.value) &&
+    !window.confirm("将清空当前对局与编辑内容，确定开始人机对战？")
+  ) {
+    return;
+  }
+  stopIntent();
+  stopAnalysis();
+  stopEngine();
+  editing.value = false;
+  palette.value = null;
+  editError.value = [];
+  editPrev = null;
+  engineThinking.value = false;
+  mode.value = "ai";
+  engineSide.value = side;
+  flipped.value = side === "red";
+  session.reset({});
+  if (side === "red") await runEngineMove();
+  else startIntent();
+}
+
+function enterEdit() {
+  if (
+    session.state.moves.length &&
+    !window.confirm("进入编辑后应用局面将替换当前对局，确定继续？")
+  ) {
+    return;
+  }
+  stopIntent();
+  stopAnalysis();
+  stopEngine();
+  analysis.value = emptyAnalysis("idle");
+  intent.value = emptyIntent("idle");
+  editPrev = {
+    mode: mode.value,
+    engineSide: engineSide.value,
+  };
+  editToken += 1;
+  mode.value = "human";
+  engineSide.value = null;
+  engineThinking.value = false;
+  editPieces.value = session.state.pieces.map((p) => ({ ...p }));
+  palette.value = null;
+  editError.value = [];
+  editSide.value = session.state.sideToMove;
+  editing.value = true;
+}
+
+function cancelEdit() {
+  editToken += 1;
+  editing.value = false;
+  applying.value = false;
+  palette.value = null;
+  editError.value = [];
+  if (editPrev) {
+    mode.value = editPrev.mode;
+    engineSide.value = editPrev.engineSide;
+    editPrev = null;
+  }
+  startIntent();
+}
+
+function onPaletteSelect(piece) {
+  if (
+    palette.value &&
+    palette.value.side === piece.side &&
+    palette.value.kind === piece.kind
+  ) {
+    palette.value = null;
+  } else {
+    palette.value = piece;
+  }
+}
+
+function onEditClick(x, y) {
+  const target = editPieces.value.find((p) => p.x === x && p.y === y);
+  if (target) {
+    editPieces.value = editPieces.value.filter((p) => !(p.x === x && p.y === y));
+    return;
+  }
+  if (!palette.value) return;
+  const { side, kind } = palette.value;
+  editPieces.value = [
+    ...editPieces.value,
+    { x, y, side, kind, label: LABELS[`${side}-${kind}`] },
+  ];
+}
+
+function loadInitialEdit() {
+  editPieces.value = fenToPieces(INITIAL_FEN);
+  palette.value = null;
+}
+
+async function applyPosition() {
+  if (applying.value) return;
+  applying.value = true;
+  editError.value = [];
+  const token = editToken;
+  try {
+    const data = await api.validatePosition(
+      {
+        pieces: editPieces.value.map(({ x, y, side, kind }) => ({ x, y, side, kind })),
+        side_to_move: editSide.value,
+      },
+      { timeout: 15000 }
+    );
+    if (disposed || token !== editToken) return;
+    if (!data.valid) {
+      editError.value = data.errors || ["局面不合法"];
+      return;
+    }
+    editing.value = false;
+    palette.value = null;
+    editPrev = null;
+    flipped.value = false;
+    session.reset({ initial_fen: data.fen });
+    startIntent();
+  } catch (err) {
+    editError.value = [
+      err?.response?.data?.detail || err?.response?.data?.error || "校验失败，请重试",
+    ];
+  } finally {
+    applying.value = false;
+  }
 }
 
 function undo() {
   if (!session.state.moves.length) return;
+  stopEngine();
+  engineThinking.value = false;
   session.undo();
+  // AI 模式：撤销到玩家回合（连带撤销引擎刚走的一步），不自动补走
+  while (session.state.moves.length && isEngineTurn()) session.undo();
   startIntent();
 }
+
+const undoDisabled = computed(() => {
+  if (engineThinking.value || editing.value || !session.state.moves.length) return true;
+  // 引擎执红时至少保留引擎首着，避免撤到空局面后轮到引擎无法继续
+  return (
+    mode.value === "ai" && engineSide.value === "red" && session.state.moves.length <= 1
+  );
+});
 
 const showSave = ref(false);
 const saving = ref(false);
@@ -379,6 +663,7 @@ onUnmounted(() => {
   disposed = true;
   stopAnalysis();
   stopIntent();
+  stopEngine();
 });
 </script>
 
@@ -427,6 +712,39 @@ onUnmounted(() => {
 .controls button {
   flex: 1 1 0;
   min-height: 44px;
+}
+
+.ai-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ai-controls button {
+  flex: 1 1 0;
+  min-height: 44px;
+}
+
+.level-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.level-label select {
+  min-height: 40px;
+}
+
+.editor-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #faf6ee;
+  border: 1px solid #e6ddcc;
+  border-radius: 10px;
+  padding: 12px;
 }
 
 .analysis {
