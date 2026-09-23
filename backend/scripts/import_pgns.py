@@ -51,12 +51,27 @@ def collect_players(games):
     return counter
 
 
-def pick_category(red, black, top_players):
+def pick_category(parsed, top_players, category_by, prefix):
+    if category_by == "event":
+        event = (parsed.get("event") or "").strip()
+        return f"{prefix}{event}" if event else f"{prefix}未分类"
+    red = parsed["red_player"].strip()
+    black = parsed["black_player"].strip()
     if red in top_players:
         return red
     if black in top_players:
         return black
     return OTHER_CATEGORY
+
+
+def build_name(parsed, name_by):
+    if name_by == "title":
+        title = (parsed.get("title") or "").strip()
+        if title:
+            return title
+    red = parsed["red_player"].strip()
+    black = parsed["black_player"].strip()
+    return f"{red or '红方'} vs {black or '黑方'}"
 
 
 def build_hash(source, event, red, black, result, moves):
@@ -71,6 +86,19 @@ def main():
     parser.add_argument("file", help=".pgns 文件路径")
     parser.add_argument("--source", required=True, help="来源标记，如 dpxq / wxf")
     parser.add_argument("--top", type=int, default=100, help="棋手频次前 N 名单独分类")
+    parser.add_argument(
+        "--category-by",
+        choices=["player", "event"],
+        default="player",
+        help="分类依据：player（棋手）或 event（书名/赛事）",
+    )
+    parser.add_argument("--category-prefix", default="", help="分类名前缀，如「古谱 · 」")
+    parser.add_argument(
+        "--name-by",
+        choices=["player", "title"],
+        default="player",
+        help="棋谱名来源：player（红 vs 黑）或 title（标题）",
+    )
     parser.add_argument("--limit", type=int, default=None, help="只处理前 N 局（调试用）")
     parser.add_argument("--dry-run", action="store_true", help="只解析统计，不写数据库")
     args = parser.parse_args()
@@ -82,10 +110,14 @@ def main():
         games = games[: args.limit]
 
     print(f"[{args.source}] {args.file}")
-    print(f"共 {len(games)} 局，统计棋手频次…")
-    players = collect_players(games)
-    top_players = {name for name, _ in players.most_common(args.top)}
-    print(f"不同棋手 {len(players)} 名，前 {args.top} 名入选分类")
+    print(f"共 {len(games)} 局")
+    if args.category_by == "player":
+        players = collect_players(games)
+        top_players = {name for name, _ in players.most_common(args.top)}
+        print(f"不同棋手 {len(players)} 名，前 {args.top} 名入选分类")
+    else:
+        top_players = set()
+        print(f"按 event 分类，前缀「{args.category_prefix}」")
 
     app = create_app()
     with app.app_context():
@@ -130,8 +162,10 @@ def main():
 
             rows.append(
                 {
-                    "name": f"{red or '红方'} vs {black or '黑方'}",
-                    "category": pick_category(red, black, top_players),
+                    "name": build_name(parsed, args.name_by),
+                    "category": pick_category(
+                        parsed, top_players, args.category_by, args.category_prefix
+                    ),
                     "red_player": red,
                     "black_player": black,
                     "event": event,
