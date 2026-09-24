@@ -10,9 +10,13 @@ def login():
     password = current_app.config.get("AUTH_PASSWORD")
     if not password:
         return jsonify({"error": "认证未启用"}), 400
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
     candidate = data.get("password", "")
-    if not isinstance(candidate, str) or not hmac.compare_digest(candidate, password):
+    if not isinstance(candidate, str) or not hmac.compare_digest(
+        candidate.encode("utf-8"), password.encode("utf-8")
+    ):
         return jsonify({"error": "密码错误"}), 401
     session.permanent = True
     session["authenticated"] = True

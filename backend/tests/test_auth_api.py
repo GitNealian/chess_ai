@@ -73,3 +73,34 @@ def test_non_api_paths_not_blocked(auth_client):
 
 def test_auth_disabled_apis_open(client):
     assert client.get("/api/stats").status_code == 200
+
+
+def test_login_disabled_returns_400(client):
+    assert client.post("/api/auth/login", json={"password": "x"}).status_code == 400
+
+
+def test_login_non_string_password(auth_client):
+    assert auth_client.post("/api/auth/login", json={"password": 123}).status_code == 401
+
+
+def test_login_non_dict_body(auth_client):
+    assert auth_client.post("/api/auth/login", json=[1, 2, 3]).status_code == 401
+
+
+def test_login_non_ascii_password(auth_client):
+    assert auth_client.post("/api/auth/login", json={"password": "中文密码"}).status_code == 401
+
+
+class NonAsciiAuthConfig(TestConfig):
+    AUTH_PASSWORD = "中文密码"
+    SECRET_KEY = "non-ascii-secret"
+
+
+def test_non_ascii_password_can_login():
+    app = create_app(NonAsciiAuthConfig)
+    with app.app_context():
+        db.create_all()
+        client = app.test_client()
+        assert client.post("/api/auth/login", json={"password": "中文密码"}).status_code == 200
+        db.session.remove()
+        db.drop_all()
