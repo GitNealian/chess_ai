@@ -1,5 +1,6 @@
 <template>
-  <div class="app">
+  <router-view v-if="isMobile" />
+  <div v-else class="app">
     <header class="topbar">
       <router-link to="/library" class="brand">象棋记谱</router-link>
       <nav class="topnav">
@@ -14,12 +15,18 @@
       <router-link to="/editor" class="tab">录入</router-link>
       <router-link to="/review" class="tab">复习</router-link>
     </nav>
-    <div v-if="toast" class="toast">{{ toast }}</div>
   </div>
+  <div v-if="toast" class="toast">{{ toast }}</div>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useRoute } from "vue-router";
+
+const route = useRoute();
+const isMobile = computed(
+  () => route.path === "/m" || route.path.startsWith("/m/")
+);
 
 const toast = ref("");
 let timer = null;
