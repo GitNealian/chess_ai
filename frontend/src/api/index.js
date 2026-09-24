@@ -1,11 +1,19 @@
 import axios from "axios";
 
+function notifyUnauthorized() {
+  window.dispatchEvent(new CustomEvent("app-unauthorized"));
+}
+
 const http = axios.create({ baseURL: "/api" });
 
 http.interceptors.response.use(
   (response) => response,
   (error) => {
     if (axios.isCancel(error) || error?.code === "ECONNABORTED") {
+      return Promise.reject(error);
+    }
+    if (error.response?.status === 401 && !error.config?.url?.includes("/auth/")) {
+      notifyUnauthorized();
       return Promise.reject(error);
     }
     const data = error.response?.data;
@@ -24,6 +32,7 @@ export async function analyzeStream(payload, { signal, onResult, onDone, onError
       signal,
     });
     if (!response.ok) {
+      if (response.status === 401) notifyUnauthorized();
       const data = await response.json().catch(() => ({}));
       throw new Error(data.detail || data.error || `分析请求失败（${response.status}）`);
     }
@@ -71,6 +80,7 @@ export async function intentStream(
       signal,
     });
     if (!response.ok) {
+      if (response.status === 401) notifyUnauthorized();
       const data = await response.json().catch(() => ({}));
       throw new Error(data.detail || data.error || `意图推演请求失败（${response.status}）`);
     }
@@ -125,4 +135,7 @@ export const api = {
   bestMove: (data, config) => http.post("/engine/best-move", data, config).then((r) => r.data),
   validatePosition: (data, config) =>
     http.post("/engine/validate-position", data, config).then((r) => r.data),
+  login: (password) => http.post("/auth/login", { password }).then((r) => r.data),
+  logout: () => http.post("/auth/logout").then((r) => r.data),
+  authMe: () => http.get("/auth/me").then((r) => r.data),
 };
