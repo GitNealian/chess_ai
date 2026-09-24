@@ -18,6 +18,7 @@ def login():
         candidate.encode("utf-8"), password.encode("utf-8")
     ):
         return jsonify({"error": "密码错误"}), 401
+    session.clear()
     session.permanent = True
     session["authenticated"] = True
     return jsonify({"ok": True})

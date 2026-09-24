@@ -148,6 +148,8 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 ```
 
 `create_app()` 在应用工厂内自动建表（幂等），gunicorn 导入时即可完成初始化。
+
+> 启用认证时，**多 worker 部署必须显式设置 `SECRET_KEY`**：各 worker 进程若各自随机生成密钥，session cookie 在 worker 间验签失败，会出现反复掉登录。单进程（`python app.py`）可不设置。
 调试器默认关闭；仅在本地需要时通过环境变量开启：`FLASK_DEBUG=1 .venv/bin/python app.py`（切勿在生产启用）。
 
 ## API 一览
