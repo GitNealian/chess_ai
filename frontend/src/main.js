@@ -6,7 +6,7 @@ import { useAuthStore } from "./stores/auth";
 
 const app = createApp(App);
 const pinia = createPinia();
-app.use(pinia).use(router).mount("#app");
+app.use(pinia).use(router);
 
 window.addEventListener("app-unauthorized", () => {
   const auth = useAuthStore(pinia);
@@ -15,3 +15,5 @@ window.addEventListener("app-unauthorized", () => {
     router.push("/login");
   }
 });
+
+router.isReady().then(() => app.mount("#app"));

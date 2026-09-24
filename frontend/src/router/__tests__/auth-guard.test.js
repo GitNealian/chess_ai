@@ -30,4 +30,11 @@ describe("auth 路由守卫", () => {
     await router.push(`/login?t=${Date.now()}`);
     expect(router.currentRoute.value.path).toBe("/library");
   });
+
+  it("需要认证且未登录时访问 /m 被重定向到 /login 且带来源", async () => {
+    api.authMe.mockResolvedValue({ auth_required: true, authenticated: false });
+    await router.push("/m");
+    expect(router.currentRoute.value.path).toBe("/login");
+    expect(router.currentRoute.value.query.redirect).toBe("/m");
+  });
 });

@@ -18,11 +18,12 @@
 
 <script setup>
 import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 
 const auth = useAuthStore();
 const router = useRouter();
+const route = useRoute();
 const password = ref("");
 const error = ref("");
 
@@ -30,7 +31,12 @@ async function onSubmit() {
   error.value = "";
   try {
     await auth.login(password.value);
-    router.replace("/library");
+    const raw = route.query.redirect;
+    const redirect =
+      typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//")
+        ? raw
+        : "/library";
+    router.replace(redirect);
   } catch (err) {
     error.value = err?.response?.data?.detail || err?.response?.data?.error || "登录失败";
   }

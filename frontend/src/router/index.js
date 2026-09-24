@@ -32,7 +32,9 @@ router.beforeEach(async (to) => {
     return to.path === "/login" ? "/library" : true;
   }
   if (to.path === "/login") return auth.authenticated ? "/library" : true;
-  if (!auth.authenticated) return "/login";
+  if (!auth.authenticated) {
+    return { path: "/login", query: { redirect: to.fullPath } };
+  }
   return true;
 });
 
