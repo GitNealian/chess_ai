@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import App from "../../../App.vue";
 import router from "../../../router";
+import ChessBoard from "../../../components/ChessBoard.vue";
 import MobileHomeView from "../MobileHomeView.vue";
 
 vi.mock("../../../api", () => ({
@@ -29,6 +30,18 @@ describe("MobileHomeView", () => {
     const wrapper = mount(MobileHomeView);
     expect(wrapper.find("svg.chess-board").exists()).toBe(true);
     expect(wrapper.findAll("g")).toHaveLength(32);
+  });
+
+  it("棋盘下方渲染控制栏", () => {
+    const wrapper = mount(MobileHomeView);
+    expect(wrapper.findAll(".board-controls button")).toHaveLength(6);
+  });
+
+  it("点击翻转后棋盘翻转", async () => {
+    const wrapper = mount(MobileHomeView);
+    expect(wrapper.findComponent(ChessBoard).props("flipped")).toBe(false);
+    await wrapper.find("[data-test='ctrl-flip']").trigger("click");
+    expect(wrapper.findComponent(ChessBoard).props("flipped")).toBe(true);
   });
 });
 

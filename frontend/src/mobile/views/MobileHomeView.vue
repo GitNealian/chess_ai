@@ -1,8 +1,9 @@
 <template>
   <section class="mobile-home">
     <div class="mobile-home__board">
-      <ChessBoard :position="position" />
+      <ChessBoard :position="position" :flipped="flipped" />
     </div>
+    <BoardControls :flipped="flipped" @flip="flipped = !flipped" />
     <div class="mobile-home__body">
       <h1 class="mobile-home__title">移动端界面</h1>
       <p class="mobile-home__hint">骨架已就绪，后续在此实现移动端页面。</p>
@@ -11,10 +12,12 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import ChessBoard from "../../components/ChessBoard.vue";
+import BoardControls from "../components/BoardControls.vue";
 import { INITIAL_FEN, fenToPieces } from "../../utils/chess";
 
+const flipped = ref(false);
 const position = computed(() => ({ pieces: fenToPieces(INITIAL_FEN) }));
 </script>
 
