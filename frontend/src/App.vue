@@ -1,5 +1,5 @@
 <template>
-  <router-view v-if="isMobile" />
+  <router-view v-if="bareView" />
   <div v-else class="app">
     <header class="topbar">
       <router-link to="/library" class="brand">象棋记谱</router-link>
@@ -7,6 +7,12 @@
         <router-link to="/library">棋谱库</router-link>
         <router-link to="/editor">录入</router-link>
         <router-link to="/review">默写复习</router-link>
+        <button
+          v-if="auth.authRequired && auth.authenticated"
+          class="logout"
+          data-test="logout"
+          @click="onLogout"
+        >退出</button>
       </nav>
     </header>
     <main><router-view /></main>
@@ -21,12 +27,21 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
+import { useAuthStore } from "./stores/auth";
 
 const route = useRoute();
+const router = useRouter();
+const auth = useAuthStore();
 const isMobile = computed(
   () => route.path === "/m" || route.path.startsWith("/m/")
 );
+const bareView = computed(() => isMobile.value || route.path === "/login");
+
+async function onLogout() {
+  await auth.logout();
+  router.push("/login");
+}
 
 const toast = ref("");
 let timer = null;
@@ -64,6 +79,7 @@ a, button, input, select, textarea { touch-action: manipulation; }
 .topbar a { color: #f4e3c1; text-decoration: none; margin-right: 12px; }
 .brand { font-weight: 700; font-size: 18px; color: #fff !important; }
 .topnav { display: none; }
+.logout { background: none; border: 1px solid #f4e3c1; color: #f4e3c1; border-radius: 4px; padding: 4px 10px; cursor: pointer; margin-left: 12px; }
 
 main {
   max-width: 1080px;
