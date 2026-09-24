@@ -12,8 +12,10 @@ http.interceptors.response.use(
     if (axios.isCancel(error) || error?.code === "ECONNABORTED") {
       return Promise.reject(error);
     }
-    if (error.response?.status === 401 && !error.config?.url?.includes("/auth/")) {
-      notifyUnauthorized();
+    if (error.response?.status === 401) {
+      if (!error.config?.url?.includes("/auth/")) {
+        notifyUnauthorized();
+      }
       return Promise.reject(error);
     }
     const data = error.response?.data;

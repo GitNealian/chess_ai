@@ -32,7 +32,7 @@ async function onSubmit() {
     await auth.login(password.value);
     router.replace("/library");
   } catch (err) {
-    error.value = err?.response?.data?.error || "登录失败";
+    error.value = err?.response?.data?.detail || err?.response?.data?.error || "登录失败";
   }
 }
 </script>

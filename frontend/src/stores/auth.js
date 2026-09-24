@@ -17,11 +17,17 @@ export const useAuthStore = defineStore("auth", {
     },
     async ensureReady() {
       if (this.ready) return;
-      try {
-        await this.fetchMe();
-      } catch {
-        this.ready = true;
-      }
+      if (this._pending) return this._pending;
+      this._pending = (async () => {
+        try {
+          await this.fetchMe();
+        } catch {
+          this.ready = true;
+        } finally {
+          this._pending = null;
+        }
+      })();
+      return this._pending;
     },
     async login(password) {
       this.loading = true;

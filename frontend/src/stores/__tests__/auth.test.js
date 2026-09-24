@@ -22,6 +22,27 @@ describe("auth store", () => {
     expect(store.authRequired).toBe(true);
   });
 
+  it("ensureReady 并发只拉一次 me", async () => {
+    const resolvers = [];
+    api.authMe.mockImplementation(
+      () => new Promise((resolve) => resolvers.push(resolve))
+    );
+    const store = useAuthStore();
+    const p1 = store.ensureReady();
+    const p2 = store.ensureReady();
+    expect(api.authMe).toHaveBeenCalledTimes(1);
+    resolvers.forEach((r) => r({ auth_required: true, authenticated: false }));
+    await Promise.all([p1, p2]);
+    expect(api.authMe).toHaveBeenCalledTimes(1);
+  });
+
+  it("ensureReady 在 authMe 拒绝时仍置 ready=true", async () => {
+    api.authMe.mockRejectedValueOnce(new Error("network"));
+    const store = useAuthStore();
+    await store.ensureReady();
+    expect(store.ready).toBe(true);
+  });
+
   it("login 成功置位，失败保持未登录", async () => {
     api.login.mockResolvedValueOnce({ ok: true });
     const store = useAuthStore();
