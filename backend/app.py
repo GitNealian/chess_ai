@@ -1,7 +1,7 @@
 import os
 import threading
 
-from flask import Flask, abort, jsonify, send_from_directory
+from flask import Flask, abort, jsonify, request, send_from_directory, session
 from sqlalchemy import inspect, text
 
 from config import BASE_DIR, Config
@@ -59,6 +59,7 @@ def create_app(config_class=Config):
     def health():
         return jsonify({"status": "ok"})
 
+    from routes.auth import auth_bp
     from routes.engine import engine_bp
     from routes.games import games_bp
     from routes.review import review_bp
@@ -66,6 +67,25 @@ def create_app(config_class=Config):
     app.register_blueprint(games_bp, url_prefix="/api/games")
     app.register_blueprint(engine_bp, url_prefix="/api/engine")
     app.register_blueprint(review_bp, url_prefix="/api")
+    app.register_blueprint(auth_bp, url_prefix="/api/auth")
+
+    public_api_paths = {
+        "/api/health",
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/auth/me",
+    }
+
+    @app.before_request
+    def _require_auth():
+        if not app.config.get("AUTH_PASSWORD"):
+            return None
+        path = request.path
+        if not path.startswith("/api/") or path in public_api_paths:
+            return None
+        if session.get("authenticated"):
+            return None
+        return jsonify({"error": "未登录"}), 401
 
     _register_frontend(app)
 
