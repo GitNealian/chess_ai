@@ -39,7 +39,11 @@ const isMobile = computed(
 const bareView = computed(() => isMobile.value || route.path === "/login");
 
 async function onLogout() {
-  await auth.logout();
+  try {
+    await auth.logout();
+  } catch {
+    auth.markUnauthorized();
+  }
   router.push("/login");
 }
 

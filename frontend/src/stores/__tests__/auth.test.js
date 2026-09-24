@@ -36,11 +36,12 @@ describe("auth store", () => {
     expect(api.authMe).toHaveBeenCalledTimes(1);
   });
 
-  it("ensureReady 在 authMe 拒绝时仍置 ready=true", async () => {
+  it("ensureReady 在 authMe 拒绝时仍置 ready=true 且 error=true", async () => {
     api.authMe.mockRejectedValueOnce(new Error("network"));
     const store = useAuthStore();
     await store.ensureReady();
     expect(store.ready).toBe(true);
+    expect(store.error).toBe(true);
   });
 
   it("login 成功置位，失败保持未登录", async () => {

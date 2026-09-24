@@ -27,6 +27,7 @@ router.beforeEach(async (to) => {
   if (!pinia) return true;
   const auth = useAuthStore(pinia);
   await auth.ensureReady();
+  if (auth.error) return true;
   if (!auth.authRequired) {
     return to.path === "/login" ? "/library" : true;
   }

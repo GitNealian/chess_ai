@@ -7,6 +7,7 @@ export const useAuthStore = defineStore("auth", {
     authenticated: false,
     ready: false,
     loading: false,
+    error: false,
   }),
   actions: {
     async fetchMe() {
@@ -22,6 +23,7 @@ export const useAuthStore = defineStore("auth", {
         try {
           await this.fetchMe();
         } catch {
+          this.error = true;
           this.ready = true;
         } finally {
           this._pending = null;
