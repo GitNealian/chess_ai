@@ -86,6 +86,16 @@ python3 -m venv .venv
 
 默认监听 `http://localhost:5000`，数据库为 `backend/chess.db`（SQLite，首次启动自动建表）。
 
+### 密码登录（可选）
+
+默认免登录。设置环境变量 `AUTH_PASSWORD` 即启用单用户密码登录，保护除 `/api/health` 与 `/api/auth/*` 外的所有 `/api/*`：
+
+```bash
+cd backend && AUTH_PASSWORD=你的密码 .venv/bin/python app.py
+```
+
+会话由签名的 session cookie 保持，有效期 7 天。签名密钥优先取环境变量 `SECRET_KEY`，未设置则每次启动随机生成（重启后需重新登录）；如需跨重启保持登录，请一并设置 `SECRET_KEY`（任意长随机字符串）。配置样例见根目录 `.env.example`。
+
 ## 前端启动（开发期）
 
 ```bash
@@ -99,10 +109,10 @@ npm run dev
 ## 测试
 
 ```bash
-# 后端（508 项：507 通过 + 1 跳过）
+# 后端（522 项：521 通过 + 1 跳过）
 cd backend && .venv/bin/python -m pytest
 
-# 前端（208 项）
+# 前端（223 项）
 cd frontend && npx vitest run
 ```
 
@@ -145,6 +155,9 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | GET | `/api/health` | 健康检查 |
+| POST | `/api/auth/login` | 密码登录（请求体 `{password}`；成功写入会话 cookie） |
+| POST | `/api/auth/logout` | 登出（清除会话） |
+| GET | `/api/auth/me` | 返回 `{auth_required, authenticated}` |
 | GET | `/api/games` | 棋谱列表（`category` / `keyword` 筛选） |
 | POST | `/api/games` | 创建棋谱（保存前校验着法合法性） |
 | GET | `/api/games/:id` | 棋谱详情（含 `initial_fen` 与 `moves`） |
@@ -163,6 +176,8 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 | GET | `/api/stats` | 掌握度统计 |
 
 错误统一返回 `{error, detail?, step?}`。
+
+启用 `AUTH_PASSWORD` 后，除上表三个 `/api/auth/*` 端点与 `/api/health` 外，所有 `/api/*` 需先登录，未登录返回 `401 {error:"未登录"}`。前端在收到 401 时自动跳转 `/login`。
 
 `POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 30000，范围 100–30000，层边界软时限：按「上一层耗时 × 1.5」外推下一层预算，通常完成时间不超过其 ~1.5 倍）、`threads`（可选，1..16，越界夹逼；缺省自动：环境变量 `ENGINE_THREADS` > `max(1, min(cpu_count-1, 8))`；`threads=1` 即串行）。流内依次可能出现：
 
@@ -196,7 +211,7 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 部分设计承诺尚未落地：PGN 文件上传（当前仅支持粘贴内容）、文本解析的逐步高亮预览、打谱视角切换、默写手动评分（当前按错误次数与是否看答案自动评分）。
 - 掌握度阈值：`repetitions >= 3` 视为「已掌握」，与 `/api/stats` 的 `mastered` 口径一致。
 - 棋谱列表对每条棋谱的复习信息为惰性加载（本地单用户规模下可接受）。
-- 单用户、无登录；数据存于 SQLite。
+- 单用户、可选密码登录（环境变量 `AUTH_PASSWORD`，见「后端启动」）；数据存于 SQLite。
 - AI 分析接入打谱页与对弈页；录入 / 默写视图未接入。
 - 意图推演基于浅层搜索（固定深度 6、每线限时默认 1500ms），线路精度有限；诱饵筛选为启发式；「跳一手」威胁线结论仅在「我方完全不作为」前提下成立；推演与评分共享分析锁，前端先意图后评分串行触发。
 - 人人对弈为同屏双人，不联网、不自动保存（手动保存到棋谱库）；不判定长将、重复局面和棋；从棋谱续下的将军/终局提示由一次探测请求恢复，悔棋到该步之前时提示不恢复（着法合法性始终由后端保证）。
@@ -218,3 +233,4 @@ cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 人人对弈：`docs/plans/2026-09-21-play-mode-design.md` / `docs/plans/2026-09-21-play-mode-implementation.md`
 - 人机对战与局面编辑：`docs/plans/2026-09-22-ai-play-and-board-editor-design.md` / `docs/plans/2026-09-22-ai-play-and-board-editor-implementation.md`
 - Lazy SMP 并行搜索：`docs/plans/2026-09-22-lazy-smp-design.md` / `docs/plans/2026-09-22-lazy-smp-implementation.md`
+- 单用户密码认证：`docs/plans/2026-09-24-single-user-auth-design.md` / `docs/plans/2026-09-24-single-user-auth-implementation.md`
