@@ -7,9 +7,6 @@
     <main class="mobile-main">
       <router-view />
     </main>
-    <nav class="mobile-tabbar">
-      <router-link to="/m" class="mobile-tab">首页</router-link>
-    </nav>
   </div>
 </template>
 
@@ -51,34 +48,6 @@
   max-width: none;
   margin: 0;
   padding: 16px;
-  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
-}
-
-.mobile-tabbar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 100;
-  display: flex;
-  background: #fff;
-  border-top: 1px solid #e5dcc9;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-.mobile-tab {
-  flex: 1;
-  min-height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #6b5a45;
-  text-decoration: none;
-  font-size: 16px;
-}
-
-.mobile-tab.router-link-active {
-  color: #7a3b2e;
-  font-weight: 600;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 }
 </style>
