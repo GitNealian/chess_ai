@@ -7,6 +7,8 @@ export const LABELS = {
   "black-R": "车", "black-C": "炮", "black-P": "卒",
 };
 
+export const MAX_COUNTS = { K: 1, A: 2, B: 2, N: 2, R: 2, C: 2, P: 5 };
+
 export function fenToPieces(fen) {
   const rows = fen.split(" ")[0].split("/");
   const pieces = [];

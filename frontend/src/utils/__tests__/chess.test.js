@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyMove, fenToPieces, LABELS } from "../chess";
+import { applyMove, fenToPieces, LABELS, MAX_COUNTS } from "../chess";
 
 describe("chess utils", () => {
   it("标准开局有 32 个棋子", () => {
@@ -71,5 +71,11 @@ describe("chess utils", () => {
     const snapshot = JSON.stringify(pieces);
     applyMove(pieces, { x1: 0, y1: 0, x2: 0, y2: 5 });
     expect(JSON.stringify(pieces)).toBe(snapshot);
+  });
+});
+
+describe("MAX_COUNTS", () => {
+  it("按象棋规则给出各兵种上限", () => {
+    expect(MAX_COUNTS).toEqual({ K: 1, A: 2, B: 2, N: 2, R: 2, C: 2, P: 5 });
   });
 });
