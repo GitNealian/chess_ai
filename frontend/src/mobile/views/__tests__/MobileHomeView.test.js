@@ -4,6 +4,9 @@ import { createPinia } from "pinia";
 import App from "../../../App.vue";
 import router from "../../../router";
 import ChessBoard from "../../../components/ChessBoard.vue";
+import MobileBoardEditor from "../../components/MobileBoardEditor.vue";
+import { api } from "../../../api";
+import { INITIAL_FEN } from "../../../utils/chess";
 import MobileHomeView from "../MobileHomeView.vue";
 
 vi.mock("../../../api", () => ({
@@ -43,6 +46,78 @@ describe("MobileHomeView", () => {
     await wrapper.find("[data-test='ctrl-flip']").trigger("click");
     expect(wrapper.findComponent(ChessBoard).props("flipped")).toBe(true);
   });
+
+  it("点编辑打开弹窗", async () => {
+    const wrapper = mount(MobileHomeView);
+    expect(wrapper.find("[data-test='editor-card']").exists()).toBe(false);
+    await wrapper.find("[data-test='ctrl-edit']").trigger("click");
+    expect(wrapper.find("[data-test='editor-card']").exists()).toBe(true);
+  });
+
+  it("应用编辑后首页棋盘更新并关闭弹窗", async () => {
+    const wrapper = mount(MobileHomeView);
+    await wrapper.find("[data-test='ctrl-edit']").trigger("click");
+    await wrapper.findComponent(MobileBoardEditor).vm.$emit("apply", []);
+    expect(wrapper.findComponent(ChessBoard).props("position").pieces).toHaveLength(0);
+    expect(wrapper.find("[data-test='editor-card']").exists()).toBe(false);
+  });
+
+  it("点打开显示棋谱选择器", async () => {
+    const wrapper = mount(MobileHomeView);
+    await wrapper.find("[data-test='open']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='picker-card']").exists()).toBe(true);
+  });
+
+  it("选中棋谱后可前进打谱", async () => {
+    api.listGames.mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          name: "测试局",
+          initial_fen: INITIAL_FEN,
+          moves: [{ x1: 0, y1: 0, x2: 0, y2: 1 }],
+        },
+      ],
+    });
+    const wrapper = mount(MobileHomeView);
+    await wrapper.find("[data-test='open']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-game='1']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='ctrl-next']").attributes("disabled")).toBeUndefined();
+    await wrapper.find("[data-test='ctrl-next']").trigger("click");
+    const pieces = wrapper.findComponent(ChessBoard).props("position").pieces;
+    expect(pieces.find((p) => p.x === 0 && p.y === 1)).toBeTruthy();
+  });
+
+  it("点设置显示设置弹窗", async () => {
+    const wrapper = mount(MobileHomeView);
+    await wrapper.find("[data-test='settings']").trigger("click");
+    expect(wrapper.find("[data-test='settings-card']").exists()).toBe(true);
+  });
+
+  it("打谱中应用编辑后退出打谱", async () => {
+    api.listGames.mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          name: "测试局",
+          initial_fen: INITIAL_FEN,
+          moves: [{ x1: 0, y1: 0, x2: 0, y2: 1 }],
+        },
+      ],
+    });
+    const wrapper = mount(MobileHomeView);
+    await wrapper.find("[data-test='open']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-game='1']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-test='ctrl-edit']").trigger("click");
+    await wrapper.findComponent(MobileBoardEditor).vm.$emit("apply", []);
+    await flushPromises();
+    expect(wrapper.find("[data-test='ctrl-next']").attributes("disabled")).toBeDefined();
+  });
 });
 
 describe("移动端路由", () => {
@@ -67,6 +142,7 @@ describe("App 按路由前缀分流 shell", () => {
     await flushPromises();
 
     expect(wrapper.find(".mobile-topbar").exists()).toBe(true);
+    expect(wrapper.find(".mobile-tabbar").exists()).toBe(false);
     expect(wrapper.find(".topbar").exists()).toBe(false);
     expect(wrapper.find(".tabbar").exists()).toBe(false);
   });
