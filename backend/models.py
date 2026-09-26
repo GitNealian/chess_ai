@@ -32,6 +32,9 @@ class Game(db.Model):
 
     review = db.relationship("Review", backref="game", uselist=False, cascade="all, delete-orphan")
     logs = db.relationship("ReviewLog", backref="game", cascade="all, delete-orphan")
+    activity = db.relationship(
+        "GameActivity", backref="game", uselist=False, cascade="all, delete-orphan"
+    )
 
     @property
     def moves(self):
@@ -54,6 +57,7 @@ class Game(db.Model):
             "initial_fen": self.initial_fen,
             "moves": self.moves,
             "practice_side": self.practice_side,
+            "favorited": bool(self.activity and self.activity.favorited_at),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "review": None
@@ -65,6 +69,14 @@ class Game(db.Model):
                 "lapses": review.lapses,
             },
         }
+
+
+class GameActivity(db.Model):
+    __tablename__ = "game_activity"
+
+    game_id = db.Column(db.Integer, db.ForeignKey("games.id"), primary_key=True)
+    last_opened_at = db.Column(db.DateTime)
+    favorited_at = db.Column(db.DateTime)
 
 
 class Review(db.Model):

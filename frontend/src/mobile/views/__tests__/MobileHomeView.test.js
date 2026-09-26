@@ -1,17 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { createPinia } from "pinia";
 import App from "../../../App.vue";
 import router from "../../../router";
 import ChessBoard from "../../../components/ChessBoard.vue";
 import MobileBoardEditor from "../../components/MobileBoardEditor.vue";
-import { api } from "../../../api";
+import { analyzeStream, api, intentStream } from "../../../api";
 import { INITIAL_FEN } from "../../../utils/chess";
 import MobileHomeView from "../MobileHomeView.vue";
 
 vi.mock("../../../api", () => ({
   api: {
     listGames: vi.fn().mockResolvedValue({ items: [] }),
+    listCollections: vi.fn().mockResolvedValue({ items: [] }),
+    listEvents: vi.fn().mockResolvedValue({ items: [] }),
+    openGame: vi.fn().mockResolvedValue({ last_opened_at: "2026", favorited: false }),
+    favoriteGame: vi.fn().mockResolvedValue({ favorited: false, favorited_at: null }),
     stats: vi.fn().mockResolvedValue({
       total: 0,
       reviewed: 0,
@@ -21,13 +26,26 @@ vi.mock("../../../api", () => ({
     }),
     deleteGame: vi.fn(),
   },
+  analyzeStream: vi.fn(),
+  intentStream: vi.fn(),
 }));
 
 describe("MobileHomeView", () => {
-  it("渲染移动端占位内容", () => {
-    const wrapper = mount(MobileHomeView);
-    expect(wrapper.text()).toContain("移动端界面");
+  beforeEach(() => {
+    localStorage.clear();
+    analyzeStream.mockReset();
+    intentStream.mockReset();
   });
+
+  async function openPicker() {
+    window.dispatchEvent(new CustomEvent("mobile-open"));
+    await flushPromises();
+  }
+
+  async function openSettings() {
+    window.dispatchEvent(new CustomEvent("mobile-settings"));
+    await flushPromises();
+  }
 
   it("上方渲染初始局面的棋盘", () => {
     const wrapper = mount(MobileHomeView);
@@ -64,8 +82,7 @@ describe("MobileHomeView", () => {
 
   it("点打开显示棋谱选择器", async () => {
     const wrapper = mount(MobileHomeView);
-    await wrapper.find("[data-test='open']").trigger("click");
-    await flushPromises();
+    await openPicker();
     expect(wrapper.find("[data-test='picker-card']").exists()).toBe(true);
   });
 
@@ -81,7 +98,8 @@ describe("MobileHomeView", () => {
       ],
     });
     const wrapper = mount(MobileHomeView);
-    await wrapper.find("[data-test='open']").trigger("click");
+    await openPicker();
+    await wrapper.find("[data-test='menu-other']").trigger("click");
     await flushPromises();
     await wrapper.find("[data-game='1']").trigger("click");
     await flushPromises();
@@ -93,7 +111,7 @@ describe("MobileHomeView", () => {
 
   it("点设置显示设置弹窗", async () => {
     const wrapper = mount(MobileHomeView);
-    await wrapper.find("[data-test='settings']").trigger("click");
+    await openSettings();
     expect(wrapper.find("[data-test='settings-card']").exists()).toBe(true);
   });
 
@@ -109,7 +127,8 @@ describe("MobileHomeView", () => {
       ],
     });
     const wrapper = mount(MobileHomeView);
-    await wrapper.find("[data-test='open']").trigger("click");
+    await openPicker();
+    await wrapper.find("[data-test='menu-other']").trigger("click");
     await flushPromises();
     await wrapper.find("[data-game='1']").trigger("click");
     await flushPromises();
@@ -117,6 +136,99 @@ describe("MobileHomeView", () => {
     await wrapper.findComponent(MobileBoardEditor).vm.$emit("apply", []);
     await flushPromises();
     expect(wrapper.find("[data-test='ctrl-next']").attributes("disabled")).toBeDefined();
+  });
+
+  async function loadGame(wrapper, game) {
+    api.listGames.mockResolvedValueOnce({ items: [game] });
+    await openPicker();
+    await wrapper.find("[data-test='menu-other']").trigger("click");
+    await flushPromises();
+    await wrapper.find(`[data-game='${game.id}']`).trigger("click");
+    await flushPromises();
+  }
+
+  it("未打开棋谱时不显示收藏按钮", () => {
+    const wrapper = mount(MobileHomeView);
+    expect(wrapper.find("[data-test='favorite']").exists()).toBe(false);
+  });
+
+  it("载入棋谱后显示空心星标并记录打开", async () => {
+    const wrapper = mount(MobileHomeView);
+    await loadGame(wrapper, {
+      id: 5,
+      name: "局",
+      initial_fen: INITIAL_FEN,
+      moves: [],
+      favorited: false,
+    });
+    expect(api.openGame).toHaveBeenCalledWith(5);
+    expect(wrapper.find("[data-test='favorite']").text()).toContain("☆");
+  });
+
+  it("已收藏的棋谱显示实心星标", async () => {
+    api.openGame.mockResolvedValueOnce({ last_opened_at: "2026", favorited: true });
+    const wrapper = mount(MobileHomeView);
+    await loadGame(wrapper, {
+      id: 6,
+      name: "藏",
+      initial_fen: INITIAL_FEN,
+      moves: [],
+      favorited: true,
+    });
+    expect(wrapper.find("[data-test='favorite']").text()).toContain("★");
+  });
+
+  it("点击星标切换为已收藏", async () => {
+    const wrapper = mount(MobileHomeView);
+    await loadGame(wrapper, {
+      id: 7,
+      name: "局",
+      initial_fen: INITIAL_FEN,
+      moves: [],
+      favorited: false,
+    });
+    api.favoriteGame.mockResolvedValueOnce({ favorited: true, favorited_at: "2026" });
+    await wrapper.find("[data-test='favorite']").trigger("click");
+    await flushPromises();
+    expect(api.favoriteGame).toHaveBeenCalledWith(7);
+    expect(wrapper.find("[data-test='favorite']").text()).toContain("★");
+  });
+
+  it("设置开关持久化到 localStorage", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openSettings();
+    await wrapper.find("[data-test='setting-score']").setValue(true);
+    expect(JSON.parse(localStorage.getItem("chess:mobile-settings"))).toEqual({
+      score: true,
+      intent: false,
+    });
+  });
+
+  it("开启评分后显示评分条", () => {
+    localStorage.setItem("chess:mobile-settings", JSON.stringify({ score: true, intent: false }));
+    const wrapper = mount(MobileHomeView);
+    expect(wrapper.find("[data-test='mobile-score']").exists()).toBe(true);
+  });
+
+  it("分析结果在棋盘上展示最新两着法箭头", async () => {
+    localStorage.setItem("chess:mobile-settings", JSON.stringify({ score: true, intent: false }));
+    analyzeStream.mockImplementation((payload, { onResult }) => {
+      onResult({
+        depth: 9,
+        score_red: 5,
+        mate: null,
+        pv: [
+          { x1: 0, y1: 0, x2: 0, y2: 1 },
+          { x1: 1, y1: 0, x2: 1, y2: 1 },
+        ],
+        time_ms: 3,
+      });
+    });
+    const wrapper = mount(MobileHomeView);
+    await nextTick();
+    const arrows = wrapper.findComponent(ChessBoard).props("arrows");
+    expect(arrows).toHaveLength(2);
+    expect(arrows.map((a) => a.kind)).toEqual(["best", "reply"]);
   });
 });
 

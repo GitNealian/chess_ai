@@ -119,3 +119,76 @@ def test_update_moves_not_list_returns_400(client):
     game_id = client.post("/api/games", json=_payload()).get_json()["id"]
     resp = client.put(f"/api/games/{game_id}", json={"moves": "not-a-list"})
     assert resp.status_code == 400
+
+
+def test_scope_collection_matches_exact(client):
+    client.post("/api/games", json=_payload(name="古谱A", category="古谱 · 桔中秘"))
+    client.post("/api/games", json=_payload(name="古谱B", category="古谱 · 梅花谱"))
+    body = client.get("/api/games?scope=collection&collection=桔中秘").get_json()
+    assert [g["name"] for g in body["items"]] == ["古谱A"]
+
+
+def test_scope_collection_requires_name(client):
+    assert client.get("/api/games?scope=collection").status_code == 400
+
+
+def test_scope_tournament_excludes_old_and_blank(client):
+    client.post("/api/games", json=_payload(name="赛事", category="棋手", event="联赛"))
+    client.post("/api/games", json=_payload(name="古谱", category="古谱 · 桔中秘", event="桔中秘"))
+    client.post("/api/games", json=_payload(name="空", category="棋手", event=""))
+    body = client.get("/api/games?scope=tournament").get_json()
+    assert [g["name"] for g in body["items"]] == ["赛事"]
+
+
+def test_scope_other_blank_or_na(client):
+    client.post("/api/games", json=_payload(name="空", category="棋手", event=""))
+    client.post("/api/games", json=_payload(name="NA", category="棋手", event="NA"))
+    client.post("/api/games", json=_payload(name="赛事", category="棋手", event="联赛"))
+    body = client.get("/api/games?scope=other").get_json()
+    assert sorted(g["name"] for g in body["items"]) == ["NA", "空"]
+
+
+def test_scope_invalid(client):
+    assert client.get("/api/games?scope=xx").status_code == 400
+
+
+def test_collections_aggregate(client):
+    client.post("/api/games", json=_payload(name="a1", category="古谱 · 桔中秘"))
+    client.post("/api/games", json=_payload(name="a2", category="古谱 · 桔中秘"))
+    client.post("/api/games", json=_payload(name="b1", category="古谱 · 梅花谱"))
+    client.post("/api/games", json=_payload(name="c", category="棋手"))
+    body = client.get("/api/games/collections").get_json()
+    assert body["total"] == 2
+    assert body["items"][0] == {"name": "桔中秘", "count": 2}
+    assert body["items"][1] == {"name": "梅花谱", "count": 1}
+
+
+def test_sort_created_desc(client):
+    for i in range(3):
+        client.post("/api/games", json=_payload(name=f"n{i}"))
+        time.sleep(0.01)
+    body = client.get("/api/games?sort=created_desc").get_json()
+    assert body["items"][0]["name"] == "n2"
+
+
+def test_scope_event_matches_exact(client):
+    client.post("/api/games", json=_payload(name="e1", category="棋手", event="联赛"))
+    client.post("/api/games", json=_payload(name="e2", category="棋手", event="杯赛"))
+    body = client.get("/api/games?scope=event&event=联赛").get_json()
+    assert [g["name"] for g in body["items"]] == ["e1"]
+
+
+def test_scope_event_requires_name(client):
+    assert client.get("/api/games?scope=event").status_code == 400
+
+
+def test_events_aggregate(client):
+    client.post("/api/games", json=_payload(name="a", category="棋手", event="联赛"))
+    client.post("/api/games", json=_payload(name="b", category="棋手", event="联赛"))
+    client.post("/api/games", json=_payload(name="c", category="棋手", event="杯赛"))
+    client.post("/api/games", json=_payload(name="d", category="古谱 · 桔中秘", event="桔中秘"))
+    client.post("/api/games", json=_payload(name="e", category="棋手", event=""))
+    body = client.get("/api/games/events").get_json()
+    assert body["total"] == 2
+    assert body["items"][0] == {"name": "联赛", "count": 2}
+    assert body["items"][1] == {"name": "杯赛", "count": 1}

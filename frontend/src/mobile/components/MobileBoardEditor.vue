@@ -87,7 +87,7 @@ async function apply() {
       errors.value = res.errors || ["局面不合法"];
       return;
     }
-    emit("apply", draft.value.map((p) => ({ ...p })));
+    emit("apply", draft.value.map((p) => ({ ...p })), res.fen);
   } catch (err) {
     errors.value = [
       err?.response?.data?.detail || err?.response?.data?.error || "校验失败，请重试",

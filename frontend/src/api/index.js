@@ -123,6 +123,10 @@ export async function intentStream(
 
 export const api = {
   listGames: (params) => http.get("/games", { params }).then((r) => r.data),
+  listCollections: (params) => http.get("/games/collections", { params }).then((r) => r.data),
+  listEvents: (params) => http.get("/games/events", { params }).then((r) => r.data),
+  openGame: (id) => http.post(`/games/${id}/open`).then((r) => r.data),
+  favoriteGame: (id) => http.post(`/games/${id}/favorite`).then((r) => r.data),
   getGame: (id) => http.get(`/games/${id}`).then((r) => r.data),
   createGame: (data) => http.post("/games", data).then((r) => r.data),
   updateGame: (id, data) => http.put(`/games/${id}`, data).then((r) => r.data),

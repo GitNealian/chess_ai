@@ -114,4 +114,12 @@ describe("MobileBoardEditor", () => {
     expect(payload).toHaveLength(1);
     expect(payload[0]).toMatchObject({ x: 4, y: 0, side: "red", kind: "K" });
   });
+
+  it("校验合法时透传返回的 fen", async () => {
+    api.validatePosition.mockResolvedValue({ valid: true, fen: "custom-fen" });
+    const wrapper = mount(MobileBoardEditor, { props: { pieces: onlyRedKing() } });
+    await wrapper.find("[data-test='editor-apply']").trigger("click");
+    await flushPromises();
+    expect(wrapper.emitted("apply")[0][1]).toBe("custom-fen");
+  });
 });

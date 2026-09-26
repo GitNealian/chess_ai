@@ -74,6 +74,7 @@ def test_game_to_dict_keys(app):
         "initial_fen",
         "moves",
         "practice_side",
+        "favorited",
         "created_at",
         "updated_at",
         "review",

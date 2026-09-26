@@ -4,13 +4,14 @@ from sqlalchemy.orm import joinedload
 from chess_engine.board import INITIAL_FEN, Board
 from chess_engine.move import Move
 from chess_engine.parser import parse_moves, parse_pgn
-from models import Game, db
+from models import Game, GameActivity, db, _utcnow
 
 games_bp = Blueprint("games", __name__)
 
 VALID_SIDES = {"red", "black", "both"}
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
+COLLECTION_PREFIX = "古谱 · "
 
 
 def _error(message, detail=None, step=None, status=400):
@@ -76,6 +77,55 @@ def list_games():
         return _error(f"page_size {error}")
 
     query = Game.query.options(joinedload(Game.review))
+    scope = request.args.get("scope")
+    if scope == "collection":
+        collection = request.args.get("collection")
+        if not collection:
+            return _error("scope=collection 需要 collection 参数")
+        query = query.filter(Game.category == f"{COLLECTION_PREFIX}{collection}")
+    elif scope == "tournament":
+        query = query.filter(
+            db.or_(Game.category.is_(None), ~Game.category.like(f"{COLLECTION_PREFIX}%")),
+            Game.event.is_not(None),
+            Game.event != "",
+            Game.event != "NA",
+        )
+    elif scope == "other":
+        query = query.filter(
+            db.or_(Game.category.is_(None), ~Game.category.like(f"{COLLECTION_PREFIX}%")),
+            db.or_(Game.event.is_(None), Game.event == "", Game.event == "NA"),
+        )
+    elif scope == "event":
+        event = request.args.get("event")
+        if not event:
+            return _error("scope=event 需要 event 参数")
+        query = query.filter(
+            db.or_(Game.category.is_(None), ~Game.category.like(f"{COLLECTION_PREFIX}%")),
+            Game.event == event,
+        )
+    elif scope == "recent":
+        query = query.join(GameActivity, GameActivity.game_id == Game.id).filter(
+            GameActivity.last_opened_at.is_not(None)
+        )
+    elif scope == "favorite":
+        query = query.join(GameActivity, GameActivity.game_id == Game.id).filter(
+            GameActivity.favorited_at.is_not(None)
+        )
+    elif scope:
+        return _error("scope 只能是 collection/event/tournament/other/recent/favorite")
+
+    sort = request.args.get("sort")
+    if scope == "recent":
+        order = (GameActivity.last_opened_at.desc(), Game.id.desc())
+    elif scope == "favorite":
+        order = (GameActivity.favorited_at.desc(), Game.id.desc())
+    elif sort == "created_desc":
+        order = (Game.created_at.desc(), Game.id.desc())
+    elif sort:
+        return _error("sort 只支持 created_desc")
+    else:
+        order = (Game.updated_at.desc(), Game.id.desc())
+
     category = request.args.get("category")
     keyword = request.args.get("keyword")
     if category:
@@ -91,7 +141,7 @@ def list_games():
         )
     total = query.count()
     games = (
-        query.order_by(Game.updated_at.desc(), Game.id.desc())
+        query.order_by(*order)
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
@@ -102,6 +152,121 @@ def list_games():
             "total": total,
             "page": page,
             "page_size": page_size,
+        }
+    )
+
+
+@games_bp.get("/collections")
+def list_collections():
+    page, error = _parse_positive_int(request.args.get("page"), 1, 1)
+    if error:
+        return _error(f"page {error}")
+    page_size, error = _parse_positive_int(
+        request.args.get("page_size"), DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE
+    )
+    if error:
+        return _error(f"page_size {error}")
+
+    name = db.func.replace(Game.category, COLLECTION_PREFIX, "").label("name")
+    grouped = (
+        db.session.query(name, db.func.count().label("count"))
+        .filter(Game.category.like(f"{COLLECTION_PREFIX}%"))
+        .group_by(name)
+        .subquery()
+    )
+    total = db.session.query(db.func.count()).select_from(grouped).scalar()
+    rows = (
+        db.session.query(grouped.c.name, grouped.c.count)
+        .order_by(grouped.c.count.desc(), grouped.c.name.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return jsonify(
+        {
+            "items": [{"name": n, "count": c} for n, c in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+
+
+@games_bp.get("/events")
+def list_events():
+    page, error = _parse_positive_int(request.args.get("page"), 1, 1)
+    if error:
+        return _error(f"page {error}")
+    page_size, error = _parse_positive_int(
+        request.args.get("page_size"), DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE
+    )
+    if error:
+        return _error(f"page_size {error}")
+
+    name = Game.event.label("name")
+    grouped = (
+        db.session.query(name, db.func.count().label("count"))
+        .filter(
+            db.or_(Game.category.is_(None), ~Game.category.like(f"{COLLECTION_PREFIX}%")),
+            Game.event.is_not(None),
+            Game.event != "",
+            Game.event != "NA",
+        )
+        .group_by(name)
+        .subquery()
+    )
+    total = db.session.query(db.func.count()).select_from(grouped).scalar()
+    rows = (
+        db.session.query(grouped.c.name, grouped.c.count)
+        .order_by(grouped.c.count.desc(), grouped.c.name.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return jsonify(
+        {
+            "items": [{"name": n, "count": c} for n, c in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+
+
+def _activity_for(game_id):
+    activity = db.session.get(GameActivity, game_id)
+    if activity is None:
+        activity = GameActivity(game_id=game_id)
+        db.session.add(activity)
+    return activity
+
+
+@games_bp.post("/<int:game_id>/open")
+def open_game(game_id):
+    if db.session.get(Game, game_id) is None:
+        return _error("棋谱不存在", status=404)
+    activity = _activity_for(game_id)
+    activity.last_opened_at = _utcnow()
+    db.session.commit()
+    return jsonify(
+        {
+            "last_opened_at": activity.last_opened_at.isoformat(),
+            "favorited": bool(activity.favorited_at),
+        }
+    )
+
+
+@games_bp.post("/<int:game_id>/favorite")
+def favorite_game(game_id):
+    if db.session.get(Game, game_id) is None:
+        return _error("棋谱不存在", status=404)
+    activity = _activity_for(game_id)
+    activity.favorited_at = None if activity.favorited_at else _utcnow()
+    db.session.commit()
+    return jsonify(
+        {
+            "favorited": bool(activity.favorited_at),
+            "favorited_at": activity.favorited_at.isoformat() if activity.favorited_at else None,
         }
     )
 
