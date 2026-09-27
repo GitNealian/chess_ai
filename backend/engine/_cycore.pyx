@@ -1030,7 +1030,8 @@ cdef class Searcher:
         signed char is_null_[68]
         int pv[68][68]
         long long nodes
-        int stop
+        int* stop_ptr
+        int owns_stop
         long long movebuf[68][256]
         long long eatbuf[68][256]
         int eatscore[68][256]
@@ -1054,10 +1055,15 @@ cdef class Searcher:
         self.tt_key = <long long*>calloc(4 * slots, sizeof(long long))
         self.tt_data = <long long*>calloc(4 * slots, sizeof(long long))
         self.owns_tt = 1
-        if self.tt_key == NULL or self.tt_data == NULL:
+        self.stop_ptr = <int*>calloc(1, sizeof(int))
+        self.owns_stop = 1
+        if self.tt_key == NULL or self.tt_data == NULL or self.stop_ptr == NULL:
             raise MemoryError()
 
     def __dealloc__(self):
+        if self.owns_stop == 1:
+            if self.stop_ptr != NULL:
+                free(self.stop_ptr)
         if self.owns_tt == 1:
             if self.tt_key != NULL:
                 free(self.tt_key)
@@ -1065,10 +1071,27 @@ cdef class Searcher:
                 free(self.tt_data)
 
     cpdef attach_tt(self, Searcher src):
+        if self.owns_tt == 1:
+            if self.tt_key != NULL:
+                free(self.tt_key)
+            if self.tt_data != NULL:
+                free(self.tt_data)
         self.tt_key = src.tt_key
         self.tt_data = src.tt_data
         self.tt_slots = src.tt_slots
         self.owns_tt = 0
+
+    cpdef attach_stop(self, Searcher src):
+        if self.owns_stop == 1 and self.stop_ptr != NULL:
+            free(self.stop_ptr)
+        self.stop_ptr = src.stop_ptr
+        self.owns_stop = 0
+
+    cpdef request_stop(self):
+        self.stop_ptr[0] = 1
+
+    cpdef reset_stop(self):
+        self.stop_ptr[0] = 0
 
     cpdef load(self, object st):
         cdef int i, j, n4
@@ -1091,7 +1114,8 @@ cdef class Searcher:
                 self.tt_key[i] = 0
                 self.tt_data[i] = 0
         self.nodes = 0
-        self.stop = 0
+        if self.owns_stop == 1:
+            self.stop_ptr[0] = 0
         self.root_inited = 0
         self.z32[0] = self.st.zob[0]
         self.z64[0] = self.st.zob[1]
@@ -1410,7 +1434,7 @@ cdef class Searcher:
         best_value = ply - MAX_SCORE
         if best_value > beta:
             return best_value
-        if self.stop != 0:
+        if self.stop_ptr[0] != 0:
             return best_value
         if ply >= MAX_PLY:
             self.nodes += 1
@@ -1667,7 +1691,7 @@ cdef class Searcher:
                 if v > this_alpha:
                     this_alpha = v
                 self._store_pv(0, m)
-            if self.stop != 0:
+            if self.stop_ptr[0] != 0:
                 break
         if is_move:
             return best_value
@@ -1695,7 +1719,7 @@ cdef class Searcher:
         with nogil:
             self.root_inited = 0
             for d in range(4, max_depth + 1):
-                if self.stop != 0:
+                if self.stop_ptr[0] != 0:
                     break
                 if self.root_inited == 0:
                     self._init_root(d)
@@ -1713,3 +1737,49 @@ cdef class Searcher:
             elif stage == 2:
                 r = self._nega(-MAX_SCORE, MAX_SCORE, d, 1, self.st.side_to_move, 1, 0)
         return r
+
+    cpdef object search_layer(self, int depth):
+        cdef int score, k, j
+        cdef int mate = 0
+        with nogil:
+            if self.root_inited == 0:
+                self._init_root(depth)
+            self.pv[0][0] = 0
+            score = self._root_nega(-MAX_SCORE, MAX_SCORE, depth)
+            k = depth + 1
+            j = 0
+            while j < 68 and k >= 0 and k < 64 and self.pv[0][j] != 0:
+                self.killer[k][1] = self.killer[k][0]
+                self.killer[k][0] = self.pv[0][j]
+                j += 1
+                k -= 1
+        if score > MATE_BOUND:
+            mate = MAX_SCORE - score
+        elif score < -MATE_BOUND:
+            mate = -(MAX_SCORE + score)
+        return (score, mate)
+
+    cpdef object get_pv(self, int limit):
+        cdef int i
+        cdef list out = []
+        for i in range(68):
+            if self.pv[0][i] == 0 or len(out) >= limit:
+                break
+            out.append(<long long>self.pv[0][i])
+        return out
+
+    cpdef long long get_nodes(self):
+        return self.nodes
+
+    cpdef int get_side(self):
+        return self.st.side_to_move
+
+    cpdef int is_stopped(self):
+        return self.stop_ptr[0]
+
+    cpdef object get_ranked(self):
+        cdef int i
+        cdef list out = []
+        for i in range(self.root_count):
+            out.append((<long long>self.rootmoves[i], <int>self.rootscores[i]))
+        return out

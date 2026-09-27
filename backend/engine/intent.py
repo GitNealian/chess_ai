@@ -24,8 +24,8 @@ from chess_engine.move import Move
 from chess_engine.notation import move_to_chinese
 
 from engine import analysis as engine_analysis
+from engine import backend as engine_backend
 from engine import constants as EC
-from engine import search as engine_search
 from engine.constants import site_to_xy, xy_to_site
 from engine.position import load_position
 
@@ -89,25 +89,25 @@ def _search_iteration(fen, *, max_depth, stop, timeout_ms):
     - timeout_ms <= 0 视为不限时（不启动 Timer）。
     """
     engine_analysis.warmup()  # 幂等；避免首测 JIT 阻塞在计时逻辑内
-    st = _prepare_engine(fen)
-    ctx = engine_search.new_context()._replace(stop=stop)
-    stack = engine_search.new_stack()
-    stack.zob32[0] = st.zob[0]
-    stack.zob64[0] = st.zob[1]
+    session = engine_backend.create(fen)
+
+    def _flag():
+        session.request_stop()
+
     timer = None
     if timeout_ms is not None and timeout_ms > 0:
-        timer = threading.Timer(timeout_ms / 1000.0, _flag, args=(stop,))
+        timer = threading.Timer(timeout_ms / 1000.0, _flag)
         timer.daemon = True
         timer.start()
     try:
         score = mate = None
         for depth in range(EC.ROOT_START_DEPTH, max_depth + 1):
-            if stop[0] != 0:
+            if session.is_stopped() != 0:
                 return None
-            score, mate = engine_search.search_depth(st, ctx, stack, depth)
-            if stop[0] != 0:
+            score, mate = session.search_layer(depth)
+            if session.is_stopped() != 0:
                 return None
-        return st, ctx, stack, int(score), int(mate)
+        return session, int(score), int(mate)
     finally:
         if timer is not None:
             timer.cancel()
@@ -128,11 +128,8 @@ def rank_moves(fen, *, depth=INTENT_RANK_DEPTH, timeout_ms=None):
     result = _search_iteration(fen, max_depth=depth, stop=stop, timeout_ms=timeout_ms)
     if result is None:
         return []
-    _, ctx, _, _, _ = result
-    count = int(ctx.root_count[0])
-    ranked = [
-        (int(ctx.root_moves[i]), int(ctx.root_scores[i])) for i in range(count)
-    ]
+    session, _, _ = result
+    ranked = [(int(p), int(s)) for p, s in session.ranked()]
     ranked.sort(key=lambda item: item[1], reverse=True)
     return ranked
 
@@ -258,8 +255,8 @@ def threat_event(fen, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
     )
     if result is None:
         return {"type": "threat", "line": [], "outcome": None, "hint": None}
-    _, _, stack, score, mate = result
-    pv = _pv_of(stack)
+    session, score, mate = result
+    pv = session.pv(LINE_PV_LIMIT)
     opponent_is_red = board.side_to_move != RED  # 我方非红 → 对手红
     my_mated = mate > 0
     outcome = {
@@ -336,8 +333,8 @@ def bait_event(fen, bait, *, depth=INTENT_LINE_DEPTH, timeout_ms=2000):
     )
     if result is None:
         return payload
-    _, _, stack, score, mate = result
-    pv = _pv_of(stack)
+    session, score, mate = result
+    pv = session.pv(LINE_PV_LIMIT)
     opponent_is_red = my_side != RED
     payload["outcome"]["score_red"] = int(score if opponent_is_red else -score)
     if mate > 0:

@@ -29,3 +29,12 @@ def client(app):
 def engine_threads_single(monkeypatch):
     """测试默认单线程：并行专项用例显式传 threads 覆盖。"""
     monkeypatch.setenv("ENGINE_THREADS", "1")
+
+
+@pytest.fixture(autouse=True)
+def engine_backend_numba(monkeypatch):
+    """既有用例默认走 numba 后端（保持原语义，含对 numba 内部的 mock）；
+
+    Cython 后端专项用例在自身 fixture 中覆盖 `ENGINE_BACKEND=cython`。
+    """
+    monkeypatch.setenv("ENGINE_BACKEND", "numba")
