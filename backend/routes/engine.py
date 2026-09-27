@@ -76,8 +76,9 @@ MAX_THREADS = engine_analysis.MAX_THREADS
 # 重放着法步数上限（防超长序列放大 CPU）；正常对局数百步足够。
 MAX_REPLAY_MOVES = 1024
 
-# 对外的 PV 长度（当前方最佳着法 + 对方应着）。
-PV_LIMIT = 2
+# 对外的 PV 长度：完整返回该层主变（最长不超过请求的最大分析深度），
+# 使前端可按层展示完整着法序列。
+PV_LIMIT = MAX_DEPTH
 
 _SIDE_NAMES = {EC.RED: "red", EC.BLACK: "black"}
 

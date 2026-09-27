@@ -218,9 +218,10 @@ def test_search_depth_finds_mate_in_one():
 def test_search_depth_finds_mate_in_two():
     st, ctx, stack = new_search(MATE_IN_TWO_FEN)
     S.init_root(st, ctx, stack)
-    # depth=2 看不到 3-ply 的杀
+    # depth=2 的主搜索深度不足以覆盖 3-ply 杀，但 quiesc（动态子力）会继续
+    # 搜索吃子序列并发现该杀（Java chessBaseScore 语义下同样会报 mate=3）
     _, mate2 = S.search_depth(st, ctx, stack, 2)
-    assert mate2 == 0
+    assert mate2 == 3
     # depth=4 找到：红 1、黑 1、红 2 三步后黑方无着法
     score4, mate4 = S.search_depth(st, ctx, stack, 4)
     assert score4 >= C.MAX_SCORE - 10

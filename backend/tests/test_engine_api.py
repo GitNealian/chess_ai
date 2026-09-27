@@ -181,13 +181,14 @@ def test_analyze_clamps_parameters(client):
     assert _of_type(messages, "result")
 
 
-def test_analyze_pv_has_at_most_two_moves(client):
+def test_analyze_pv_covers_full_depth(client):
     messages = read_stream(
         client,
         {"fen": INITIAL_FEN, "start_depth": 4, "max_depth": 4, "time_limit_ms": 5000},
     )
     result = _of_type(messages, "result")[-1]
-    assert 1 <= len(result["pv"]) <= 2
+    # PV 完整返回该层主变（不再截断到前两步），长度不超过搜索深度。
+    assert 1 <= len(result["pv"]) <= 4
 
 
 def test_analyze_done_reason(client):

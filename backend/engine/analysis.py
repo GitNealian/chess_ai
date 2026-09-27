@@ -132,7 +132,9 @@ def _resolve_threads(threads):
 
 
 MAX_ANALYSIS_DEPTH = 32
-PV_LIMIT = 8
+# PV 长度上限取最大分析深度：每层结果保留该层完整主变（PV 表本身深搜时已算好，
+# 拷贝成本可忽略），供上层完整展示「分析层数对应的着法」。
+PV_LIMIT = MAX_ANALYSIS_DEPTH
 _MATE_THRESHOLD = C.MAX_SCORE - 100
 _WARMUP_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
 

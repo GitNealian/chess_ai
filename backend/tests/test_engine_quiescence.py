@@ -37,8 +37,11 @@ HANGING_KNIGHT_FEN = "4k4/9/9/9/n8/9/9/9/9/R2K5 w - - 0 1"
 # 同上，但黑车 a0 保护 a 列：红车吃马后被吃回
 PROTECTED_KNIGHT_FEN = "r3k4/9/9/9/n8/9/9/9/9/R2K5 w - - 0 1"
 # 红车 c5、红帅 e9、黑车 e5、黑卒 c0、黑将 e0
-# 吃 e5 黑车（destScore>=150→good）、吃 c0 黑卒（100+0→general）
+# 动态子力（Java chessBaseScore）：残局黑卒 = 100+(11-1)*8 = 180，
+# 吃 e5 黑车与吃 c0 黑卒（180+0）都 >= 150 → 均进 good
 CLASSIFY_FEN = "2p1k4/9/9/9/9/2R1r4/9/9/9/4K4 w - - 0 1"
+# 近满员中局：红车 e5 白吃黑卒 e6（黑攻击子 10 → 卒动态 108，108+10=118 < 150）
+GENERAL_FEN = "rnbakabnr/9/1c5c1/11p1p1p1p/9/4R4/P1P1P1P1P/1C5C1/9/RNBAKABN1 w - - 0 1"
 # 黑将被红车 e1 将死（逃路 d0/f0 被 a0 车控制、e1 被红帅 e2 飞将）
 MATE_FEN = "R3k4/4R4/4K4/9/9/9/9/9/9/9 b - - 0 1"
 # 黑将被将但有唯一逃路（吃 e1 车）
@@ -212,24 +215,25 @@ def test_gen_quiesc_moves_classifies_captures():
     good_n, general_n = S.gen_quiesc_moves(
         st, ctx, C.RED, False, good_buf, good_score, general_buf, general_score
     )
-    # 吃 e5 黑车进 good（1300+ 位置分），吃 c0 黑卒进 general（100+0 < 150）
-    assert good_n == 1
-    assert good_buf[0] == C.pack_move(47, 49)
-    assert good_score[0] > 0
-    assert general_n == 1
-    assert general_buf[0] == C.pack_move(47, 2)
-    assert general_score[0] == 0  # 新 ctx 历史分为 0
+    # 吃 e5 黑车与吃 c0 黑卒（动态值 180）都进 good，顺序按生成序（site 升序）
+    assert good_n == 2
+    assert good_buf[0] == C.pack_move(47, 2)
+    assert good_buf[1] == C.pack_move(47, 49)
+    assert good_score[1] > 0
+    assert general_n == 0
 
 
 def test_gen_quiesc_moves_general_holds_history_score():
-    st = root(CLASSIFY_FEN)
+    st = root(GENERAL_FEN)
     ctx = S.new_context(hash_size=SMALL)
-    ctx.history[C.PIECE_KINDS[st.board[47]], 2] = 77
+    ctx.history[C.PIECE_KINDS[st.board[49]], 31] = 77
     good_buf, good_score, general_buf, general_score = new_bufs()
     good_n, general_n = S.gen_quiesc_moves(
         st, ctx, C.RED, False, good_buf, good_score, general_buf, general_score
     )
-    assert (good_n, general_n) == (1, 1)
+    # 红车 e5 吃 e6 卒（118 < 150）进 general，排序分取历史分
+    assert (good_n, general_n) == (2, 1)
+    assert general_buf[0] == C.pack_move(49, 31)
     assert general_score[0] == 77
 
 

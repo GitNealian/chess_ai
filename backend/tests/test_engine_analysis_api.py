@@ -88,7 +88,7 @@ def test_mate_reported():
     assert len(last.pv) >= 1
 
     # 穷举校验：PV 首着走完后黑方无合法着法（将杀或困毙）
-    assert len(last.pv) <= 8
+    assert len(last.pv) <= 32
     st = P.load_position(MATE_IN_ONE)
     undo = P.make_move(st, last.pv[0])
     assert MG.gen_legal_moves(st, C.BLACK).size == 0
