@@ -25,6 +25,8 @@ vi.mock("../../../api", () => ({
       mastered: 0,
     }),
     deleteGame: vi.fn(),
+    validateMove: vi.fn(),
+    bestMove: vi.fn(),
   },
   analyzeStream: vi.fn(),
   intentStream: vi.fn(),
@@ -35,6 +37,8 @@ describe("MobileHomeView", () => {
     localStorage.clear();
     analyzeStream.mockReset();
     intentStream.mockReset();
+    api.validateMove.mockReset();
+    api.bestMove.mockReset();
   });
 
   async function openPicker() {
@@ -55,7 +59,8 @@ describe("MobileHomeView", () => {
 
   it("棋盘下方渲染控制栏", () => {
     const wrapper = mount(MobileHomeView);
-    expect(wrapper.findAll(".board-controls button")).toHaveLength(6);
+    const labels = wrapper.findAll(".board-controls button").map((b) => b.text());
+    expect(labels).toEqual(["开局", "后退", "前进", "终局", "翻转", "悔棋", "编辑"]);
   });
 
   it("点击翻转后棋盘翻转", async () => {
@@ -147,12 +152,21 @@ describe("MobileHomeView", () => {
     await flushPromises();
   }
 
-  it("未打开棋谱时不显示收藏按钮", () => {
-    const wrapper = mount(MobileHomeView);
-    expect(wrapper.find("[data-test='favorite']").exists()).toBe(false);
+  function captureFavoriteStates() {
+    const events = [];
+    const listener = (e) => events.push(e.detail);
+    window.addEventListener("mobile-favorite-state", listener);
+    return events;
+  }
+
+  it("未打开棋谱时不发布收藏状态", () => {
+    const events = captureFavoriteStates();
+    mount(MobileHomeView);
+    expect(events).toHaveLength(0);
   });
 
-  it("载入棋谱后显示空心星标并记录打开", async () => {
+  it("载入棋谱后发布收藏状态并记录打开", async () => {
+    const events = captureFavoriteStates();
     const wrapper = mount(MobileHomeView);
     await loadGame(wrapper, {
       id: 5,
@@ -162,11 +176,12 @@ describe("MobileHomeView", () => {
       favorited: false,
     });
     expect(api.openGame).toHaveBeenCalledWith(5);
-    expect(wrapper.find("[data-test='favorite']").text()).toContain("☆");
+    expect(events.at(-1)).toEqual({ shown: true, filled: false });
   });
 
-  it("已收藏的棋谱显示实心星标", async () => {
+  it("已收藏的棋谱发布 filled=true", async () => {
     api.openGame.mockResolvedValueOnce({ last_opened_at: "2026", favorited: true });
+    const events = captureFavoriteStates();
     const wrapper = mount(MobileHomeView);
     await loadGame(wrapper, {
       id: 6,
@@ -175,10 +190,10 @@ describe("MobileHomeView", () => {
       moves: [],
       favorited: true,
     });
-    expect(wrapper.find("[data-test='favorite']").text()).toContain("★");
+    expect(events.at(-1)).toEqual({ shown: true, filled: true });
   });
 
-  it("点击星标切换为已收藏", async () => {
+  it("顶栏收藏事件触发收藏切换", async () => {
     const wrapper = mount(MobileHomeView);
     await loadGame(wrapper, {
       id: 7,
@@ -188,10 +203,9 @@ describe("MobileHomeView", () => {
       favorited: false,
     });
     api.favoriteGame.mockResolvedValueOnce({ favorited: true, favorited_at: "2026" });
-    await wrapper.find("[data-test='favorite']").trigger("click");
+    window.dispatchEvent(new CustomEvent("mobile-toggle-favorite"));
     await flushPromises();
     expect(api.favoriteGame).toHaveBeenCalledWith(7);
-    expect(wrapper.find("[data-test='favorite']").text()).toContain("★");
   });
 
   it("设置开关持久化到 localStorage", async () => {
@@ -201,6 +215,7 @@ describe("MobileHomeView", () => {
     expect(JSON.parse(localStorage.getItem("chess:mobile-settings"))).toEqual({
       score: true,
       intent: false,
+      level: "normal",
     });
   });
 
@@ -229,6 +244,105 @@ describe("MobileHomeView", () => {
     const arrows = wrapper.findComponent(ChessBoard).props("arrows");
     expect(arrows).toHaveLength(2);
     expect(arrows.map((a) => a.kind)).toEqual(["best", "reply"]);
+  });
+
+  it("设置中可选引擎执子与思考程度", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openSettings();
+    expect(wrapper.find("[data-test='engine-none']").element.checked).toBe(true);
+    expect(wrapper.find("[data-test='level-normal']").element.checked).toBe(true);
+    await wrapper.find("[data-test='level-hard']").setValue();
+    expect(JSON.parse(localStorage.getItem("chess:mobile-settings")).level).toBe("hard");
+  });
+
+  it("选择引擎执红后引擎自动走子，玩家走子经校验", async () => {
+    api.bestMove.mockResolvedValue({
+      legal: true,
+      move: { x1: 0, y1: 3, x2: 0, y2: 4 },
+      check: false,
+      game_over: null,
+    });
+    api.validateMove.mockResolvedValue({ legal: true, chinese: "车九进一", check: false });
+    const wrapper = mount(MobileHomeView);
+    await openSettings();
+    await wrapper.find("[data-test='engine-red']").setValue();
+    await flushPromises();
+    expect(api.bestMove).toHaveBeenCalledTimes(1);
+    expect(api.bestMove.mock.calls[0][0]).toMatchObject({ level: "normal" });
+    expect(wrapper.find("[data-test='status']").text()).toContain("黑方走棋");
+    await wrapper.find("[data-cell='0-9']").trigger("click");
+    await wrapper.find("[data-cell='0-8']").trigger("click");
+    await flushPromises();
+    expect(api.validateMove).toHaveBeenCalledTimes(1);
+  });
+
+  it("对弈中可悔棋，撤销到玩家回合", async () => {
+    api.bestMove.mockResolvedValue({
+      legal: true,
+      move: { x1: 0, y1: 3, x2: 0, y2: 4 },
+      check: false,
+      game_over: null,
+    });
+    const wrapper = mount(MobileHomeView);
+    await openSettings();
+    await wrapper.find("[data-test='engine-red']").setValue();
+    await flushPromises();
+    expect(wrapper.find("[data-test='ctrl-undo']").exists()).toBe(true);
+    await wrapper.find("[data-test='ctrl-undo']").trigger("click");
+    expect(wrapper.find("[data-test='status']").text()).toContain("红方走棋");
+  });
+
+  it("打开新棋谱后引擎执子重置为不启用", async () => {
+    api.bestMove.mockResolvedValue({
+      legal: true,
+      move: { x1: 0, y1: 3, x2: 0, y2: 4 },
+      check: false,
+      game_over: null,
+    });
+    const wrapper = mount(MobileHomeView);
+    await openSettings();
+    await wrapper.find("[data-test='engine-red']").setValue();
+    await flushPromises();
+    expect(wrapper.find("[data-test='ctrl-undo']").exists()).toBe(true);
+    await wrapper.find("[data-test='settings-close']").trigger("click");
+    api.listGames.mockResolvedValueOnce({
+      items: [{ id: 1, name: "局", initial_fen: INITIAL_FEN, moves: [] }],
+    });
+    await openPicker();
+    await flushPromises();
+    await wrapper.find("[data-test='menu-other']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-game='1']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='ctrl-undo']").exists()).toBe(false);
+    expect(wrapper.find("[data-test='status']").exists()).toBe(false);
+  });
+
+  it("未打开棋谱时 engineSide 为 none 也可自定义走子", async () => {
+    api.validateMove.mockResolvedValue({ legal: true, chinese: "车九进一", check: false });
+    const wrapper = mount(MobileHomeView);
+    await wrapper.find("[data-cell='0-0']").trigger("click");
+    await wrapper.find("[data-cell='0-1']").trigger("click");
+    await flushPromises();
+    expect(api.validateMove).toHaveBeenCalledTimes(1);
+  });
+
+  it("打开棋谱后棋盘只读且显示推演按钮", async () => {
+    api.validateMove.mockResolvedValue({ legal: true, chinese: "车九进一", check: false });
+    const wrapper = mount(MobileHomeView);
+    await loadGame(wrapper, { id: 9, name: "局", initial_fen: INITIAL_FEN, moves: [] });
+    expect(wrapper.find("[data-test='ctrl-infer']").exists()).toBe(true);
+    await wrapper.find("[data-cell='0-9']").trigger("click");
+    await wrapper.find("[data-cell='0-8']").trigger("click");
+    await flushPromises();
+    expect(api.validateMove).not.toHaveBeenCalled();
+  });
+
+  it("棋谱模式下点推演打开推演弹窗", async () => {
+    const wrapper = mount(MobileHomeView);
+    await loadGame(wrapper, { id: 10, name: "局", initial_fen: INITIAL_FEN, moves: [] });
+    await wrapper.find("[data-test='ctrl-infer']").trigger("click");
+    expect(wrapper.find("[data-test='infer-card']").exists()).toBe(true);
   });
 });
 

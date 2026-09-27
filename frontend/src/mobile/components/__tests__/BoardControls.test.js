@@ -50,4 +50,17 @@ describe("BoardControls", () => {
     const wrapper = mount(BoardControls, { props: { flipped: true } });
     expect(wrapper.find("[data-test='ctrl-flip']").attributes("aria-pressed")).toBe("true");
   });
+
+  it("showInfer 为 true 时额外渲染推演按钮并发出 infer", async () => {
+    const wrapper = mount(BoardControls, { props: { showInfer: true, canInfer: true } });
+    const infer = wrapper.find("[data-test='ctrl-infer']");
+    expect(infer.exists()).toBe(true);
+    await infer.trigger("click");
+    expect(wrapper.emitted("infer")).toHaveLength(1);
+  });
+
+  it("showInfer 缺省不渲染推演按钮", () => {
+    const wrapper = mount(BoardControls);
+    expect(wrapper.find("[data-test='ctrl-infer']").exists()).toBe(false);
+  });
 });

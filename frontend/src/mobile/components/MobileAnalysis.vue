@@ -273,7 +273,7 @@ onUnmounted(reset);
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
-  max-height: 96px;
+  max-height: 120px;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   font-size: 13px;
@@ -284,9 +284,8 @@ onUnmounted(reset);
   flex-wrap: wrap;
   align-items: center;
   gap: 2px 8px;
-  height: 48px;
+  min-height: 40px;
   padding: 4px 0;
-  overflow: hidden;
   border-top: 1px solid #e9dfcd;
 }
 
@@ -301,9 +300,7 @@ onUnmounted(reset);
 .analysis-history .line {
   flex: 1 1 100%;
   color: #4a3a28;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-all;
 }
 
 .analysis-history .time {

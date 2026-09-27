@@ -1,18 +1,13 @@
 <template>
   <section class="mobile-home">
-    <div v-if="currentGame" class="mobile-home__bar">
-      <button
-        type="button"
-        class="mobile-home__fav"
-        data-test="favorite"
-        :aria-pressed="favorited ? 'true' : 'false'"
-        @click="toggleFavorite"
-      >
-        {{ favorited ? "★" : "☆" }}
-      </button>
-    </div>
     <div class="mobile-home__board">
-      <ChessBoard :position="position" :arrows="analysisArrows" :flipped="flipped" />
+      <ChessBoard
+        :position="position"
+        :selected="selected"
+        :arrows="analysisArrows"
+        :flipped="flipped"
+        @cell-click="onCellClick"
+      />
     </div>
     <BoardControls
       :flipped="flipped"
@@ -21,13 +16,21 @@
       :can-next="canForward"
       :can-end="canForward"
       :can-edit="true"
+      :show-undo="!isReview || engineSide !== 'none'"
+      :can-undo="(!isReview || engineSide !== 'none') && moves.length > 0"
+      :show-infer="isReview"
+      :can-infer="isReview"
       @start="ply = 0"
       @prev="ply -= 1"
       @next="ply += 1"
       @end="ply = moves.length"
       @flip="flipped = !flipped"
       @edit="editorOpen = true"
+      @undo="undo"
+      @infer="inferOpen = true"
     />
+    <p v-if="statusText" class="mobile-home__status" data-test="status">{{ statusText }}</p>
+    <p v-if="hint" class="mobile-home__hint" data-test="hint">{{ hint }}</p>
     <MobileAnalysis
       :initial-fen="initialFen"
       :moves="moveSlice"
@@ -40,6 +43,12 @@
       :pieces="pieces"
       @cancel="editorOpen = false"
       @apply="onApply"
+    />
+    <MobileInferenceDialog
+      v-if="inferOpen"
+      :initial-fen="initialFen"
+      :base-moves="moveSlice"
+      @close="inferOpen = false"
     />
     <MobileGamePicker v-if="pickerOpen" @select="onOpenGame" @cancel="pickerOpen = false" />
     <div
@@ -68,6 +77,72 @@
           />
           开启意图识别
         </label>
+        <div class="settings-group">
+          <span class="settings-label">执子</span>
+          <label class="settings-radio">
+            <input
+              type="radio"
+              name="engine-side"
+              data-test="engine-none"
+              :checked="engineSide === 'none'"
+              @change="onEngineSide('none')"
+            />
+            不启用
+          </label>
+          <label class="settings-radio">
+            <input
+              type="radio"
+              name="engine-side"
+              data-test="engine-red"
+              :checked="engineSide === 'red'"
+              @change="onEngineSide('red')"
+            />
+            执红
+          </label>
+          <label class="settings-radio">
+            <input
+              type="radio"
+              name="engine-side"
+              data-test="engine-black"
+              :checked="engineSide === 'black'"
+              @change="onEngineSide('black')"
+            />
+            执黑
+          </label>
+        </div>
+        <div class="settings-group">
+          <span class="settings-label">思考程度</span>
+          <label class="settings-radio">
+            <input
+              type="radio"
+              name="level"
+              data-test="level-easy"
+              :checked="settings.level === 'easy'"
+              @change="onLevel('easy')"
+            />
+            简单
+          </label>
+          <label class="settings-radio">
+            <input
+              type="radio"
+              name="level"
+              data-test="level-normal"
+              :checked="settings.level === 'normal'"
+              @change="onLevel('normal')"
+            />
+            普通
+          </label>
+          <label class="settings-radio">
+            <input
+              type="radio"
+              name="level"
+              data-test="level-hard"
+              :checked="settings.level === 'hard'"
+              @change="onLevel('hard')"
+            />
+            困难
+          </label>
+        </div>
         <div class="settings-actions">
           <button type="button" data-test="settings-close" @click="settingsOpen = false">
             关闭
@@ -85,6 +160,7 @@ import BoardControls from "../components/BoardControls.vue";
 import MobileBoardEditor from "../components/MobileBoardEditor.vue";
 import MobileGamePicker from "../components/MobileGamePicker.vue";
 import MobileAnalysis from "../components/MobileAnalysis.vue";
+import MobileInferenceDialog from "../components/MobileInferenceDialog.vue";
 import { api } from "../../api";
 import { loadSettings, saveSettings } from "../settings";
 import { INITIAL_FEN, applyMove, fenToPieces } from "../../utils/chess";
@@ -101,6 +177,24 @@ const favorited = ref(false);
 const settings = reactive(loadSettings());
 const initialFen = ref(INITIAL_FEN);
 const analysisArrows = ref([]);
+const inferOpen = ref(false);
+
+const engineSide = ref("none");
+const selected = ref(null);
+const engineThinking = ref(false);
+const hint = ref("");
+let pending = false;
+let moveToken = 0;
+let engineToken = 0;
+
+function sideFromFen(fen) {
+  return fen.split(" ")[1] === "b" ? "black" : "red";
+}
+const isReview = computed(() => !!currentGame.value);
+const firstSide = computed(() => sideFromFen(initialFen.value));
+function sideAt(n) {
+  return n % 2 === 0 ? firstSide.value : firstSide.value === "red" ? "black" : "red";
+}
 
 const pieces = computed(() => {
   let out = basePieces.value;
@@ -113,6 +207,158 @@ const canBack = computed(() => ply.value > 0);
 const canForward = computed(() => ply.value < moves.value.length);
 const moveSlice = computed(() => moves.value.slice(0, ply.value));
 
+const sideToMove = computed(() => sideAt(ply.value));
+const lastInfo = computed(() => moves.value[ply.value - 1] || null);
+const currentCheck = computed(() => Boolean(lastInfo.value?.check));
+const gameOver = computed(() => lastInfo.value?.gameOver || null);
+const isEngineTurn = computed(
+  () => engineSide.value !== "none" && sideToMove.value === engineSide.value
+);
+const isPlayerTurn = computed(
+  () => engineSide.value !== "none" && sideToMove.value !== engineSide.value
+);
+
+const statusText = computed(() => {
+  if (isReview.value) return "";
+  if (gameOver.value) {
+    const winner = gameOver.value.winner === "red" ? "红方" : "黑方";
+    return `${winner}胜`;
+  }
+  if (engineThinking.value) return "引擎思考中…";
+  if (ply.value !== moves.value.length) return "回放中，前进到最后可继续走子";
+  const side = sideToMove.value === "red" ? "红方" : "黑方";
+  return currentCheck.value ? `${side}走棋（被将军）` : `${side}走棋`;
+});
+
+function movePayload() {
+  return moves.value
+    .slice(0, ply.value)
+    .map(({ x1, y1, x2, y2 }) => ({ x1, y1, x2, y2 }));
+}
+
+function maybeEngineMove() {
+  if (engineSide.value === "none") return;
+  if (ply.value !== moves.value.length || gameOver.value || engineThinking.value) return;
+  if (sideToMove.value === engineSide.value) runEngineMove();
+}
+
+async function runEngineMove() {
+  if (engineThinking.value || gameOver.value) return;
+  engineThinking.value = true;
+  hint.value = "";
+  const token = ++engineToken;
+  try {
+    const data = await api.bestMove(
+      { initial_fen: initialFen.value, moves: movePayload(), level: settings.level },
+      { timeout: 15000 }
+    );
+    if (token !== engineToken) return;
+    if (data.legal) {
+      moves.value = moves.value.slice(0, ply.value);
+      moves.value.push({
+        ...data.move,
+        check: Boolean(data.check),
+        gameOver: data.game_over || null,
+      });
+      ply.value = moves.value.length;
+    } else {
+      hint.value = data.reason || "引擎未能走子";
+    }
+  } catch (err) {
+    if (token !== engineToken) return;
+    hint.value =
+      err?.code === "ECONNABORTED"
+        ? "引擎思考超时，请重试"
+        : err?.response?.data?.detail || "引擎走子失败";
+  } finally {
+    if (token === engineToken) engineThinking.value = false;
+  }
+}
+
+async function submitMove(move) {
+  hint.value = "";
+  pending = true;
+  const token = ++moveToken;
+  try {
+    const data = await api.validateMove({
+      initial_fen: initialFen.value,
+      moves: movePayload(),
+      move,
+    });
+    if (token !== moveToken) return;
+    if (!data.legal) {
+      hint.value = data.reason || "着法不合法";
+      return;
+    }
+    moves.value = moves.value.slice(0, ply.value);
+    moves.value.push({
+      ...move,
+      chinese: data.chinese || "",
+      check: Boolean(data.check),
+      gameOver: data.game_over || null,
+    });
+    ply.value = moves.value.length;
+    selected.value = null;
+  } catch (err) {
+    if (token !== moveToken) return;
+    hint.value =
+      err?.response?.data?.detail || err?.response?.data?.error || "校验失败，请重试";
+  } finally {
+    if (token === moveToken) pending = false;
+  }
+  if (token === moveToken) maybeEngineMove();
+}
+
+function onCellClick(x, y) {
+  if (isReview.value || pending) return;
+  if (engineSide.value !== "none" && ply.value !== moves.value.length) return;
+  if (gameOver.value || engineThinking.value) return;
+  if (isEngineTurn.value) {
+    runEngineMove();
+    return;
+  }
+  const piece = pieces.value.find((p) => p.x === x && p.y === y);
+  if (selected.value) {
+    if (piece && piece.side === sideToMove.value) {
+      const same = selected.value.x === x && selected.value.y === y;
+      selected.value = same ? null : { x, y };
+      return;
+    }
+    submitMove({ x1: selected.value.x, y1: selected.value.y, x2: x, y2: y });
+    return;
+  }
+  if (piece && piece.side === sideToMove.value) selected.value = { x, y };
+}
+
+function undo() {
+  if (isReview.value || !moves.value.length) return;
+  engineToken += 1;
+  moveToken += 1;
+  engineThinking.value = false;
+  pending = false;
+  selected.value = null;
+  hint.value = "";
+  moves.value.pop();
+  while (moves.value.length && sideAt(moves.value.length) === engineSide.value) {
+    moves.value.pop();
+  }
+  ply.value = moves.value.length;
+}
+
+function onEngineSide(value) {
+  engineSide.value = value;
+  engineToken += 1;
+  moveToken += 1;
+  engineThinking.value = false;
+  pending = false;
+  selected.value = null;
+  hint.value = "";
+  if (value !== "none") {
+    moves.value = moves.value.slice(0, ply.value);
+    maybeEngineMove();
+  }
+}
+
 function onOpenGame(game) {
   const fen = game.initial_fen || INITIAL_FEN;
   basePieces.value = fenToPieces(fen);
@@ -122,12 +368,28 @@ function onOpenGame(game) {
   pickerOpen.value = false;
   currentGame.value = game;
   favorited.value = !!game.favorited;
+  engineSide.value = "none";
+  inferOpen.value = false;
+  engineToken += 1;
+  moveToken += 1;
+  engineThinking.value = false;
+  selected.value = null;
+  hint.value = "";
   api
     .openGame(game.id)
     .then((res) => {
       favorited.value = !!res.favorited;
+      publishFavoriteState();
     })
     .catch(() => {});
+}
+
+function publishFavoriteState() {
+  window.dispatchEvent(
+    new CustomEvent("mobile-favorite-state", {
+      detail: { shown: !!currentGame.value, filled: !!favorited.value },
+    })
+  );
 }
 
 async function toggleFavorite() {
@@ -135,6 +397,7 @@ async function toggleFavorite() {
   try {
     const res = await api.favoriteGame(currentGame.value.id);
     favorited.value = !!res.favorited;
+    publishFavoriteState();
   } catch {
     // 收藏失败静默，保持原状态
   }
@@ -148,10 +411,22 @@ function onApply(next, fen) {
   editorOpen.value = false;
   currentGame.value = null;
   favorited.value = false;
+  publishFavoriteState();
+  engineToken += 1;
+  moveToken += 1;
+  engineThinking.value = false;
+  selected.value = null;
+  hint.value = "";
+  maybeEngineMove();
 }
 
 function onToggle(key, value) {
   settings[key] = value;
+  saveSettings(settings);
+}
+
+function onLevel(value) {
+  settings.level = value;
   saveSettings(settings);
 }
 
@@ -166,11 +441,13 @@ function onSettingsEvent() {
 onMounted(() => {
   window.addEventListener("mobile-open", onOpenEvent);
   window.addEventListener("mobile-settings", onSettingsEvent);
+  window.addEventListener("mobile-toggle-favorite", toggleFavorite);
 });
 
 onUnmounted(() => {
   window.removeEventListener("mobile-open", onOpenEvent);
   window.removeEventListener("mobile-settings", onSettingsEvent);
+  window.removeEventListener("mobile-toggle-favorite", toggleFavorite);
 });
 </script>
 
@@ -181,39 +458,22 @@ onUnmounted(() => {
   gap: 16px;
 }
 
-.mobile-home__bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.mobile-home__fav {
-  margin-right: auto;
-  border: none;
-  background: transparent;
-  color: #d4a017;
-  font-size: 24px;
-  line-height: 1;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.mobile-home__bar button {
-  min-height: 36px;
-  padding: 6px 16px;
-  border: 1px solid #cbb89a;
-  border-radius: 6px;
-  background: #fff;
-  color: #7a3b2e;
-  cursor: pointer;
-}
-
 .mobile-home__board {
   width: 100%;
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(90, 61, 36, 0.18);
+}
+
+.mobile-home__status {
+  margin: 0;
+  font-weight: 600;
+  color: #7a3b2e;
+}
+
+.mobile-home__hint {
+  margin: 0;
+  color: #b45309;
 }
 
 .settings-mask {
@@ -231,6 +491,7 @@ onUnmounted(() => {
 .settings-card {
   width: 100%;
   max-width: 420px;
+  max-height: calc(100vh - 32px);
   margin: auto;
   background: #faf6ee;
   border-radius: 12px;
@@ -238,6 +499,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-y: auto;
 }
 
 .settings-title {
@@ -253,6 +515,31 @@ onUnmounted(() => {
 }
 
 .settings-toggle input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}
+
+.settings-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  font-size: 15px;
+}
+
+.settings-label {
+  width: 100%;
+  color: #6b5a45;
+  font-size: 13px;
+}
+
+.settings-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-radio input[type="radio"] {
   width: 20px;
   height: 20px;
 }

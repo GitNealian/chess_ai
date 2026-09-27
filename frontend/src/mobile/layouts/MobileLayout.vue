@@ -5,6 +5,18 @@
       <span class="mobile-subtitle">移动版</span>
       <div class="mobile-topbar-actions">
         <button
+          v-if="starShown"
+          type="button"
+          class="topbar-icon"
+          data-test="mobile-favorite"
+          :aria-pressed="starFilled ? 'true' : 'false'"
+          :aria-label="starFilled ? '取消收藏' : '收藏'"
+          :title="starFilled ? '取消收藏' : '收藏'"
+          @click="publish('mobile-toggle-favorite')"
+        >
+          <span class="topbar-star">{{ starFilled ? "★" : "☆" }}</span>
+        </button>
+        <button
           type="button"
           class="topbar-icon"
           data-test="header-open"
@@ -58,9 +70,28 @@
 </template>
 
 <script setup>
+import { onMounted, onUnmounted, ref } from "vue";
+
+const starShown = ref(false);
+const starFilled = ref(false);
+
 function publish(name) {
   window.dispatchEvent(new CustomEvent(name));
 }
+
+function onFavoriteState(event) {
+  const detail = event.detail || {};
+  starShown.value = !!detail.shown;
+  starFilled.value = !!detail.filled;
+}
+
+onMounted(() => {
+  window.addEventListener("mobile-favorite-state", onFavoriteState);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("mobile-favorite-state", onFavoriteState);
+});
 </script>
 
 <style scoped>
@@ -117,6 +148,11 @@ function publish(name) {
 .topbar-icon:active {
   color: #fff;
   background: rgba(255, 255, 255, 0.12);
+}
+
+.topbar-star {
+  color: #f4c95d;
+  font-size: 20px;
 }
 
 .mobile-main {

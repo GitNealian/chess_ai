@@ -20,8 +20,26 @@
     >
       翻转
     </button>
+    <button
+      v-if="showUndo"
+      type="button"
+      data-test="ctrl-undo"
+      :disabled="!canUndo"
+      @click="emit('undo')"
+    >
+      悔棋
+    </button>
     <button type="button" data-test="ctrl-edit" :disabled="!canEdit" @click="emit('edit')">
       编辑
+    </button>
+    <button
+      v-if="showInfer"
+      type="button"
+      data-test="ctrl-infer"
+      :disabled="!canInfer"
+      @click="emit('infer')"
+    >
+      推演
     </button>
   </div>
 </template>
@@ -34,9 +52,13 @@ defineProps({
   canNext: { type: Boolean, default: false },
   canEnd: { type: Boolean, default: false },
   canEdit: { type: Boolean, default: false },
+  showInfer: { type: Boolean, default: false },
+  canInfer: { type: Boolean, default: false },
+  showUndo: { type: Boolean, default: false },
+  canUndo: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["start", "prev", "next", "end", "flip", "edit"]);
+const emit = defineEmits(["start", "prev", "next", "end", "flip", "edit", "undo", "infer"]);
 </script>
 
 <style scoped>
