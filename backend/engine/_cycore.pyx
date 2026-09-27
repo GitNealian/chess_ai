@@ -40,6 +40,8 @@ cdef const int64_t[:] _EL_LEG_LO, _EL_LEG_HI
 cdef const int64_t[:, ::1] _EL_ATK_LO, _EL_ATK_HI
 cdef const int64_t[:] _KING_LO, _KING_HI, _GUARD_LO, _GUARD_HI
 cdef const int64_t[:, ::1] _SOL_LO, _SOL_HI
+cdef const int64_t[:] _KCS_LO, _KCS_HI
+cdef const int64_t[:] _KN_TGT_LO, _KN_TGT_HI
 cdef const int16_t[:, ::1] _CG_MOB_R, _CG_MOB_C
 cdef const int32_t[:] _ATK_PART, _DEF_PART, _MIN_MOB, _MOB_REW, _SOL_PROT, _GUN_NG, _KN_NG
 cdef const int32_t[:] _GE_NUM, _GUN_DEP, _KN_DEP
@@ -102,6 +104,56 @@ cdef inline int _msb_play(long long lo, long long hi, int play) noexcept nogil:
     return -1
 
 
+cdef inline void _emit_red(long long lo, long long hi, int src, long long* buf, int* count) noexcept nogil:
+    cdef long long m = lo
+    cdef int idx
+    while m != 0:
+        idx = _ctz64(m)
+        buf[count[0]] = <long long>src | (<long long>idx << 7)
+        count[0] += 1
+        m &= m - 1
+    m = hi & 0x3FFFFFF
+    while m != 0:
+        idx = _ctz64(m)
+        buf[count[0]] = <long long>src | (<long long>(64 + idx) << 7)
+        count[0] += 1
+        m &= m - 1
+
+
+cdef inline void _emit_black(long long lo, long long hi, int src, long long* buf, int* count) noexcept nogil:
+    cdef long long m = (hi >> 17) & 0x1FF
+    cdef int idx
+    while m != 0:
+        idx = _ctz64(m)
+        buf[count[0]] = <long long>src | (<long long>(81 + idx) << 7)
+        count[0] += 1
+        m &= m - 1
+    m = ((lo >> 54) & 0x3FF) | ((hi & 0x1FFFF) << 10)
+    while m != 0:
+        idx = _ctz64(m)
+        buf[count[0]] = <long long>src | (<long long>(54 + idx) << 7)
+        count[0] += 1
+        m &= m - 1
+    m = (lo >> 27) & 0x7FFFFFF
+    while m != 0:
+        idx = _ctz64(m)
+        buf[count[0]] = <long long>src | (<long long>(27 + idx) << 7)
+        count[0] += 1
+        m &= m - 1
+    m = lo & 0x7FFFFFF
+    while m != 0:
+        idx = _ctz64(m)
+        buf[count[0]] = <long long>src | (<long long>idx << 7)
+        count[0] += 1
+        m &= m - 1
+
+
+cdef inline int _has_site(long long lo, long long hi, int site) noexcept nogil:
+    if site < 64:
+        return <int>((lo >> site) & 1)
+    return <int>((hi >> (site - 64)) & 1)
+
+
 cpdef init_eval_tables(dict t):
     global _CH_ATK_R_LO, _CH_ATK_R_HI, _CH_ATK_C_LO, _CH_ATK_C_HI
     global _MV_R_LO, _MV_R_HI, _MV_C_LO, _MV_C_HI
@@ -110,7 +162,8 @@ cpdef init_eval_tables(dict t):
     global _GUN_MR_R_LO, _GUN_MR_R_HI, _GUN_MR_C_LO, _GUN_MR_C_HI
     global _KN_LEG_LO, _KN_LEG_HI, _KN_ATK_LO, _KN_ATK_HI
     global _EL_LEG_LO, _EL_LEG_HI, _EL_ATK_LO, _EL_ATK_HI
-    global _KING_LO, _KING_HI, _GUARD_LO, _GUARD_HI, _SOL_LO, _SOL_HI
+    global _KING_LO, _KING_HI, _GUARD_LO, _GUARD_HI, _SOL_LO, _SOL_HI, _KCS_LO, _KCS_HI
+    global _KN_TGT_LO, _KN_TGT_HI
     global _CG_MOB_R, _CG_MOB_C
     global _ATK_PART, _DEF_PART, _MIN_MOB, _MOB_REW, _GE_NUM, _GUN_DEP, _KN_DEP
     global _ROLE_PART, _SOL_PROT, _GUN_NG, _KN_NG
@@ -148,6 +201,10 @@ cpdef init_eval_tables(dict t):
     _GUARD_HI = t["GUARD_TARGET_HI"]
     _SOL_LO = t["SOLDIER_TARGET_LO"]
     _SOL_HI = t["SOLDIER_TARGET_HI"]
+    _KCS_LO = t["KING_CHECKED_SOLDIER_LO"]
+    _KCS_HI = t["KING_CHECKED_SOLDIER_HI"]
+    _KN_TGT_LO = t["KNIGHT_TARGET_LO"]
+    _KN_TGT_HI = t["KNIGHT_TARGET_HI"]
     _CG_MOB_R = t["CHARIOT_GUN_MOBILITY_ROW"]
     _CG_MOB_C = t["CHARIOT_GUN_MOBILITY_COL"]
     _ATK_PART = t["ATTACK_PARTITION_SCORE"]
@@ -747,3 +804,159 @@ cdef class BoardState:
             else:
                 r = self._evaluate(play)
         return r
+
+    cdef inline void _target_mask(self, int role, int src, int capture, int play,
+                                  long long* olo, long long* ohi) noexcept nogil:
+        cdef int br = role % 7
+        cdef int rm, cm, key
+        if br == 6:
+            rm = self.bit_row[src // 9]
+            cm = self.bit_col[src % 9]
+            if capture:
+                olo[0] = _CH_ATK_R_LO[src, rm] ^ _CH_ATK_C_LO[src, cm]
+                ohi[0] = _CH_ATK_R_HI[src, rm] ^ _CH_ATK_C_HI[src, cm]
+            else:
+                olo[0] = _MV_R_LO[src, rm] ^ _MV_C_LO[src, cm]
+                ohi[0] = _MV_R_HI[src, rm] ^ _MV_C_HI[src, cm]
+        elif br == 4:
+            rm = self.bit_row[src // 9]
+            cm = self.bit_col[src % 9]
+            if capture:
+                olo[0] = _GUN_ATK_R_LO[src, rm] ^ _GUN_ATK_C_LO[src, cm]
+                ohi[0] = _GUN_ATK_R_HI[src, rm] ^ _GUN_ATK_C_HI[src, cm]
+            else:
+                olo[0] = _MV_R_LO[src, rm] ^ _MV_C_LO[src, cm]
+                ohi[0] = _MV_R_HI[src, rm] ^ _MV_C_HI[src, cm]
+        elif br == 5:
+            key = _csum_knight(_KN_LEG_LO[src] & self.mask_all[0], _KN_LEG_HI[src] & self.mask_all[1])
+            olo[0] = _KN_ATK_LO[src, key]
+            ohi[0] = _KN_ATK_HI[src, key]
+        elif br == 3:
+            key = _csum_elephant(_EL_LEG_LO[src] & self.mask_all[0], _EL_LEG_HI[src] & self.mask_all[1])
+            olo[0] = _EL_ATK_LO[src, key]
+            ohi[0] = _EL_ATK_HI[src, key]
+        elif br == 0:
+            olo[0] = _KING_LO[src]
+            ohi[0] = _KING_HI[src]
+        elif br == 2:
+            olo[0] = _GUARD_LO[src]
+            ohi[0] = _GUARD_HI[src]
+        else:
+            olo[0] = _SOL_LO[play, src]
+            ohi[0] = _SOL_HI[play, src]
+
+    cdef inline void _gen_piece(self, int piece, int play, int capture,
+                                long long opp0, long long opp1,
+                                long long empty0, long long empty1,
+                                long long* buf, int* count) noexcept nogil:
+        cdef int src = self.all_chess[piece]
+        cdef int role
+        cdef long long lo, hi
+        if src < 0:
+            return
+        role = _PIECE_ROLES[piece]
+        self._target_mask(role, src, capture, play, &lo, &hi)
+        if capture:
+            lo &= opp0
+            hi &= opp1
+        else:
+            lo &= empty0
+            hi &= empty1
+        if play == 1:
+            _emit_red(lo, hi, src, buf, count)
+        else:
+            _emit_black(lo, hi, src, buf, count)
+
+    cdef int _gen_moves(self, int play, long long* buf, int captures_only) noexcept nogil:
+        cdef int begin = 16 if play == 0 else 32
+        cdef int i, count = 0
+        cdef long long opp0, opp1, empty0 = 0, empty1 = 0
+        opp0 = self.mask_personal[1 - play][0]
+        opp1 = self.mask_personal[1 - play][1]
+        if not captures_only:
+            empty0 = ~self.mask_all[0]
+            empty1 = (~self.mask_all[1]) & 0x3FFFFFF
+        for i in range(1, 16):
+            self._gen_piece(begin + i, play, 1, opp0, opp1, empty0, empty1, buf, &count)
+        self._gen_piece(begin, play, 1, opp0, opp1, empty0, empty1, buf, &count)
+        if not captures_only:
+            for i in range(1, 16):
+                self._gen_piece(begin + i, play, 0, opp0, opp1, empty0, empty1, buf, &count)
+            self._gen_piece(begin, play, 0, opp0, opp1, empty0, empty1, buf, &count)
+        return count
+
+    cpdef object gen_moves_py(self, int play, int captures_only):
+        cdef long long[256] buf
+        cdef int n, i
+        cdef list out = []
+        with nogil:
+            n = self._gen_moves(play, buf, captures_only)
+        for i in range(n):
+            out.append(int(buf[i]))
+        return out
+
+    cpdef bench_gen(self, int play, int n):
+        cdef long long[256] buf
+        cdef int i, c = 0
+        with nogil:
+            for i in range(n):
+                c = self._gen_moves(play, buf, 0)
+        return c
+
+    cdef int _in_check(self, int play) noexcept nogil:
+        cdef int opp = 1 - play
+        cdef int ks = self.all_chess[32 if play == 1 else 16]
+        cdef int oks, row, col, rm, cm, role
+        cdef long long lo, hi, cnd_lo, cnd_hi
+        cdef int i, ksite, key
+        if ks < 0:
+            return 1
+        oks = self.all_chess[32 if opp == 1 else 16]
+        if oks < 0:
+            return 0
+        row = ks // 9
+        col = ks % 9
+        rm = self.bit_row[row]
+        cm = self.bit_col[col]
+        role = 6 + 7 * (1 - opp)
+        lo = _CH_ATK_R_LO[ks, rm] ^ _CH_ATK_C_LO[ks, cm]
+        hi = _CH_ATK_R_HI[ks, rm] ^ _CH_ATK_C_HI[ks, cm]
+        if ((lo & self.mask_role[role][0]) | (hi & self.mask_role[role][1])) != 0:
+            return 1
+        if _has_site(_CH_ATK_C_LO[ks, cm], _CH_ATK_C_HI[ks, cm], oks) != 0:
+            return 1
+        role = 4 + 7 * (1 - opp)
+        lo = _GUN_ATK_R_LO[ks, rm] ^ _GUN_ATK_C_LO[ks, cm]
+        hi = _GUN_ATK_R_HI[ks, rm] ^ _GUN_ATK_C_HI[ks, cm]
+        if ((lo & self.mask_role[role][0]) | (hi & self.mask_role[role][1])) != 0:
+            return 1
+        role = 5 + 7 * (1 - opp)
+        cnd_lo = _KN_TGT_LO[ks] & self.mask_role[role][0]
+        cnd_hi = _KN_TGT_HI[ks] & self.mask_role[role][1]
+        if (cnd_lo | cnd_hi) != 0:
+            for i in range(2):
+                ksite = self.all_chess[(16 if opp == 0 else 32) + 3 + i]
+                if ksite < 0:
+                    continue
+                if _has_site(cnd_lo, cnd_hi, ksite) == 0:
+                    continue
+                key = _csum_knight(_KN_LEG_LO[ksite] & self.mask_all[0], _KN_LEG_HI[ksite] & self.mask_all[1])
+                if _has_site(_KN_ATK_LO[ksite, key], _KN_ATK_HI[ksite, key], ks) != 0:
+                    return 1
+        role = 1 + 7 * (1 - opp)
+        lo = _KCS_LO[ks] & self.mask_role[role][0]
+        hi = _KCS_HI[ks] & self.mask_role[role][1]
+        return 1 if (lo | hi) != 0 else 0
+
+    cpdef int in_check_py(self, int play):
+        cdef int r
+        with nogil:
+            r = self._in_check(play)
+        return r
+
+    cpdef bench_incheck(self, int play, int n):
+        cdef int i, s = 0
+        with nogil:
+            for i in range(n):
+                s += self._in_check(play)
+        return s
