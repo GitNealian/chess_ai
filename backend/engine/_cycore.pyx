@@ -1045,6 +1045,7 @@ cdef class Searcher:
         int rootscores[256]
         int root_count
         int root_inited
+        int owns_tt
 
     def __cinit__(self, int hash_pow=19):
         cdef int slots = 1 << hash_pow
@@ -1052,14 +1053,22 @@ cdef class Searcher:
         self.tt_slots = slots
         self.tt_key = <long long*>calloc(4 * slots, sizeof(long long))
         self.tt_data = <long long*>calloc(4 * slots, sizeof(long long))
+        self.owns_tt = 1
         if self.tt_key == NULL or self.tt_data == NULL:
             raise MemoryError()
 
     def __dealloc__(self):
-        if self.tt_key != NULL:
-            free(self.tt_key)
-        if self.tt_data != NULL:
-            free(self.tt_data)
+        if self.owns_tt == 1:
+            if self.tt_key != NULL:
+                free(self.tt_key)
+            if self.tt_data != NULL:
+                free(self.tt_data)
+
+    cpdef attach_tt(self, Searcher src):
+        self.tt_key = src.tt_key
+        self.tt_data = src.tt_data
+        self.tt_slots = src.tt_slots
+        self.owns_tt = 0
 
     cpdef load(self, object st):
         cdef int i, j, n4
@@ -1076,12 +1085,14 @@ cdef class Searcher:
             self.is_eat[i] = 0
             self.chk[i] = 0
             self.is_null_[i] = 0
-        n4 = 4 * self.tt_slots
-        for i in range(n4):
-            self.tt_key[i] = 0
-            self.tt_data[i] = 0
+        if self.owns_tt == 1:
+            n4 = 4 * self.tt_slots
+            for i in range(n4):
+                self.tt_key[i] = 0
+                self.tt_data[i] = 0
         self.nodes = 0
         self.stop = 0
+        self.root_inited = 0
         self.z32[0] = self.st.zob[0]
         self.z64[0] = self.st.zob[1]
 
