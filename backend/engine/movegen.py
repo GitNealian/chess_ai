@@ -60,7 +60,7 @@ def _emit_bits(m, base, src, buf, limit, count):
     return count
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def _emit_targets(lo, hi, src, play, buf, count):
     """按 MSB(play) 顺序把掩码中的目标写入 buf[count:]，返回新 count。
 
@@ -80,7 +80,7 @@ def _emit_targets(lo, hi, src, play, buf, count):
     return _emit_bits(lo & 0x7FFFFFF, 0, src, buf, limit, count)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def _target_mask(st, role, src, capture, play):
     """单棋子的目标掩码（未与对方/空格求交）。
 
@@ -135,7 +135,7 @@ def _target_mask(st, role, src, capture, play):
     return tables.SOLDIER_TARGET_LO[play, src], tables.SOLDIER_TARGET_HI[play, src]
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def _emit_piece(st, piece, play, capture, opp0, opp1, empty0, empty1, buf, count):
     src = st.all_chess[piece]
     if src < 0:
@@ -151,7 +151,7 @@ def _emit_piece(st, piece, play, capture, opp0, opp1, empty0, empty1, buf, count
     return _emit_targets(lo, hi, src, play, buf, count)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def _gen_stage(st, play, capture, opp0, opp1, empty0, empty1, buf, count):
     begin = _PIECE_STARTS[play]
     for offset in range(1, 16):
@@ -161,7 +161,7 @@ def _gen_stage(st, play, capture, opp0, opp1, empty0, empty1, buf, count):
     return _emit_piece(st, begin, play, capture, opp0, opp1, empty0, empty1, buf, count)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def gen_moves_into(st, play, buf, captures_only):
     """生成伪合法着法写入定长缓冲，返回着法数。
 
@@ -194,13 +194,13 @@ def gen_captures(st, play):
     return buf, gen_moves_into(st, play, buf, True)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def gen_captures_into(st, play, buf):
     """只生成吃子着法并写入调用方缓冲，返回着法数。"""
     return gen_moves_into(st, play, buf, True)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def in_check(st, play):
     """play 方是否被将军（对应 Java `checked` L312-370）。
 
@@ -241,22 +241,28 @@ def in_check(st, play):
     if ((lo & st.mask_role[role, 0]) | (hi & st.mask_role[role, 1])) != 0:
         return True
 
-    # 对方马：先用将的马目标表筛出候选马（马的攻击位对称），再逐匹验腿。
+    # 对方马：先用将的马目标表筛（马的攻击位对称），再只验固定两匹马。
     role = C.KNIGHT + 7 * (1 - opp)
     cand_lo = tables.KNIGHT_TARGET_LO[king_site] & st.mask_role[role, 0]
     cand_hi = tables.KNIGHT_TARGET_HI[king_site] & st.mask_role[role, 1]
-    while (cand_lo | cand_hi) != 0:
-        cand_lo, cand_hi, knight_site = bitboard.pop_lowest(cand_lo, cand_hi)
-        key = bitboard.check_sum_knight(
-            tables.KNIGHT_LEG_LO[knight_site] & st.mask_all[0],
-            tables.KNIGHT_LEG_HI[knight_site] & st.mask_all[1],
-        )
-        if bitboard.has_site(
-            tables.KNIGHT_ATTACK_LIMIT_LO[knight_site, key],
-            tables.KNIGHT_ATTACK_LIMIT_HI[knight_site, key],
-            king_site,
-        ):
-            return True
+    if (cand_lo | cand_hi) != 0:
+        base = _PIECE_STARTS[opp] + 3
+        for j in range(2):
+            knight_site = st.all_chess[base + j]
+            if knight_site < 0:
+                continue
+            if not bitboard.has_site(cand_lo, cand_hi, knight_site):
+                continue
+            key = bitboard.check_sum_knight(
+                tables.KNIGHT_LEG_LO[knight_site] & st.mask_all[0],
+                tables.KNIGHT_LEG_HI[knight_site] & st.mask_all[1],
+            )
+            if bitboard.has_site(
+                tables.KNIGHT_ATTACK_LIMIT_LO[knight_site, key],
+                tables.KNIGHT_ATTACK_LIMIT_HI[knight_site, key],
+                king_site,
+            ):
+                return True
 
     # 对方兵
     role = C.SOLDIER + 7 * (1 - opp)
@@ -275,7 +281,7 @@ def kings_facing(st):
     return bitboard.has_site(lo, hi, black)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def opp_attack_site(st, play):
     """对方（1-play）全体棋子的攻击位并集，返回 (lo, hi)。
 
@@ -334,7 +340,7 @@ def opp_attack_site(st, play):
     return lo, hi
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def legal_move(st, play, m):
     """TT/killer 着法快速校验（对应 Java `legalMove` L226-302）。
 

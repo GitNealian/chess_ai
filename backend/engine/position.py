@@ -32,6 +32,7 @@ from numba import njit
 from . import bitboard
 from . import constants as C
 from . import eval_tables as _eval_tables
+from . import tables as _tables
 from . import zobrist as _zobrist
 from .zobrist import ZOB32, ZOB64
 
@@ -221,6 +222,17 @@ def get_phase(st):
 
 
 @njit(cache=True)
+def piece_score(st, piece_index):
+    """棋子的当前动态子力值（对应 Java `EvaluateCompute.chessBaseScore[chess]`）。
+
+    搜索中的吃子分类/排序（MVV-LVA、静态搜索 good 门槛）必须用当前动态子力，
+    与 Java `ChessMovePlay/ChessQuiescMove.savePlayChess` 一致；`piece_index`
+    为棋子索引 16-47（与 `chessBaseScore` 同语义），角色取自 `PIECE_ROLES`。
+    """
+    return st.base_score[_PIECE_SCORES_OFFSET + C.PIECE_ROLES[piece_index]]
+
+
+@njit(cache=True)
 def attach_score(st, role, site):
     """棋子位置价值分，按阶段选中局或残局位置表（Task 8）。
 
@@ -298,8 +310,10 @@ def make_move(st, m):
     if dest_chess != 0:
         dest_role = C.PIECE_ROLES[dest_chess]
 
-    lo_src, hi_src = bitboard.site_mask(src)
-    lo_dest, hi_dest = bitboard.site_mask(dest)
+    lo_src = _tables.MASK_SITE_LO[src]
+    hi_src = _tables.MASK_SITE_HI[src]
+    lo_dest = _tables.MASK_SITE_LO[dest]
+    hi_dest = _tables.MASK_SITE_HI[dest]
 
     # 分数增量（Java L86-98，Task 8 起使用动态子力与当前阶段位置表）
     phase = get_phase(st)
@@ -373,8 +387,10 @@ def unmake_move(st, m, undo):
     if dest_chess != 0:
         dest_role = C.PIECE_ROLES[dest_chess]
 
-    lo_src, hi_src = bitboard.site_mask(src)
-    lo_dest, hi_dest = bitboard.site_mask(dest)
+    lo_src = _tables.MASK_SITE_LO[src]
+    hi_src = _tables.MASK_SITE_HI[src]
+    lo_dest = _tables.MASK_SITE_LO[dest]
+    hi_dest = _tables.MASK_SITE_HI[dest]
 
     # 分数还原
     phase = get_phase(st)

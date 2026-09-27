@@ -132,7 +132,6 @@ from numba.extending import intrinsic
 
 from . import bitboard as _bitboard
 from . import constants as C
-from . import eval_tables as _eval_tables
 from . import evaluate as _evaluate
 from . import movegen as _movegen
 from . import position as _position
@@ -270,7 +269,7 @@ def new_worker_context(ctx, stop):
     )
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _get_by_hash_item(ctx, play, kind, slot, depth, alpha, beta):
     """对应 `getTranZobristByHashItem`（L361-391）。
 
@@ -383,7 +382,7 @@ def get_tt(ctx, play, zob32, zob64, depth, alpha, beta):
     return False, value, move
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _copy_slot(ctx, play, src_kind, dst_kind, slot):
     """整体复制条目（Java 中把 STEP 旧条目引用赋给 STRAIGHT 槽）。
 
@@ -403,7 +402,7 @@ def _copy_slot(ctx, play, src_kind, dst_kind, slot):
     ctx.tt_key[play, dst_kind, slot] = ctx.tt_key[play, src_kind, slot]
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _write_straight(ctx, play, slot, zob64, entry_type, value, depth, move):
     """覆盖写 STRAIGHT 槽（`setTranZobristOverride` else 分支）。
 
@@ -420,7 +419,7 @@ def _write_straight(ctx, play, slot, zob64, entry_type, value, depth, move):
     ctx.tt_key[play, SLOT_STRAIGHT, slot] = zob64
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _write_step(ctx, play, slot, zob64, entry_type, value, depth, move):
     """把新条目写入 STEP 槽（Java 中总是新建 HashItem，move 默认空）。
 
@@ -438,7 +437,7 @@ def _write_step(ctx, play, slot, zob64, entry_type, value, depth, move):
     ctx.tt_key[play, SLOT_STEP, slot] = zob64
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _step_allocated(ctx, play, slot):
     """STEP 槽是否分配过条目（对应 Java `HashItem == null` 的反面）。"""
     return (
@@ -507,14 +506,14 @@ def clean_tt(ctx):
             ctx.tt_exists[play, SLOT_STEP, slot] = False
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def update_killer(ctx, depth, move):
     """killer 双槽轮转：`killer[depth][1] = killer[depth][0]; [0] = move`。"""
     ctx.killer[depth, 1] = ctx.killer[depth, 0]
     ctx.killer[depth, 0] = np.int32(move)
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def history_bonus(ctx, piece_index, dest, depth):
     """历史加分（`setCHistoryGOOD`）：`history[PIECE_KINDS[piece_index]][dest] += 2 << depth`。
 
@@ -542,7 +541,7 @@ def history_decay(ctx):
                 ctx.history[i, j] = np.int32(-((-v) // 512))
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def history_score(ctx, piece_index, dest):
     """读取历史分（`getCHistory`）：`history[PIECE_KINDS[piece_index]][dest]`。"""
     return ctx.history[C.PIECE_KINDS[piece_index], dest]
@@ -586,20 +585,20 @@ def new_stack():
     )
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def fine_evaluate(st, play, ctx):
     """精确评估（`fineEvaluate` L115-118）：计节点数后按阶段分派 `evaluate`。"""
     ctx.nodes[0] += 1
     return _evaluate.evaluate(st, play)
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def rough_evaluate(st, play):
     """粗评估（`roughEvaluate` L123-125）：`base_score[play] - base_score[1-play]`。"""
     return st.base_score[play] - st.base_score[1 - play]
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def is_long_check(stack, ply):
     """长将检测（`isLongChk` L240-260）。
 
@@ -622,7 +621,7 @@ def is_long_check(stack, ply):
     return False
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def is_draw(st, stack, ply):
     """和棋判定（`isDraw` L267-273）：双方攻击子（兵卒车马炮）数都为 0。
 
@@ -633,7 +632,7 @@ def is_draw(st, stack, ply):
     return st.attack_def[C.RED, 0] == 0 and st.attack_def[C.BLACK, 0] == 0
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _select_best(buf, score, index, count):
     """从 `index..count-1` 选出最大 score 与 `index` 原地交换（严格大于）。
 
@@ -652,7 +651,7 @@ def _select_best(buf, score, index, count):
         score[best] = ts
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _store_pv(stack, ply, move):
     """把本层最佳着法与子层 PV 写入三角表（对应 Java `setNextLink(bestNodeLink)`）。
 
@@ -668,7 +667,7 @@ def _store_pv(stack, ply, move):
         stack.pv[ply, j + 1] = 0
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def gen_quiesc_moves(
     st, ctx, play, is_checked, good_buf, good_score, general_buf, general_score
 ):
@@ -692,14 +691,14 @@ def gen_quiesc_moves(
         src = C.move_src(m)
         dest = C.move_dest(m)
         dest_chess = st.board[dest]
-        dest_score = _eval_tables.BASE_SCORES[dest_chess] + _position.attach_score(
+        dest_score = _position.piece_score(st, dest_chess) + _position.attach_score(
             st, C.PIECE_ROLES[dest_chess], dest
         )
         src_chess = st.board[src]
         if dest_score >= QUIESC_GOOD_SCORE:
             if good_n >= good_buf.shape[0]:
                 continue
-            src_score = _eval_tables.BASE_SCORES[src_chess] + _position.attach_score(
+            src_score = _position.piece_score(st, src_chess) + _position.attach_score(
                 st, C.PIECE_ROLES[src_chess], src
             )
             good_buf[good_n] = m
@@ -888,7 +887,7 @@ _FLAGS = np.array([0, 1, 0, 1], dtype=np.int64)
 _FLAGS.setflags(write=False)
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def RAdapt(depth):
     """空着归约自适应 R（`RAdapt` L102-113）：<=6 → 2、<=8 → 3、否则 4。"""
     if depth <= 6:
@@ -898,7 +897,7 @@ def RAdapt(depth):
     return 4
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def is_danger(st, play):
     """危险判定（`isDanger` L274-286）。
 
@@ -917,14 +916,14 @@ def is_danger(st, play):
     )
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _int32_wrap(v):
     """把 int64 按 Java int 语义环绕到 int32 范围（历史分加法用）。"""
     v = ((v + 0x80000000) & 0xFFFFFFFF) - 0x80000000
     return v
 
 
-@njit(nogil=True, cache=False)
+@njit(nogil=True, cache=False, inline="always")
 def _killer_index(depth):
     """killer 行索引钳位（Java killerMove[64] 越界会抛异常，此处防御）。"""
     d = depth if depth < 64 else 63
@@ -1312,12 +1311,12 @@ def nega_scout(st, ctx, stack, alpha, beta, depth, ply, play, is_pv, is_null):
             if is_eat:
                 if is_opp_protect:
                     src_score = np.int64(
-                        _eval_tables.BASE_SCORES[src_chess]
+                        _position.piece_score(st, src_chess)
                     ) + _position.attach_score(st, C.PIECE_ROLES[src_chess], src)
                 else:
                     src_score = np.int64(-500)
                 dest_score = np.int64(
-                    _eval_tables.BASE_SCORES[dest_chess]
+                    _position.piece_score(st, dest_chess)
                 ) + _position.attach_score(st, C.PIECE_ROLES[dest_chess], dest)
                 if dest_score >= src_score:
                     if eat_n < eat_buf.shape[0]:

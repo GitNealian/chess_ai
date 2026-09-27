@@ -48,7 +48,7 @@ _LO27 = 0x7FFFFFF
 _HI9 = 0x1FF
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def msb(lo, hi, play):
     """Java `BitBoard.MSB(play)`：取掩码中该方枚举顺序的第一个 site。
 
@@ -84,7 +84,7 @@ def msb(lo, hi, play):
     return -1
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def _knight_attack(st, site):
     """马在 site 的受腿位限制攻击位（含己方/对方棋子，对应 Java 攻击限制表）。"""
     key = bitboard.check_sum_knight(
@@ -97,7 +97,7 @@ def _knight_attack(st, site):
     )
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def _elephant_attack(st, site):
     """象在 site 的受象眼限制攻击位。"""
     key = bitboard.check_sum_elephant(
@@ -110,7 +110,7 @@ def _elephant_attack(st, site):
     )
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def chess_all_move(st, role, site, play):
     """该子的控制范围（对应 Java `EvaluateCompute.chessAllMove`）。
 
@@ -162,7 +162,7 @@ def chess_all_move(st, role, site, play):
     return tables.SOLDIER_TARGET_LO[play, site], tables.SOLDIER_TARGET_HI[play, site]
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def chess_mobility(st, role, site, own_lo, own_hi):
     """机动性（对应 Java `EvaluateCompute.chessMobility`）。
 
@@ -196,7 +196,7 @@ def chess_mobility(st, role, site, own_lo, own_hi):
     return np.int32(0)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def dynamic_partition_score(st):
     """按士象数量动态调整分区评分表（对应 Java `dynamicCMPChessPartitionScore`）。
 
@@ -230,7 +230,7 @@ def dynamic_partition_score(st):
     return attack, defense
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def comp_partition_score(play, site, chess, partition, attack_tab, defense_tab):
     """按棋子的分区代号累加分区评分（对应 Java `compPartitionScore`）。
 
@@ -306,7 +306,7 @@ def comp_partition_score(play, site, chess, partition, attack_tab, defense_tab):
             partition[4] += attack_tab[chess]
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def trim_partition_score(partition_score, attack_partition, defense_partition):
     """分区评分拆成三路攻防（对应 Java `trimPartitionScore`）。
 
@@ -327,7 +327,7 @@ def trim_partition_score(partition_score, attack_partition, defense_partition):
     defense_partition[C.BLACK, 2] = partition_score[C.BLACK, 3]
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def exposed_cannon(st, play, opp_king_site, row, col):
     """空头炮：对方将所在行列的第一个阻挡位置是己方炮（对应 `exposedCannon`）。
 
@@ -350,7 +350,7 @@ def exposed_cannon(st, play, opp_king_site, row, col):
     return msb(lo, hi, play)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def bottom_cannon(st, play, opp_king_site, row, col):
     """沉底炮：对方将所在行列的第三个阻挡位置是己方炮（隔两子攻击表）。"""
     lo = (
@@ -369,7 +369,7 @@ def bottom_cannon(st, play, opp_king_site, row, col):
     return msb(lo, hi, play)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def rest_chariot(st, play, opp_king_site, row, col):
     """残车：对方将所在行列的第二个阻挡位置是己方车（炮攻击表语义）。"""
     lo = (
@@ -388,7 +388,7 @@ def rest_chariot(st, play, opp_king_site, row, col):
     return msb(lo, hi, play)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def _soldiers_attack(st, play):
     """play 方全部兵/卒的攻击位并集。
 

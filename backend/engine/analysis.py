@@ -351,6 +351,11 @@ def analyze(
 
     st = load_position(fen)
     prepare(st)
+    # 残局深度补偿（对应 Java `AICoreHandler.searchEngineFactory`：残局 depth++）。
+    # Java 中该补偿在评估器构造时对"本次搜索目标深度 +1"，此处等价为把
+    # `max_depth` 加一；`AnalysisResult.depth` 即实际搜索层数。
+    if phase_of(st) == END_GAME:
+        max_depth = min(max_depth + 1, MAX_ANALYSIS_DEPTH)
     # 总停旗：并行时所有搜索线程共享；串行时直接复用外部停旗（现状）。
     stop_all = np.zeros(1, dtype=np.int8) if threads > 1 else None
     search_stop = stop_all if stop_all is not None else stop
