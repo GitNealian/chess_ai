@@ -70,7 +70,12 @@ chess/
 
 - Python 3.11+
 - Node.js 18+
-- 引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时。大部分引擎模块启用 numba 磁盘缓存（`backend/engine/__pycache__/`），编译产物可跨进程复用；但**搜索模块（`search.py`）因 numba 0.67「递归 + 跨函数调用 + 磁盘缓存」缺陷不使用磁盘缓存**，因此**每个新进程首次分析仍需 ~20-35s 预热**。建议部署后等预热线程完成（或先发一个浅层分析请求）再对外服务；gunicorn 多 worker 各自独立预热。
+- **引擎后端（Cython / numba）**：引擎有 Cython（AOT 扩展，**默认优先**）与 numba（njit，回退）两种后端，由环境变量 `ENGINE_BACKEND=cython|numba` 选择；未设置时优先 Cython，扩展不可用时自动回退 numba。Cython 后端**无需 JIT 预热**，启动即用；构建命令：
+  ```bash
+  cd backend && .venv/bin/python setup.py build_ext --inplace
+  ```
+  产物 `backend/engine/_cycore*.so`（已加入 `.gitignore`），构建前置为 C 编译器（gcc/clang）+ `Cython` / `setuptools`（见 `backend/requirements.txt`）。初始局面单线程 NPS：Cython ~1.5M、numba ~0.24M、Java 原版 ~0.88M（详见 `docs/perf-vs-java.md`）。跳过构建则自动回退 numba。
+- **numba 后端预热**：引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时。大部分引擎模块启用 numba 磁盘缓存（`backend/engine/__pycache__/`），编译产物可跨进程复用；但**搜索模块（`search.py`）因 numba 0.67「递归 + 跨函数调用 + 磁盘缓存」缺陷不使用磁盘缓存**，因此**每个新进程首次分析仍需 ~20-35s 预热**（仅在使用 numba 后端时）。建议部署后等预热线程完成（或先发一个浅层分析请求）再对外服务；gunicorn 多 worker 各自独立预热。
 - numba 缓存目录会随源码变更 / numba 升级累积历史编译产物而增长。运行一段时间后可安全删除 `backend/engine/__pycache__/`，代价是下次冷启动重新编译（即上述预热耗时）。
 - **并行搜索（Lazy SMP）**：引擎默认使用 `max(1, min(cpu_count-1, 8))` 个线程并行分析：主线程产出结果，辅助线程共享置换表互补搜索。可用环境变量 `ENGINE_THREADS`（如 `ENGINE_THREADS=1` 完全串行）或分析请求的 `threads` 字段（1..16）覆盖。并行模式下 `nodes` 只统计主线程；同一局面的分数/PV 在多次运行间可能微变（非确定性），属预期行为。本机实测（nproc=20 逻辑核，固定深度、`time_limit_ms=60000`、预热完成后测量（无额外基准负载，测量时系统 load≈0.5–1），每档重复 3 次取中位数，depth 8 / 10）：2 线程 1.5x / 1.6x，4 线程 1.9x / 2.1x；默认 8 线程档 1.9x / 2.6x（同批次 T1 基线 2.3s / 27.0s，T8 1.2s / 10.4s）。加速比随深度增长（并行线程相位错开、TT 互补需要一定深度才能摊薄启动开销）。
 - **`gunicorn --preload` 注意**：请在 gunicorn 配置的 `on_starting(server)` 钩子中同步调用 `engine.warmup()` 完成预热后再 fork worker（或直接不使用 `--preload`）。若在预热线程运行期间 fork，子进程可能继承 numba 自身的编译锁（本项目的 `_WARMUP_LOCK` 已做 fork 重建，numba 编译锁不能），导致子进程首次编译（含 `threads=1` 串行搜索）阻塞。
@@ -81,10 +86,11 @@ chess/
 cd backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/python setup.py build_ext --inplace   # 构建 Cython 扩展（默认后端；跳过则回退 numba）
 .venv/bin/python app.py
 ```
 
-默认监听 `http://localhost:5000`，数据库为 `backend/chess.db`（SQLite，首次启动自动建表）。
+默认监听所有网卡 `0.0.0.0:5000`（局域网可访问），本机访问 `http://localhost:5000`；如需仅本机监听，设置 `HOST=127.0.0.1`。数据库为 `backend/chess.db`（SQLite，首次启动自动建表）。
 
 ### 密码登录（可选）
 
@@ -109,14 +115,14 @@ npm run dev
 ## 测试
 
 ```bash
-# 后端（522 项：521 通过 + 1 跳过）
+# 后端（545 项：544 通过 + 1 跳过）
 cd backend && .venv/bin/python -m pytest
 
 # 前端（223 项）
 cd frontend && npx vitest run
 ```
 
-后端首次运行需等待 numba JIT 编译（搜索模块不使用磁盘缓存，每个新进程都要重新编译），整体约 40s；引擎预热耗时见「环境要求」。
+默认 Cython 后端无 JIT 预热（扩展构建见「环境要求」）；回退 numba 后端时首次运行需等待 JIT 编译（搜索模块不使用磁盘缓存，每个新进程都要重新编译），整体约 40s；引擎预热耗时见「环境要求」。
 
 ## 生产构建（单端口 5000）
 
@@ -129,22 +135,23 @@ Flask 检测到 `frontend/dist` 后会托管静态资源，访问 `http://localh
 
 ### 手机 / 局域网访问
 
-前端已做移动端适配（移动优先响应式，手机竖屏可用）。若要在同一局域网用手机访问，让后端监听所有网卡：
+前端已做移动端适配（移动优先响应式，手机竖屏可用）。后端默认监听所有网卡，直接启动即可在同一局域网用手机访问：
 
 ```bash
-cd backend && HOST=0.0.0.0 .venv/bin/python app.py
+cd backend && .venv/bin/python app.py
 ```
 
 然后在手机浏览器打开 `http://<电脑局域网IP>:5000`（如 `http://192.168.1.10:5000`）。查看 IP：Linux/macOS 用 `hostname -I` 或 `ip addr`，Windows 用 `ipconfig`。也可用环境变量 `PORT` 改端口（如 `PORT=8080`）。
 
-注意：`HOST=0.0.0.0` 会对局域网暴露服务，仅在可信网络中临时使用；默认仍为 `127.0.0.1`（仅本机）。
+注意：默认监听所有网卡会向局域网暴露服务，请确保在可信网络，必要时设置 `AUTH_PASSWORD`；如需仅本机访问，设置 `HOST=127.0.0.1`。
 
 ### 生产部署（WSGI 服务器）
 
 推荐用 gunicorn 托管，多 worker 且无调试器：
 
 ```bash
-cd backend && .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
+cd backend && .venv/bin/python setup.py build_ext --inplace   # 构建 Cython 扩展
+ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 ```
 
 `create_app()` 在应用工厂内自动建表（幂等），gunicorn 导入时即可完成初始化。
