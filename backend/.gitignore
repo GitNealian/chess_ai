@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 chess.db
 .pytest_cache/
+build/
+engine/_cycore.c
+engine/_cycore*.so
