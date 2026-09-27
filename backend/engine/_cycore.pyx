@@ -1158,21 +1158,29 @@ cdef class Searcher:
         sk = self.tt_key[si]
         if sk == zob64 and sk != 0:
             v = self._probe_slot(play, 1, slot, depth, alpha, beta, out_move, out_value)
-            if v != FAIL_SENTINEL:
+            # 共享 TT 无锁读复核：条目正被并发覆盖（key 与首读不一致）则视为未命中。
+            # 写者把 key 放在最后写，依赖 x86 TSO 的 store-store 顺序。
+            if self.tt_key[si] != sk:
+                sk = 0
+            else:
+                if v != FAIL_SENTINEL:
+                    out_move[0] = (self.tt_data[si] >> 42) & 0x3FFF
+                    return v
                 out_move[0] = (self.tt_data[si] >> 42) & 0x3FFF
-                return v
-            out_move[0] = (self.tt_data[si] >> 42) & 0x3FFF
-            out_value[0] = _tt_value(self.tt_data[si])
-            step_ok = 1
+                out_value[0] = _tt_value(self.tt_data[si])
+                step_ok = 1
         rk = self.tt_key[ki]
         if rk == zob64 and rk != 0:
             v2 = self._probe_slot(play, 0, slot, depth, alpha, beta, out_move, out_value)
-            if v2 != FAIL_SENTINEL:
+            if self.tt_key[ki] != rk:
+                rk = 0
+            else:
+                if v2 != FAIL_SENTINEL:
+                    out_move[0] = (self.tt_data[ki] >> 42) & 0x3FFF
+                    return v2
                 out_move[0] = (self.tt_data[ki] >> 42) & 0x3FFF
-                return v2
-            out_move[0] = (self.tt_data[ki] >> 42) & 0x3FFF
-            if (step_ok == 0) or (((self.tt_data[si] >> 34) & 0xFF) < ((self.tt_data[ki] >> 34) & 0xFF)):
-                out_value[0] = _tt_value(self.tt_data[ki])
+                if (step_ok == 0) or (((self.tt_data[si] >> 34) & 0xFF) < ((self.tt_data[ki] >> 34) & 0xFF)):
+                    out_value[0] = _tt_value(self.tt_data[ki])
         return FAIL_SENTINEL
 
     cdef inline void _set_tt(self, int play, int zob32, long long zob64, int etype, int value, int depth, int move) noexcept nogil:
