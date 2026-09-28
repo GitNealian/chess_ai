@@ -141,6 +141,7 @@ export const api = {
   bestMove: (data, config) => http.post("/engine/best-move", data, config).then((r) => r.data),
   validatePosition: (data, config) =>
     http.post("/engine/validate-position", data, config).then((r) => r.data),
+  recognize: (formData, config) => http.post("/recognize", formData, config).then((r) => r.data),
   login: (password) => http.post("/auth/login", { password }).then((r) => r.data),
   logout: () => http.post("/auth/logout").then((r) => r.data),
   authMe: () => http.get("/auth/me").then((r) => r.data),

@@ -6,3 +6,4 @@ chess.db
 build/
 engine/_cycore.c
 engine/_cycore*.so
+weights/

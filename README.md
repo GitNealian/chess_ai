@@ -18,6 +18,7 @@
 - **对手意图推演**：走子后先推演对手连招——底线威胁（若不理会）与圈套分支（若贪吃/随手棋中计），再进行 AI 评分分析。
 - **人机对战**：对弈页可让引擎执红或执黑（三档难度：简单 / 普通 / 困难），引擎计算后自动走子；保留实时分析 / 意图面板。
 - **局面编辑**：对弈页可手动摆子（棋子面板选取 + 点击落子 / 点击已有棋子移除，含清空棋盘与标准开局），摆子局面经后端完整摆子规则校验后选定行棋方直接开局。
+- **局面扫描**：移动端打开摄像头拍摄屏幕上的棋盘，或从相册选择截图，由后端自动识别为局面（支持任意象棋软件画面与本项目棋盘）；识别结果进入摆子编辑器核对修正后一键加载。
 
 ## 目录结构
 
@@ -46,11 +47,17 @@ chess/
 │   │   ├── zobrist.py      # Zobrist 哈希（固定种子自生成）
 │   │   └── constants.py    # 常量与 site/(x,y) 坐标转换
 │   ├── srs.py              # SM-2 间隔重复调度
+│   ├── recognizer/         # 棋盘识别（ONNX：四角检测 + 10x9x16 布局分类）
+│   │   ├── pose.py         # 棋盘四角关键点检测（RTMPose / SimCC）
+│   │   ├── classifier.py   # 布局分类（90x16 argmax）
+│   │   └── pipeline.py     # 透视校正、棋子映射、警告聚合
+│   ├── weights/            # 识别模型（不入库，由 scripts/download_models.py 下载）
 │   ├── routes/
 │   │   ├── engine.py       # 引擎分析 NDJSON 流式接口 + 走子校验
 │   │   ├── games.py        # 棋谱 CRUD、解析、PGN 导入、走法校验
+│   │   ├── recognize.py    # 棋盘识别接口（multipart 上传）
 │   │   └── review.py       # 复习队列、提交、统计
-│   ├── scripts/            # 工具脚本（评估表提取、PGN 批量导入）
+│   ├── scripts/            # 工具脚本（评估表提取、PGN 批量导入、识别模型下载）
 │   ├── tests/              # pytest 测试
 │   └── requirements.txt
 ├── frontend/
@@ -79,6 +86,7 @@ chess/
 - numba 缓存目录会随源码变更 / numba 升级累积历史编译产物而增长。运行一段时间后可安全删除 `backend/engine/__pycache__/`，代价是下次冷启动重新编译（即上述预热耗时）。
 - **并行搜索（Lazy SMP）**：引擎默认使用 `max(1, min(cpu_count-1, 8))` 个线程并行分析：主线程产出结果，辅助线程共享置换表互补搜索。可用环境变量 `ENGINE_THREADS`（如 `ENGINE_THREADS=1` 完全串行）或分析请求的 `threads` 字段（1..16）覆盖。并行模式下 `nodes` 只统计主线程；同一局面的分数/PV 在多次运行间可能微变（非确定性），属预期行为。本机实测（nproc=20 逻辑核，固定深度、`time_limit_ms=60000`、预热完成后测量（无额外基准负载，测量时系统 load≈0.5–1），每档重复 3 次取中位数，depth 8 / 10）：2 线程 1.5x / 1.6x，4 线程 1.9x / 2.1x；默认 8 线程档 1.9x / 2.6x（同批次 T1 基线 2.3s / 27.0s，T8 1.2s / 10.4s）。加速比随深度增长（并行线程相位错开、TT 互补需要一定深度才能摊薄启动开销）。
 - **`gunicorn --preload` 注意**：请在 gunicorn 配置的 `on_starting(server)` 钩子中同步调用 `engine.warmup()` 完成预热后再 fork worker（或直接不使用 `--preload`）。若在预热线程运行期间 fork，子进程可能继承 numba 自身的编译锁（本项目的 `_WARMUP_LOCK` 已做 fork 重建，numba 编译锁不能），导致子进程首次编译（含 `threads=1` 串行搜索）阻塞。
+- **棋盘识别模型（可选功能）**：移动端「扫描局面」依赖两个 ONNX 模型（约 42MB，来自开源项目 TheOne1006/chinese-chess-recognition），默认存放于 `backend/weights/`（已加入 `.gitignore`，不随仓库分发）。启动前执行 `cd backend && .venv/bin/python scripts/download_models.py` 下载（也可手动放置 `pose.onnx` / `layout.onnx`）。依赖 `opencv-python-headless` 与 `onnxruntime`（见 `backend/requirements.txt`）。模型缺失时识别接口返回 503，不影响其他功能。
 
 ## 后端启动
 
@@ -87,6 +95,7 @@ cd backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python setup.py build_ext --inplace   # 构建 Cython 扩展（默认后端；跳过则回退 numba）
+.venv/bin/python scripts/download_models.py     # 可选：下载棋盘识别模型（约 42MB）
 .venv/bin/python app.py
 ```
 
@@ -115,10 +124,10 @@ npm run dev
 ## 测试
 
 ```bash
-# 后端（545 项：544 通过 + 1 跳过）
+# 后端（564 项：默认 562 通过 + 2 跳过；设置 RECOGNIZE_TEST_IMAGE 后 563 通过 + 1 跳过）
 cd backend && .venv/bin/python -m pytest
 
-# 前端（223 项）
+# 前端（324 项）
 cd frontend && npx vitest run
 ```
 
@@ -144,6 +153,8 @@ cd backend && .venv/bin/python app.py
 然后在手机浏览器打开 `http://<电脑局域网IP>:5000`（如 `http://192.168.1.10:5000`）。查看 IP：Linux/macOS 用 `hostname -I` 或 `ip addr`，Windows 用 `ipconfig`。也可用环境变量 `PORT` 改端口（如 `PORT=8080`）。
 
 注意：默认监听所有网卡会向局域网暴露服务，请确保在可信网络，必要时设置 `AUTH_PASSWORD`；如需仅本机访问，设置 `HOST=127.0.0.1`。
+
+移动端棋盘工具栏的「扫描」入口可直接调起系统相机拍照，或从相册选择截图，上传后由后端识别成局面再进入编辑器核对。相机 / 相册调用走浏览器文件选择，不要求 HTTPS（局域网 HTTP 环境可用）；识别为 CPU 推理，单张约 0.1~0.3s（首次含模型加载约 1~2s）。
 
 ### 生产部署（WSGI 服务器）
 
@@ -180,6 +191,7 @@ ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 | POST | `/api/engine/validate-move` | 无状态走子校验（返回新局面 / 中文记谱 / 将军 / 终局） |
 | POST | `/api/engine/best-move` | 引擎最佳着法（一次性 JSON，三档难度，供人机对战） |
 | POST | `/api/engine/validate-position` | 摆子规则校验（返回合法 FEN 或错误列表） |
+| POST | `/api/recognize` | 棋盘识别（multipart 上传 `image`，返回棋子数组 / 布局 / 警告） |
 | GET | `/api/review/queue` | 今日复习队列 |
 | POST | `/api/review/:gameId/submit` | 提交复习结果并更新调度 |
 | GET | `/api/stats` | 掌握度统计 |
@@ -210,6 +222,8 @@ ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 
 `POST /api/engine/validate-position` 为摆子规则校验（供对弈页编辑局面调用）：请求体 `{ "pieces": [{ "x", "y", "side", "kind" }], "side_to_move" }`（`side ∈ red/black`，`kind ∈ K/A/B/N/R/C/P`；坐标不得重复，`pieces` 上限 32）。合法返回 `{ "valid": true, "fen" }`；不合法返回 `{ "valid": false, "errors": [...] }`。校验规则：帅 / 将各恰好一个，各兵种数量不超初始配置，帅 / 将士 / 仕在九宫内，相 / 象必须落在己方象位，兵 / 卒未过河时（红 y∈{3,4}、黑 y∈{5,6}）必须在初始偶数列上，不得照面，任何一方不得处于被将军状态，行棋方不得无合法着法（困毙）。参数结构错误返回 400。
 
+`POST /api/recognize` 为棋盘识别（供移动端「扫描局面」调用）：`multipart/form-data` 上传字段 `image`（图片，上限 8MB）。成功返回 `{ "pieces": [{ "x", "y", "side", "kind" }], "layout": ["10 行 x 9 列字符串"], "warnings": [...], "stats": { "pose_ms", "classify_ms", "keypoint_scores", "confidences" } }`；`layout` 第 0 行为黑方底线（与 FEN 同向），`x` 表示遮挡、`.` 表示空位；遮挡与低置信度格会写入 `warnings`（中文提示）。错误：400 `{ "error": "未检测到棋盘，请让棋盘完整入镜后重试" }` 或 `{ "error": "无法解析图片" }`，413 图片过大，503 识别模型未安装。识别为 CPU 推理，模块级锁串行执行；识别不出行棋方（`side_to_move` 不返回，前端默认红先）。
+
 ## 已知限制
 
 - 前端「棋盘摆子」入口不校验着法合法性；后端保存时会校验并拒绝非法序列（错误信息带步号）。
@@ -227,6 +241,8 @@ ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 人机对战为本地引擎自动走子，不联网；引擎思考期间棋盘锁定并显示提示；AI 模式悔棋会撤销到玩家回合（通常连带撤销引擎刚走的一步），不自动补走，引擎执红时保留引擎首着；引擎走子失败后点棋盘可重试；难度固定三档，不可自定义深度 / 时限。
 - `best-move` 为同步请求（持分析锁），前端在卸载 / 切换模式 / 悔棋时会 abort 等待，但服务端搜索仍会跑完该次请求（无客户端断开检测）；`hard` 档最坏约数秒。
 - 局面编辑不持久化（应用后仅作为当前对局初始局面，可手动保存到棋谱库）；摆子校验不含长将、重复局面等残局题特殊规则；进入编辑会清空当前对局（需确认）。
+- 棋盘识别基于开源预训练模型（真实场景照片 + 游戏棋盘画面），对屏幕画面效果最佳；倾斜角度过大、强反光、棋盘被遮挡或棋子样式差异会降低准确率。识别结果一律进入编辑器人工核对，遮挡与低置信度格会给出提示；无法识别行棋方（默认红先，可在编辑器切换）。该模型未附带明确开源许可，仅建议本地部署使用（模型不随仓库分发）。
+- 识别仅支持移动端入口；识别请求与引擎分析各自串行（识别占 CPU 但短暂），多 worker 部署时每个 worker 各加载一份识别模型（内存约增加 100MB）。
 - 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，完成一层后按「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（通常完成时间不超过其 ~1.5 倍）；若下一层实际耗时相对上一层暴涨，仍可能超出。
 - 并行分析下 `nodes` 仅统计主线程，且结果非确定性（同局面多次分析的分数/PV 可能微变，将杀步数可能 ±1 ply 级偏差）。
 - 显式线程数（含环境变量 `ENGINE_THREADS`）不按核数降级（夹逼 1..16），低核机器上设大值会线程超订；不设时自动取 `max(1, min(cpu_count-1, 8))`，需要完全串行可用 `ENGINE_THREADS=1`。容器内 `os.cpu_count()` 返回宿主机可见逻辑核数、不感知 cgroup CPU 配额，自动档在容器中也可能超订，容器部署建议显式设置 `ENGINE_THREADS`。
@@ -243,3 +259,4 @@ ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
 - 人机对战与局面编辑：`docs/plans/2026-09-22-ai-play-and-board-editor-design.md` / `docs/plans/2026-09-22-ai-play-and-board-editor-implementation.md`
 - Lazy SMP 并行搜索：`docs/plans/2026-09-22-lazy-smp-design.md` / `docs/plans/2026-09-22-lazy-smp-implementation.md`
 - 单用户密码认证：`docs/plans/2026-09-24-single-user-auth-design.md` / `docs/plans/2026-09-24-single-user-auth-implementation.md`
+- 移动端摄像头扫描棋盘：`docs/plans/2026-09-27-board-scan-design.md` / `docs/plans/2026-09-27-board-scan.md`

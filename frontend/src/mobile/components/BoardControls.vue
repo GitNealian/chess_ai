@@ -32,6 +32,9 @@
     <button type="button" data-test="ctrl-edit" :disabled="!canEdit" @click="emit('edit')">
       编辑
     </button>
+    <button type="button" data-test="ctrl-scan" :disabled="!canScan" @click="emit('scan')">
+      扫描
+    </button>
     <button
       v-if="showInfer"
       type="button"
@@ -52,18 +55,20 @@ defineProps({
   canNext: { type: Boolean, default: false },
   canEnd: { type: Boolean, default: false },
   canEdit: { type: Boolean, default: false },
+  canScan: { type: Boolean, default: false },
   showInfer: { type: Boolean, default: false },
   canInfer: { type: Boolean, default: false },
   showUndo: { type: Boolean, default: false },
   canUndo: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["start", "prev", "next", "end", "flip", "edit", "undo", "infer"]);
+const emit = defineEmits(["start", "prev", "next", "end", "flip", "edit", "scan", "undo", "infer"]);
 </script>
 
 <style scoped>
 .board-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

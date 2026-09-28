@@ -16,6 +16,7 @@
       :can-next="canForward"
       :can-end="canForward"
       :can-edit="true"
+      :can-scan="true"
       :show-undo="!isReview || engineSide !== 'none'"
       :can-undo="(!isReview || engineSide !== 'none') && moves.length > 0"
       :show-infer="isReview"
@@ -26,6 +27,7 @@
       @end="ply = moves.length"
       @flip="flipped = !flipped"
       @edit="editorOpen = true"
+      @scan="scanOpen = true"
       @undo="undo"
       @infer="inferOpen = true"
     />
@@ -42,6 +44,11 @@
       v-if="editorOpen"
       :pieces="pieces"
       @cancel="editorOpen = false"
+      @apply="onApply"
+    />
+    <MobileScanDialog
+      v-if="scanOpen"
+      @cancel="scanOpen = false"
       @apply="onApply"
     />
     <MobileInferenceDialog
@@ -158,6 +165,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import ChessBoard from "../../components/ChessBoard.vue";
 import BoardControls from "../components/BoardControls.vue";
 import MobileBoardEditor from "../components/MobileBoardEditor.vue";
+import MobileScanDialog from "../components/MobileScanDialog.vue";
 import MobileGamePicker from "../components/MobileGamePicker.vue";
 import MobileAnalysis from "../components/MobileAnalysis.vue";
 import MobileInferenceDialog from "../components/MobileInferenceDialog.vue";
@@ -170,6 +178,7 @@ const basePieces = ref(fenToPieces(INITIAL_FEN));
 const moves = ref([]);
 const ply = ref(0);
 const editorOpen = ref(false);
+const scanOpen = ref(false);
 const pickerOpen = ref(false);
 const settingsOpen = ref(false);
 const currentGame = ref(null);
@@ -409,6 +418,7 @@ function onApply(next, fen) {
   moves.value = [];
   ply.value = 0;
   editorOpen.value = false;
+  scanOpen.value = false;
   currentGame.value = null;
   favorited.value = false;
   publishFavoriteState();

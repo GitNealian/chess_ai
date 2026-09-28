@@ -122,4 +122,22 @@ describe("MobileBoardEditor", () => {
     await flushPromises();
     expect(wrapper.emitted("apply")[0][1]).toBe("custom-fen");
   });
+
+  it("默认标题为编辑局面且无提示", () => {
+    const wrapper = mount(MobileBoardEditor, { props: { pieces: onlyRedKing() } });
+    expect(wrapper.find(".editor-title").text()).toBe("编辑局面");
+    expect(wrapper.find("[data-test='editor-notice']").exists()).toBe(false);
+  });
+
+  it("可自定义标题与提示", () => {
+    const wrapper = mount(MobileBoardEditor, {
+      props: {
+        pieces: onlyRedKing(),
+        title: "识别结果",
+        notice: "识别可能有误，请核对后确认",
+      },
+    });
+    expect(wrapper.find(".editor-title").text()).toBe("识别结果");
+    expect(wrapper.find("[data-test='editor-notice']").text()).toBe("识别可能有误，请核对后确认");
+  });
 });

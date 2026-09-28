@@ -2,6 +2,7 @@ import os
 import secrets
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR") or os.path.join(BASE_DIR, "weights")
 
 
 class Config:
@@ -14,6 +15,7 @@ class Config:
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     PERMANENT_SESSION_LIFETIME = 7 * 24 * 3600
+    MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH") or 8 * 1024 * 1024)
 
 
 class TestConfig(Config):

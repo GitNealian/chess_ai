@@ -59,15 +59,21 @@ def create_app(config_class=Config):
     def health():
         return jsonify({"status": "ok"})
 
+    @app.errorhandler(413)
+    def payload_too_large(_error):
+        return jsonify({"error": "图片过大，请压缩后重试"}), 413
+
     from routes.auth import auth_bp
     from routes.engine import engine_bp
     from routes.games import games_bp
+    from routes.recognize import recognize_bp
     from routes.review import review_bp
 
     app.register_blueprint(games_bp, url_prefix="/api/games")
     app.register_blueprint(engine_bp, url_prefix="/api/engine")
     app.register_blueprint(review_bp, url_prefix="/api")
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
+    app.register_blueprint(recognize_bp, url_prefix="/api/recognize")
 
     public_api_paths = {
         "/api/health",

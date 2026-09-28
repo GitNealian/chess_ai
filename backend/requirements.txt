@@ -6,3 +6,5 @@ numba==0.67.0
 numpy==2.5.3
 Cython==3.3.0
 setuptools==84.0.0
+opencv-python-headless==5.0.0.93
+onnxruntime==1.30.0

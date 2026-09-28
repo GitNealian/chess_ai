@@ -3,10 +3,10 @@ import { mount } from "@vue/test-utils";
 import BoardControls from "../BoardControls.vue";
 
 describe("BoardControls", () => {
-  it("渲染 6 个控制按钮", () => {
+  it("渲染 7 个控制按钮", () => {
     const wrapper = mount(BoardControls);
     const buttons = wrapper.findAll("button");
-    expect(buttons).toHaveLength(6);
+    expect(buttons).toHaveLength(7);
     expect(buttons.map((b) => b.text())).toEqual([
       "开局",
       "后退",
@@ -14,6 +14,7 @@ describe("BoardControls", () => {
       "终局",
       "翻转",
       "编辑",
+      "扫描",
     ]);
   });
 
@@ -25,7 +26,7 @@ describe("BoardControls", () => {
 
   it("canXxx 为 false 时对应按钮禁用", () => {
     const wrapper = mount(BoardControls);
-    for (const key of ["start", "prev", "next", "end", "edit"]) {
+    for (const key of ["start", "prev", "next", "end", "edit", "scan"]) {
       expect(wrapper.find(`[data-test='ctrl-${key}']`).attributes("disabled")).toBeDefined();
     }
   });
@@ -38,9 +39,10 @@ describe("BoardControls", () => {
         canNext: true,
         canEnd: true,
         canEdit: true,
+        canScan: true,
       },
     });
-    for (const key of ["start", "prev", "next", "end", "edit"]) {
+    for (const key of ["start", "prev", "next", "end", "edit", "scan"]) {
       await wrapper.find(`[data-test='ctrl-${key}']`).trigger("click");
       expect(wrapper.emitted(key)).toHaveLength(1);
     }

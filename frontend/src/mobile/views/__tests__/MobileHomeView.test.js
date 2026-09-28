@@ -6,6 +6,7 @@ import App from "../../../App.vue";
 import router from "../../../router";
 import ChessBoard from "../../../components/ChessBoard.vue";
 import MobileBoardEditor from "../../components/MobileBoardEditor.vue";
+import MobileScanDialog from "../../components/MobileScanDialog.vue";
 import { analyzeStream, api, intentStream } from "../../../api";
 import { INITIAL_FEN } from "../../../utils/chess";
 import MobileHomeView from "../MobileHomeView.vue";
@@ -27,6 +28,7 @@ vi.mock("../../../api", () => ({
     deleteGame: vi.fn(),
     validateMove: vi.fn(),
     bestMove: vi.fn(),
+    recognize: vi.fn(),
   },
   analyzeStream: vi.fn(),
   intentStream: vi.fn(),
@@ -39,6 +41,7 @@ describe("MobileHomeView", () => {
     intentStream.mockReset();
     api.validateMove.mockReset();
     api.bestMove.mockReset();
+    api.recognize.mockReset();
   });
 
   async function openPicker() {
@@ -60,7 +63,7 @@ describe("MobileHomeView", () => {
   it("棋盘下方渲染控制栏", () => {
     const wrapper = mount(MobileHomeView);
     const labels = wrapper.findAll(".board-controls button").map((b) => b.text());
-    expect(labels).toEqual(["开局", "后退", "前进", "终局", "翻转", "悔棋", "编辑"]);
+    expect(labels).toEqual(["开局", "后退", "前进", "终局", "翻转", "悔棋", "编辑", "扫描"]);
   });
 
   it("点击翻转后棋盘翻转", async () => {
@@ -83,6 +86,21 @@ describe("MobileHomeView", () => {
     await wrapper.findComponent(MobileBoardEditor).vm.$emit("apply", []);
     expect(wrapper.findComponent(ChessBoard).props("position").pieces).toHaveLength(0);
     expect(wrapper.find("[data-test='editor-card']").exists()).toBe(false);
+  });
+
+  it("点扫描打开扫描弹窗", async () => {
+    const wrapper = mount(MobileHomeView);
+    expect(wrapper.find("[data-test='scan-card']").exists()).toBe(false);
+    await wrapper.find("[data-test='ctrl-scan']").trigger("click");
+    expect(wrapper.find("[data-test='scan-card']").exists()).toBe(true);
+  });
+
+  it("扫描应用后首页棋盘更新并关闭弹窗", async () => {
+    const wrapper = mount(MobileHomeView);
+    await wrapper.find("[data-test='ctrl-scan']").trigger("click");
+    await wrapper.findComponent(MobileScanDialog).vm.$emit("apply", []);
+    expect(wrapper.findComponent(ChessBoard).props("position").pieces).toHaveLength(0);
+    expect(wrapper.find("[data-test='scan-card']").exists()).toBe(false);
   });
 
   it("点打开显示棋谱选择器", async () => {

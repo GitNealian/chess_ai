@@ -5,7 +5,11 @@ import MobilePieceChooser from "./MobilePieceChooser.vue";
 import { LABELS } from "../../utils/chess";
 import { api } from "../../api";
 
-const props = defineProps({ pieces: { type: Array, default: () => [] } });
+const props = defineProps({
+  pieces: { type: Array, default: () => [] },
+  title: { type: String, default: "编辑局面" },
+  notice: { type: String, default: "" },
+});
 const emit = defineEmits(["cancel", "apply"]);
 
 const draft = ref(props.pieces.map((p) => ({ ...p })));
@@ -101,7 +105,8 @@ async function apply() {
 <template>
   <div class="editor-mask" data-test="editor-mask" @click.self="clearSelection">
     <div class="editor-card" data-test="editor-card">
-      <h3 class="editor-title">编辑局面</h3>
+      <h3 class="editor-title">{{ title }}</h3>
+      <p v-if="notice" class="editor-notice" data-test="editor-notice">{{ notice }}</p>
       <ChessBoard :position="{ pieces: draft }" :selected="selected" @cell-click="onCellClick" />
       <MobilePieceChooser :pieces="draft" :selected="palette" @select="onChooserSelect" />
       <div class="editor-foot">
@@ -185,6 +190,13 @@ async function apply() {
 
 .editor-title {
   margin: 0;
+}
+
+.editor-notice {
+  margin: 0;
+  color: #b45309;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .editor-clear {
