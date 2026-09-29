@@ -218,7 +218,7 @@ describe("MobileGamePicker", () => {
     api.reviewQueue.mockResolvedValue({
       items: [
         {
-          game: { id: 1, name: "新局", red_player: "红", black_player: "黑" },
+          game: { id: 1, name: "甲局", red_player: "红", black_player: "黑" },
           due_date: "2026-09-29",
           is_new: true,
         },
