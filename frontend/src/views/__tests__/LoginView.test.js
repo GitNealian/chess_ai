@@ -39,21 +39,21 @@ describe("LoginView 登录后回跳", () => {
     expect(replace).toHaveBeenCalledWith("/m");
   });
 
-  it("无 redirect 时回退 /library", async () => {
+  it("无 redirect 时回退 /", async () => {
     await submit();
-    expect(replace).toHaveBeenCalledWith("/library");
+    expect(replace).toHaveBeenCalledWith("/");
   });
 
-  it("redirect 为 //evil.com 等非法值时回退 /library", async () => {
+  it("redirect 为 //evil.com 等非法值时回退 /", async () => {
     query = { redirect: "//evil.com" };
     await submit();
-    expect(replace).toHaveBeenCalledWith("/library");
+    expect(replace).toHaveBeenCalledWith("/");
   });
 
-  it("redirect 为绝对外链时回退 /library", async () => {
+  it("redirect 为绝对外链时回退 /", async () => {
     query = { redirect: "https://evil.com" };
     await submit();
-    expect(replace).toHaveBeenCalledWith("/library");
+    expect(replace).toHaveBeenCalledWith("/");
   });
 
   it("登录失败显示错误且不跳转", async () => {

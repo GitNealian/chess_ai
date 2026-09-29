@@ -3,21 +3,15 @@ import { getActivePinia } from "pinia";
 import { useAuthStore } from "../stores/auth";
 
 const routes = [
-  { path: "/", redirect: "/library" },
-  { path: "/login", component: () => import("../views/LoginView.vue") },
-  { path: "/library", component: () => import("../views/LibraryView.vue") },
-  { path: "/editor/:id?", component: () => import("../views/EditorView.vue") },
-  { path: "/practice/:id", component: () => import("../views/PracticeView.vue") },
-  { path: "/play", component: () => import("../views/PlayView.vue") },
-  { path: "/review", component: () => import("../views/ReviewView.vue") },
   {
-    path: "/m",
+    path: "/",
     component: () => import("../mobile/layouts/MobileLayout.vue"),
     children: [
       { path: "", component: () => import("../mobile/views/MobileHomeView.vue") },
     ],
   },
-  { path: "/m/:pathMatch(.*)*", redirect: "/m" },
+  { path: "/login", component: () => import("../views/LoginView.vue") },
+  { path: "/:pathMatch(.*)*", redirect: "/" },
 ];
 
 const router = createRouter({ history: createWebHistory(), routes });
@@ -29,9 +23,9 @@ router.beforeEach(async (to) => {
   await auth.ensureReady();
   if (auth.error) return true;
   if (!auth.authRequired) {
-    return to.path === "/login" ? "/library" : true;
+    return to.path === "/login" ? "/" : true;
   }
-  if (to.path === "/login") return auth.authenticated ? "/library" : true;
+  if (to.path === "/login") return auth.authenticated ? "/" : true;
   if (!auth.authenticated) {
     return { path: "/login", query: { redirect: to.fullPath } };
   }

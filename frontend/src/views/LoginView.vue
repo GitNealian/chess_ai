@@ -35,7 +35,7 @@ async function onSubmit() {
     const redirect =
       typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//")
         ? raw
-        : "/library";
+        : "/";
     router.replace(redirect);
   } catch (err) {
     error.value = err?.response?.data?.detail || err?.response?.data?.error || "登录失败";

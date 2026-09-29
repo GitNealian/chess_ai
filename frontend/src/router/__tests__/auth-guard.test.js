@@ -19,22 +19,22 @@ describe("auth 路由守卫", () => {
     expect(router.currentRoute.value.path).toBe("/login");
   });
 
-  it("需要认证且未登录时访问 /library 被重定向到 /login", async () => {
+  it("需要认证且未登录时访问根路径被重定向到 /login 且带来源", async () => {
     api.authMe.mockResolvedValue({ auth_required: true, authenticated: false });
-    await router.push(`/library?t=${Date.now()}`);
+    await router.push("/");
     expect(router.currentRoute.value.path).toBe("/login");
+    expect(router.currentRoute.value.query.redirect).toBe("/");
   });
 
-  it("认证关闭时 /login 重定向到 /library", async () => {
+  it("认证关闭时 /login 重定向到根路径", async () => {
     api.authMe.mockResolvedValue({ auth_required: false, authenticated: false });
     await router.push(`/login?t=${Date.now()}`);
-    expect(router.currentRoute.value.path).toBe("/library");
+    expect(router.currentRoute.value.path).toBe("/");
   });
 
-  it("需要认证且未登录时访问 /m 被重定向到 /login 且带来源", async () => {
-    api.authMe.mockResolvedValue({ auth_required: true, authenticated: false });
-    await router.push("/m");
-    expect(router.currentRoute.value.path).toBe("/login");
-    expect(router.currentRoute.value.query.redirect).toBe("/m");
+  it("访问旧路径 /m 会被重定向到根路径", async () => {
+    api.authMe.mockResolvedValue({ auth_required: false, authenticated: false });
+    await router.push(`/m?t=${Date.now()}`);
+    expect(router.currentRoute.value.path).toBe("/");
   });
 });
