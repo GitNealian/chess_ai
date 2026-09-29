@@ -11,6 +11,7 @@
       />
     </div>
     <BoardControls
+      :mode="reciteMode ? 'recite' : 'browse'"
       :flipped="flipped"
       :can-start="canBack"
       :can-prev="canBack"
@@ -20,8 +21,10 @@
       :can-scan="true"
       :show-undo="!isReview || engineSide !== 'none'"
       :can-undo="(!isReview || engineSide !== 'none') && moves.length > 0"
-      :show-infer="isReview"
-      :can-infer="isReview"
+      :show-infer="isReview && !reciteMode"
+      :can-infer="isReview && !reciteMode"
+      :show-nav="showNav"
+      :show-recite="isReview && !reciteMode && moves.length > ply"
       @start="ply = 0"
       @prev="ply -= 1"
       @next="ply += 1"
@@ -31,9 +34,11 @@
       @scan="scanOpen = true"
       @undo="undo"
       @infer="inferOpen = true"
+      @recite="openReciteConfirm"
     />
     <p v-if="hint" class="mobile-home__hint" data-test="hint">{{ hint }}</p>
     <MobileAnalysis
+      v-if="!reciteMode"
       :initial-fen="initialFen"
       :moves="moveSlice"
       :score="settings.score"
@@ -58,6 +63,36 @@
       @close="inferOpen = false"
     />
     <MobileGamePicker v-if="pickerOpen" @select="onOpenGame" @cancel="pickerOpen = false" />
+    <div
+      v-if="reciteConfirmOpen"
+      class="settings-mask"
+      data-test="recite-confirm"
+      @click.self="reciteConfirmOpen = false"
+    >
+      <div class="settings-card">
+        <h3 class="settings-title">{{ currentGame && currentGame.name }}</h3>
+        <p class="recite-meta" data-test="recite-meta">{{ reciteMeta }}</p>
+        <p class="recite-range" data-test="recite-range">
+          将从第 {{ ply }} 步开始，背到第 {{ moves.length }} 步（共 {{ moves.length - ply }} 步）
+        </p>
+        <div class="settings-actions">
+          <button
+            v-if="ply > 0"
+            type="button"
+            data-test="recite-from-start"
+            @click="confirmRecite(true)"
+          >
+            从头背
+          </button>
+          <button type="button" data-test="recite-from-here" @click="confirmRecite(false)">
+            {{ ply > 0 ? `从第 ${ply} 步起背` : "开始背谱" }}
+          </button>
+          <button type="button" data-test="recite-cancel" @click="reciteConfirmOpen = false">
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
     <div
       v-if="settingsOpen"
       class="settings-mask"
@@ -187,6 +222,14 @@ const settings = reactive(loadSettings());
 const initialFen = ref(INITIAL_FEN);
 const analysisArrows = ref([]);
 const inferOpen = ref(false);
+const reciteMode = ref(false);
+const reciteConfirmOpen = ref(false);
+const reciteStartPly = ref(0);
+const reciteMistakes = ref(0);
+const reciteRevealed = ref(false);
+const reciteStartedAt = ref(0);
+const navSource = ref(null);
+const COLLECTION_PREFIX = "古谱 · ";
 
 const engineSide = ref("none");
 const selected = ref(null);
@@ -215,6 +258,14 @@ const position = computed(() => ({ pieces: pieces.value }));
 const canBack = computed(() => ply.value > 0);
 const canForward = computed(() => ply.value < moves.value.length);
 const moveSlice = computed(() => moves.value.slice(0, ply.value));
+
+const reciteMeta = computed(() => {
+  const game = currentGame.value || {};
+  const players = [game.red_player, game.black_player].filter(Boolean).join(" vs ");
+  return [players, game.event, game.result, game.category].filter(Boolean).join(" · ");
+});
+
+const showNav = computed(() => !!currentGame.value && !!navSource.value);
 
 const sideToMove = computed(() => sideAt(ply.value));
 const lastInfo = computed(() => moves.value[ply.value - 1] || null);
@@ -352,7 +403,39 @@ function onEngineSide(value) {
   }
 }
 
-function onOpenGame(game) {
+function normalizeSource(game, source) {
+  if (!source) return null;
+  if (source.type !== "recent") return source;
+  if ((game.category || "").startsWith(COLLECTION_PREFIX)) {
+    return { type: "collection", collection: game.category.slice(COLLECTION_PREFIX.length) };
+  }
+  if (game.event && game.event !== "NA") {
+    return { type: "event", event: game.event };
+  }
+  return null;
+}
+
+function openReciteConfirm() {
+  if (!currentGame.value || ply.value >= moves.value.length) return;
+  reciteConfirmOpen.value = true;
+}
+
+function confirmRecite(fromStart) {
+  reciteStartPly.value = fromStart ? 0 : ply.value;
+  ply.value = reciteStartPly.value;
+  reciteMistakes.value = 0;
+  reciteRevealed.value = false;
+  reciteStartedAt.value = Date.now();
+  reciteMode.value = true;
+  reciteConfirmOpen.value = false;
+  selected.value = null;
+  hint.value = "";
+  moveToken += 1;
+  engineToken += 1;
+  engineThinking.value = false;
+}
+
+function onOpenGame(game, source = null) {
   const fen = game.initial_fen || INITIAL_FEN;
   basePieces.value = fenToPieces(fen);
   initialFen.value = fen;
@@ -361,8 +444,11 @@ function onOpenGame(game) {
   pickerOpen.value = false;
   currentGame.value = game;
   favorited.value = !!game.favorited;
+  navSource.value = normalizeSource(game, source);
   engineSide.value = "none";
   inferOpen.value = false;
+  reciteMode.value = false;
+  reciteConfirmOpen.value = false;
   engineToken += 1;
   moveToken += 1;
   engineThinking.value = false;
@@ -405,6 +491,9 @@ function onApply(next, fen) {
   scanOpen.value = false;
   currentGame.value = null;
   favorited.value = false;
+  navSource.value = null;
+  reciteMode.value = false;
+  reciteConfirmOpen.value = false;
   publishFavoriteState();
   engineToken += 1;
   moveToken += 1;
@@ -544,5 +633,16 @@ onUnmounted(() => {
   background: #fff;
   color: #7a3b2e;
   cursor: pointer;
+}
+
+.recite-meta {
+  margin: 0;
+  color: #6b5a45;
+  font-size: 13px;
+}
+
+.recite-range {
+  margin: 0;
+  color: #7a3b2e;
 }
 </style>

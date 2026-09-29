@@ -7,6 +7,7 @@ import router from "../../../router";
 import ChessBoard from "../../../components/ChessBoard.vue";
 import MobileBoardEditor from "../../components/MobileBoardEditor.vue";
 import MobileScanDialog from "../../components/MobileScanDialog.vue";
+import MobileGamePicker from "../../components/MobileGamePicker.vue";
 import { analyzeStream, api, intentStream } from "../../../api";
 import { INITIAL_FEN } from "../../../utils/chess";
 import MobileHomeView from "../MobileHomeView.vue";
@@ -390,6 +391,89 @@ describe("MobileHomeView", () => {
     await loadGame(wrapper, { id: 10, name: "局", initial_fen: INITIAL_FEN, moves: [] });
     await wrapper.find("[data-test='ctrl-infer']").trigger("click");
     expect(wrapper.find("[data-test='infer-card']").exists()).toBe(true);
+  });
+});
+
+const RECITE_GAME = {
+  id: 1,
+  name: "测试谱",
+  initial_fen: INITIAL_FEN,
+  moves: [
+    { x1: 0, y1: 3, x2: 0, y2: 4 },
+    { x1: 0, y1: 6, x2: 0, y2: 5 },
+  ],
+  red_player: "红方甲",
+  black_player: "黑方乙",
+  event: "测试赛",
+  result: "红胜",
+  category: "古谱 · 测试",
+  favorited: false,
+};
+
+async function openGameWithSource(
+  wrapper,
+  game = RECITE_GAME,
+  source = { type: "collection", collection: "测试" }
+) {
+  window.dispatchEvent(new CustomEvent("mobile-open"));
+  await flushPromises();
+  wrapper.findComponent(MobileGamePicker).vm.$emit("select", game, source);
+  await flushPromises();
+}
+
+describe("MobileHomeView 背谱", () => {
+  it("打开棋谱后显示背谱按钮，点击弹出确认条", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    const recite = wrapper.find("[data-test='ctrl-recite']");
+    expect(recite.exists()).toBe(true);
+    await recite.trigger("click");
+    expect(wrapper.find("[data-test='recite-confirm']").exists()).toBe(true);
+    expect(wrapper.find("[data-test='recite-meta']").text()).toContain("红方甲");
+    expect(wrapper.find("[data-test='recite-meta']").text()).toContain("测试赛");
+  });
+
+  it("取消确认条不进入背谱", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-cancel']").trigger("click");
+    expect(wrapper.find("[data-test='recite-confirm']").exists()).toBe(false);
+    expect(wrapper.find("[data-test='ctrl-reveal']").exists()).toBe(false);
+  });
+
+  it("从头背进入背谱态，控制栏切换为背谱按钮组", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-next']").trigger("click");
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-start']").trigger("click");
+    expect(wrapper.find("[data-test='ctrl-reveal']").exists()).toBe(true);
+    expect(wrapper.find("[data-test='ctrl-exit-recite']").exists()).toBe(true);
+    expect(wrapper.find("[data-test='ctrl-start']").exists()).toBe(false);
+  });
+
+  it("翻到终局后背谱按钮不显示", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-end']").trigger("click");
+    expect(wrapper.find("[data-test='ctrl-recite']").exists()).toBe(false);
+  });
+
+  it("最近来源的有分类棋谱转换为棋谱集来源并显示导航", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper, RECITE_GAME, { type: "recent" });
+    expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(true);
+  });
+
+  it("最近来源的无分类棋谱不显示导航", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(
+      wrapper,
+      { ...RECITE_GAME, category: "", event: "" },
+      { type: "recent" }
+    );
+    expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(false);
   });
 });
 
