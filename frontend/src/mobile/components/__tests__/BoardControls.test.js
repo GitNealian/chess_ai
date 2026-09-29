@@ -115,12 +115,25 @@ describe("BoardControls", () => {
 
   it("内容溢出时显示向右滚动箭头", async () => {
     const wrapper = mount(BoardControls, { attachTo: document.body });
+    expect(wrapper.find("[data-test='ctrl-scroll-right']").exists()).toBe(false);
     const scroller = wrapper.find(".board-controls__scroller").element;
     Object.defineProperty(scroller, "clientWidth", { value: 100, configurable: true });
     Object.defineProperty(scroller, "scrollWidth", { value: 300, configurable: true });
     await scroller.dispatchEvent(new Event("scroll"));
     await flushPromises();
     expect(wrapper.find("[data-test='ctrl-scroll-right']").exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("向左滚动后显示左箭头", async () => {
+    const wrapper = mount(BoardControls, { attachTo: document.body });
+    const scroller = wrapper.find(".board-controls__scroller").element;
+    Object.defineProperty(scroller, "clientWidth", { value: 100, configurable: true });
+    Object.defineProperty(scroller, "scrollWidth", { value: 300, configurable: true });
+    Object.defineProperty(scroller, "scrollLeft", { value: 50, configurable: true });
+    await scroller.dispatchEvent(new Event("scroll"));
+    await flushPromises();
+    expect(wrapper.find("[data-test='ctrl-scroll-left']").exists()).toBe(true);
     wrapper.unmount();
   });
 });
