@@ -5,7 +5,7 @@ import BoardControls from "../BoardControls.vue";
 describe("BoardControls", () => {
   it("渲染 7 个控制按钮", () => {
     const wrapper = mount(BoardControls);
-    const buttons = wrapper.findAll("button");
+    const buttons = wrapper.findAll(".board-controls__track button");
     expect(buttons).toHaveLength(7);
     expect(buttons.map((b) => b.text())).toEqual([
       "开局",
@@ -64,5 +64,52 @@ describe("BoardControls", () => {
   it("showInfer 缺省不渲染推演按钮", () => {
     const wrapper = mount(BoardControls);
     expect(wrapper.find("[data-test='ctrl-infer']").exists()).toBe(false);
+  });
+
+  it("showNav 为 true 时渲染上一盘/下一盘并发出事件", async () => {
+    const wrapper = mount(BoardControls, { props: { showNav: true } });
+    const prev = wrapper.find("[data-test='ctrl-prev-game']");
+    const next = wrapper.find("[data-test='ctrl-next-game']");
+    expect(prev.exists()).toBe(true);
+    expect(next.exists()).toBe(true);
+    await prev.trigger("click");
+    await next.trigger("click");
+    expect(wrapper.emitted("prev-game")).toHaveLength(1);
+    expect(wrapper.emitted("next-game")).toHaveLength(1);
+  });
+
+  it("showNav 缺省不渲染上一盘/下一盘", () => {
+    const wrapper = mount(BoardControls);
+    expect(wrapper.find("[data-test='ctrl-prev-game']").exists()).toBe(false);
+    expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(false);
+  });
+
+  it("showRecite 为 true 时渲染背谱按钮并发出 recite", async () => {
+    const wrapper = mount(BoardControls, { props: { showRecite: true } });
+    const recite = wrapper.find("[data-test='ctrl-recite']");
+    expect(recite.exists()).toBe(true);
+    await recite.trigger("click");
+    expect(wrapper.emitted("recite")).toHaveLength(1);
+  });
+
+  it("showRecite 缺省不渲染背谱按钮", () => {
+    const wrapper = mount(BoardControls);
+    expect(wrapper.find("[data-test='ctrl-recite']").exists()).toBe(false);
+  });
+
+  it("mode 为 recite 时只渲染导航与背谱操作按钮", async () => {
+    const wrapper = mount(BoardControls, { props: { mode: "recite", showNav: true } });
+    const buttons = wrapper.findAll(".board-controls__track button");
+    expect(buttons.map((b) => b.text())).toEqual([
+      "上一盘",
+      "下一盘",
+      "翻转",
+      "看答案",
+      "退出背谱",
+    ]);
+    await wrapper.find("[data-test='ctrl-reveal']").trigger("click");
+    await wrapper.find("[data-test='ctrl-exit-recite']").trigger("click");
+    expect(wrapper.emitted("reveal")).toHaveLength(1);
+    expect(wrapper.emitted("exit-recite")).toHaveLength(1);
   });
 });
