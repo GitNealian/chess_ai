@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import BoardControls from "../BoardControls.vue";
 
 describe("BoardControls", () => {
@@ -111,5 +111,16 @@ describe("BoardControls", () => {
     await wrapper.find("[data-test='ctrl-exit-recite']").trigger("click");
     expect(wrapper.emitted("reveal")).toHaveLength(1);
     expect(wrapper.emitted("exit-recite")).toHaveLength(1);
+  });
+
+  it("内容溢出时显示向右滚动箭头", async () => {
+    const wrapper = mount(BoardControls, { attachTo: document.body });
+    const scroller = wrapper.find(".board-controls__scroller").element;
+    Object.defineProperty(scroller, "clientWidth", { value: 100, configurable: true });
+    Object.defineProperty(scroller, "scrollWidth", { value: 300, configurable: true });
+    await scroller.dispatchEvent(new Event("scroll"));
+    await flushPromises();
+    expect(wrapper.find("[data-test='ctrl-scroll-right']").exists()).toBe(true);
+    wrapper.unmount();
   });
 });

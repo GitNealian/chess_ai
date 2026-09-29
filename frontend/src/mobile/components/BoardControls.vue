@@ -6,7 +6,7 @@
       class="board-controls__arrow board-controls__arrow--left"
       data-test="ctrl-scroll-left"
       aria-label="向左滚动"
-      @click="scrollBy(-1)"
+      @click="scrollPage(-1)"
     >
       ‹
     </button>
@@ -120,7 +120,7 @@
       class="board-controls__arrow board-controls__arrow--right"
       data-test="ctrl-scroll-right"
       aria-label="向右滚动"
-      @click="scrollBy(1)"
+      @click="scrollPage(1)"
     >
       ›
     </button>
@@ -176,7 +176,7 @@ function updateArrows() {
   canRight.value = Math.ceil(el.scrollLeft + el.clientWidth) < el.scrollWidth - 1;
 }
 
-function scrollBy(direction) {
+function scrollPage(direction) {
   const el = scroller.value;
   if (!el) return;
   el.scrollBy({ left: direction * Math.round(el.clientWidth * 0.8), behavior: "smooth" });
@@ -255,11 +255,13 @@ watch(
 }
 
 .board-controls__arrow {
-  flex: 0 0 auto;
-  width: 28px;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 32px;
   padding: 0;
   border: none;
-  background: rgba(250, 246, 238, 0.95);
   color: #7a3b2e;
   font-size: 22px;
   line-height: 1;
@@ -267,10 +269,12 @@ watch(
 }
 
 .board-controls__arrow--left {
-  border-radius: 6px 0 0 6px;
+  left: 0;
+  background: linear-gradient(to right, rgba(250, 246, 238, 0.98) 60%, rgba(250, 246, 238, 0));
 }
 
 .board-controls__arrow--right {
-  border-radius: 0 6px 6px 0;
+  right: 0;
+  background: linear-gradient(to left, rgba(250, 246, 238, 0.98) 60%, rgba(250, 246, 238, 0));
 }
 </style>
