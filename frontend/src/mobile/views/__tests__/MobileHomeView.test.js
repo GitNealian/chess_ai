@@ -287,7 +287,9 @@ describe("MobileHomeView", () => {
     await flushPromises();
     expect(api.bestMove).toHaveBeenCalledTimes(1);
     expect(api.bestMove.mock.calls[0][0]).toMatchObject({ level: "normal" });
-    expect(wrapper.find("[data-test='status']").text()).toContain("黑方走棋");
+    const board = wrapper.findComponent(ChessBoard);
+    expect(board.props("lastMove")).toMatchObject({ x2: 0, y2: 4 });
+    expect(wrapper.find("[data-test='status']").exists()).toBe(false);
     await wrapper.find("[data-cell='0-9']").trigger("click");
     await wrapper.find("[data-cell='0-8']").trigger("click");
     await flushPromises();
@@ -307,7 +309,7 @@ describe("MobileHomeView", () => {
     await flushPromises();
     expect(wrapper.find("[data-test='ctrl-undo']").exists()).toBe(true);
     await wrapper.find("[data-test='ctrl-undo']").trigger("click");
-    expect(wrapper.find("[data-test='status']").text()).toContain("红方走棋");
+    expect(wrapper.findComponent(ChessBoard).props("lastMove")).toBeFalsy();
   });
 
   it("打开新棋谱后引擎执子重置为不启用", async () => {
@@ -365,20 +367,25 @@ describe("MobileHomeView", () => {
 });
 
 describe("移动端路由", () => {
-  it("/m 解析到移动端布局与首页", () => {
-    const resolved = router.resolve("/m");
+  it("/ 解析到移动端布局与首页", () => {
+    const resolved = router.resolve("/");
     expect(resolved.matched).toHaveLength(2);
   });
 
-  it("/m 下的未知路径回落到 /m", async () => {
-    await router.push("/m/unknown");
-    expect(router.currentRoute.value.path).toBe("/m");
+  it("未知路径回落到 /", async () => {
+    await router.push(`/unknown?t=${Date.now()}`);
+    expect(router.currentRoute.value.path).toBe("/");
+  });
+
+  it("旧路径 /m 重定向到 /", async () => {
+    await router.push(`/m?t=${Date.now()}`);
+    expect(router.currentRoute.value.path).toBe("/");
   });
 });
 
-describe("App 按路由前缀分流 shell", () => {
-  it("/m 下只渲染移动端 shell，不渲染旧 topbar/tabbar", async () => {
-    await router.push("/m");
+describe("App 渲染移动端 shell", () => {
+  it("/ 下只渲染移动端 shell，不渲染旧 topbar/tabbar", async () => {
+    await router.push(`/?t=${Date.now()}`);
     await router.isReady();
     const wrapper = mount(App, {
       global: { plugins: [createPinia(), router] },
@@ -386,21 +393,7 @@ describe("App 按路由前缀分流 shell", () => {
     await flushPromises();
 
     expect(wrapper.find(".mobile-topbar").exists()).toBe(true);
-    expect(wrapper.find(".mobile-tabbar").exists()).toBe(false);
     expect(wrapper.find(".topbar").exists()).toBe(false);
     expect(wrapper.find(".tabbar").exists()).toBe(false);
-  });
-
-  it("非 /m 路径仍渲染旧 topbar/tabbar", async () => {
-    await router.push("/library");
-    await router.isReady();
-    const wrapper = mount(App, {
-      global: { plugins: [createPinia(), router] },
-    });
-    await flushPromises();
-
-    expect(wrapper.find(".topbar").exists()).toBe(true);
-    expect(wrapper.find(".tabbar").exists()).toBe(true);
-    expect(wrapper.find(".mobile-topbar").exists()).toBe(false);
   });
 });

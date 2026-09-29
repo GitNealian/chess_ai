@@ -4,6 +4,7 @@
       <ChessBoard
         :position="position"
         :selected="selected"
+        :last-move="lastInfo"
         :arrows="analysisArrows"
         :flipped="flipped"
         @cell-click="onCellClick"
@@ -31,7 +32,6 @@
       @undo="undo"
       @infer="inferOpen = true"
     />
-    <p v-if="statusText" class="mobile-home__status" data-test="status">{{ statusText }}</p>
     <p v-if="hint" class="mobile-home__hint" data-test="hint">{{ hint }}</p>
     <MobileAnalysis
       :initial-fen="initialFen"
@@ -218,26 +218,10 @@ const moveSlice = computed(() => moves.value.slice(0, ply.value));
 
 const sideToMove = computed(() => sideAt(ply.value));
 const lastInfo = computed(() => moves.value[ply.value - 1] || null);
-const currentCheck = computed(() => Boolean(lastInfo.value?.check));
 const gameOver = computed(() => lastInfo.value?.gameOver || null);
 const isEngineTurn = computed(
   () => engineSide.value !== "none" && sideToMove.value === engineSide.value
 );
-const isPlayerTurn = computed(
-  () => engineSide.value !== "none" && sideToMove.value !== engineSide.value
-);
-
-const statusText = computed(() => {
-  if (isReview.value) return "";
-  if (gameOver.value) {
-    const winner = gameOver.value.winner === "red" ? "红方" : "黑方";
-    return `${winner}胜`;
-  }
-  if (engineThinking.value) return "引擎思考中…";
-  if (ply.value !== moves.value.length) return "回放中，前进到最后可继续走子";
-  const side = sideToMove.value === "red" ? "红方" : "黑方";
-  return currentCheck.value ? `${side}走棋（被将军）` : `${side}走棋`;
-});
 
 function movePayload() {
   return moves.value
@@ -473,12 +457,6 @@ onUnmounted(() => {
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(90, 61, 36, 0.18);
-}
-
-.mobile-home__status {
-  margin: 0;
-  font-weight: 600;
-  color: #7a3b2e;
 }
 
 .mobile-home__hint {

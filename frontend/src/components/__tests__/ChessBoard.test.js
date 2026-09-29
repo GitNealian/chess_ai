@@ -130,4 +130,30 @@ describe("ChessBoard", () => {
     expect(flippedFrame.x).toBe(normalFrame.x);
     expect(flippedFrame.y).toBe(normalFrame.y);
   });
+
+  it("渲染上一步走棋痕迹：起点与终点高亮", () => {
+    const wrapper = mount(ChessBoard, {
+      props: { position, lastMove: { x1: 0, y1: 3, x2: 0, y2: 4 } },
+    });
+    expect(wrapper.find("[data-test='last-move-from']").exists()).toBe(true);
+    expect(wrapper.find("[data-test='last-move-to']").exists()).toBe(true);
+  });
+
+  it("无 lastMove 时不渲染走棋痕迹", () => {
+    const wrapper = mount(ChessBoard, { props: { position } });
+    expect(wrapper.find("[data-test='last-move-from']").exists()).toBe(false);
+    expect(wrapper.find("[data-test='last-move-to']").exists()).toBe(false);
+  });
+
+  it("走棋痕迹随 flipped 镜像坐标", () => {
+    const lastMove = { x1: 0, y1: 3, x2: 8, y2: 6 };
+    const normal = mount(ChessBoard, { props: { position, lastMove } });
+    const flipped = mount(ChessBoard, {
+      props: { position, lastMove, flipped: true },
+    });
+    const normalFrom = normal.find("[data-test='last-move-from']").attributes();
+    const flippedFrom = flipped.find("[data-test='last-move-from']").attributes();
+    expect(Number(normalFrom.x)).not.toBe(Number(flippedFrom.x));
+    expect(Number(normalFrom.y)).not.toBe(Number(flippedFrom.y));
+  });
 });

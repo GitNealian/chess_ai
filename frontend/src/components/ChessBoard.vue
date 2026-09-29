@@ -4,6 +4,7 @@ import { computed } from "vue";
 const props = defineProps({
   position: { type: Object, required: true },
   selected: { type: Object, default: null },
+  lastMove: { type: Object, default: null },
   legalTargets: { type: Array, default: () => [] },
   arrows: { type: Array, default: () => [] },
   flipped: { type: Boolean, default: false },
@@ -170,6 +171,31 @@ function onSvgClick(event) {
     >
       汉 界
     </text>
+
+    <rect
+      v-if="lastMove"
+      data-test="last-move-from"
+      :x="cellX(lastMove.x1) - gap / 2 + 3"
+      :y="cellY(lastMove.y1) - gap / 2 + 3"
+      :width="gap - 6"
+      :height="gap - 6"
+      fill="rgba(37,99,235,0.12)"
+      stroke="#2563eb"
+      stroke-width="2"
+      stroke-dasharray="7 5"
+    />
+
+    <rect
+      v-if="lastMove"
+      data-test="last-move-to"
+      :x="cellX(lastMove.x2) - gap / 2 + 3"
+      :y="cellY(lastMove.y2) - gap / 2 + 3"
+      :width="gap - 6"
+      :height="gap - 6"
+      fill="rgba(22,163,74,0.2)"
+      stroke="#16a34a"
+      stroke-width="3"
+    />
 
     <rect
       v-if="selected"
