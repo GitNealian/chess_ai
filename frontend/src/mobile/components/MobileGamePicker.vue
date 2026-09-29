@@ -5,6 +5,7 @@ import MobilePager from "./MobilePager.vue";
 
 const emit = defineEmits(["select", "cancel"]);
 const PAGE_SIZE = 20;
+const REVIEW_LIMIT = 200;
 
 const view = ref("menu");
 const scope = ref("tournament");
@@ -29,9 +30,9 @@ async function load() {
       items.value = data.items || [];
       total.value = data.total || 0;
     } else if (view.value === "review") {
-      const data = await api.reviewQueue({ limit: 200 });
+      const data = await api.reviewQueue({ limit: REVIEW_LIMIT });
       items.value = data.items || [];
-      total.value = items.value.length;
+      total.value = data.count || items.value.length;
     } else if (view.value === "games") {
       const data = await api.listGames({
         scope: scope.value,
@@ -66,7 +67,6 @@ function openCategory(name) {
     scope.value = "tournament";
     view.value = "events";
   } else if (name === "review") {
-    scope.value = "review";
     view.value = "review";
   } else {
     scope.value = name;
@@ -182,7 +182,7 @@ const title = () => {
           <button type="button" data-test="picker-retry" @click="load">重试</button>
         </p>
         <p v-else-if="items.length === 0" class="picker-hint" data-test="picker-empty">
-          暂无棋谱
+          {{ view === "review" ? "暂无待复习棋谱" : "暂无棋谱" }}
         </p>
         <ul v-else class="picker-list">
           <template v-if="view === 'collections'">

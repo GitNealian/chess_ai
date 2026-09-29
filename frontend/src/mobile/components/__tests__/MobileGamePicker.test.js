@@ -183,7 +183,7 @@ describe("MobileGamePicker", () => {
     const wrapper = mount(MobileGamePicker);
     await wrapper.find("[data-test='menu-review']").trigger("click");
     await flushPromises();
-    expect(wrapper.find("[data-test='picker-empty']").exists()).toBe(true);
+    expect(wrapper.find("[data-test='picker-empty']").text()).toContain("待复习");
   });
 
   it("复习视图不渲染分页控件", async () => {
@@ -201,6 +201,40 @@ describe("MobileGamePicker", () => {
     await wrapper.find("[data-test='menu-review']").trigger("click");
     await flushPromises();
     expect(wrapper.find("[data-test='pager-next']").exists()).toBe(false);
+  });
+
+  it("复习视图标题为复习且可返回菜单", async () => {
+    api.reviewQueue.mockResolvedValue({ items: [], count: 0 });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-review']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".picker-title").text()).toBe("复习");
+    await wrapper.find("[data-test='picker-back']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='menu-review']").exists()).toBe(true);
+  });
+
+  it("复习条目展示新与到期标记", async () => {
+    api.reviewQueue.mockResolvedValue({
+      items: [
+        {
+          game: { id: 1, name: "新局", red_player: "红", black_player: "黑" },
+          due_date: "2026-09-29",
+          is_new: true,
+        },
+        {
+          game: { id: 2, name: "旧局", red_player: "红", black_player: "黑" },
+          due_date: "2026-09-29",
+          is_new: false,
+        },
+      ],
+      count: 2,
+    });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-review']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-review='1']").text()).toContain("新");
+    expect(wrapper.find("[data-review='2']").text()).toContain("到期 2026-09-29");
   });
 
   it("棋谱选择携带来源", async () => {
