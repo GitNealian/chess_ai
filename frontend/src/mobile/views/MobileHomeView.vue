@@ -367,9 +367,7 @@ async function submitReciteMove(move) {
       hint.value = "着法错误，请重试";
       return;
     }
-    ply.value += 1;
-    selected.value = null;
-    if (ply.value >= moves.value.length) finishRecite();
+    advanceRecite();
   } catch (err) {
     if (token !== moveToken) return;
     hint.value =
@@ -379,13 +377,18 @@ async function submitReciteMove(move) {
   }
 }
 
-function revealAnswer() {
-  if (!reciteMode.value || ply.value >= moves.value.length) return;
-  reciteRevealed.value = true;
+function advanceRecite() {
   ply.value += 1;
   selected.value = null;
-  hint.value = "已看答案";
   if (ply.value >= moves.value.length) finishRecite();
+}
+
+function revealAnswer() {
+  if (!reciteMode.value || ply.value >= moves.value.length) return;
+  if (pending) return;
+  reciteRevealed.value = true;
+  hint.value = "已看答案";
+  advanceRecite();
 }
 
 function finishRecite() {
@@ -394,6 +397,8 @@ function finishRecite() {
   const mistakeCount = reciteMistakes.value;
   const revealed = reciteRevealed.value;
   reciteMode.value = false;
+  reciteMistakes.value = 0;
+  reciteRevealed.value = 0;
   hint.value = `背谱完成 · 错 ${mistakeCount} 次 · 用时 ${Math.round(duration / 1000)} 秒`;
   if (game) {
     api

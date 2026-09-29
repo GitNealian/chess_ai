@@ -605,6 +605,29 @@ describe("MobileHomeView 背谱", () => {
     await wrapper.find("[data-test='engine-red']").setValue();
     expect(wrapper.vm.$.setupState.moves.length).toBe(before);
   });
+
+  it("校验进行中时看答案不生效", async () => {
+    let resolveCheck;
+    api.checkMove.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCheck = resolve;
+        })
+    );
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 3);
+    board.vm.$emit("cell-click", 0, 4);
+    await Promise.resolve();
+    await wrapper.find("[data-test='ctrl-reveal']").trigger("click");
+    expect(wrapper.vm.$.setupState.ply).toBe(0);
+    resolveCheck({ correct: true });
+    await flushPromises();
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
+  });
 });
 
 describe("移动端路由", () => {
