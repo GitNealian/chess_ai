@@ -492,6 +492,13 @@ describe("MobileHomeView 背谱", () => {
     expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(true);
   });
 
+  it("最近来源的有赛事棋谱转换为赛事来源并显示导航", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper, { ...RECITE_GAME, category: "", event: "联赛" }, { type: "recent" });
+    expect(wrapper.vm.$.setupState.navSource).toEqual({ type: "event", event: "联赛" });
+    expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(true);
+  });
+
   it("最近来源的无分类棋谱不显示导航", async () => {
     const wrapper = mount(MobileHomeView);
     await openGameWithSource(
@@ -724,6 +731,35 @@ describe("MobileHomeView 背谱", () => {
     await flushPromises();
     expect(api.openGame).toHaveBeenCalledTimes(2);
     expect(api.openGame).toHaveBeenLastCalledWith(2);
+  });
+
+  it("导航在途时打开其他棋谱不被旧导航覆盖", async () => {
+    const list = {
+      items: [
+        RECITE_GAME,
+        { ...RECITE_GAME, id: 2, name: "第二谱" },
+        { ...RECITE_GAME, id: 3, name: "第三谱" },
+      ],
+      total: 3,
+    };
+    api.listGames.mockResolvedValue(list);
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    let resolveNav;
+    api.listGames.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveNav = resolve;
+        })
+    );
+    wrapper.find("[data-test='ctrl-next-game']").trigger("click");
+    await flushPromises();
+    await openGameWithSource(wrapper, { ...RECITE_GAME, id: 3, name: "手动打开" });
+    expect(wrapper.vm.$.setupState.currentGame.id).toBe(3);
+    resolveNav(list);
+    await flushPromises();
+    expect(wrapper.vm.$.setupState.currentGame.id).toBe(3);
+    expect(api.openGame).toHaveBeenLastCalledWith(3);
   });
 });
 

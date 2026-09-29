@@ -554,6 +554,7 @@ function onOpenGame(game, source = null) {
   navConfirmOpen.value = false;
   engineToken += 1;
   moveToken += 1;
+  navToken += 1;
   engineThinking.value = false;
   selected.value = null;
   hint.value = "";
@@ -611,11 +612,13 @@ async function runNav(direction) {
   const source = navSource.value;
   if (!source || !currentGame.value) return;
   const token = ++navToken;
+  const gameId = currentGame.value.id;
   hint.value = "";
   try {
     const games = await collectSourceGames(source);
     if (token !== navToken) return;
-    const index = games.findIndex((item) => item.id === currentGame.value.id);
+    if (!currentGame.value || currentGame.value.id !== gameId) return;
+    const index = games.findIndex((item) => item.id === gameId);
     const target = index === -1 ? null : games[index + direction];
     if (!target) {
       hint.value = direction < 0 ? "已是第一盘" : "已是最后一盘";
@@ -666,6 +669,7 @@ function onApply(next, fen) {
   publishFavoriteState();
   engineToken += 1;
   moveToken += 1;
+  navToken += 1;
   engineThinking.value = false;
   selected.value = null;
   hint.value = "";
