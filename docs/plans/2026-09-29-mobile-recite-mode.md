@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 在移动端首页棋盘上原地新增背谱模式，支持从棋谱或复习队列进入，凭记忆走子、看答案、并统一提交 SRS。
+**Goal:** 在移动端首页棋盘上原地新增背谱模式，支持从打开棋谱弹窗的「复习」入口进入，凭记忆走子、看答案、按来源「上一盘/下一盘」切换，并统一提交 SRS。
 
-**Architecture:** 复用后端已有 `check-move` / `review/queue` / `review/submit` 接口，后端零改动。前端在 `MobileHomeView` 增加 `reciteMode` 状态机，扩展 `BoardControls` 支持背谱按钮组，新增 `MobileReviewQueue` 弹窗，顶栏新增复习入口。
+**Architecture:** 复用后端已有 `check-move` / `review/queue` / `review/submit` / `games` 接口，后端零改动。前端扩展 `BoardControls`（单行横向滚动 + 导航/背谱按钮）、`MobileGamePicker`（复习入口 + 来源传递）、`MobileHomeView`（背谱状态机与来源导航），`api.reviewQueue` 支持参数。
 
 **Tech Stack:** Vue 3 `<script setup>`、Pinia、axios、Vitest + @vue/test-utils、Vite。
 
@@ -20,7 +20,7 @@
 
 ---
 
-## Task 1: BoardControls 支持背谱模式
+## Task 1: BoardControls 单行横向滚动 + 导航与背谱按钮
 
 **Files:**
 - Modify: `frontend/src/mobile/components/BoardControls.vue`
@@ -31,6 +31,24 @@
 在 `BoardControls.test.js` 的 `describe` 内追加：
 
 ```js
+  it("showNav 为 true 时渲染上一盘/下一盘并发出事件", async () => {
+    const wrapper = mount(BoardControls, { props: { showNav: true } });
+    const prev = wrapper.find("[data-test='ctrl-prev-game']");
+    const next = wrapper.find("[data-test='ctrl-next-game']");
+    expect(prev.exists()).toBe(true);
+    expect(next.exists()).toBe(true);
+    await prev.trigger("click");
+    await next.trigger("click");
+    expect(wrapper.emitted("prev-game")).toHaveLength(1);
+    expect(wrapper.emitted("next-game")).toHaveLength(1);
+  });
+
+  it("showNav 缺省不渲染上一盘/下一盘", () => {
+    const wrapper = mount(BoardControls);
+    expect(wrapper.find("[data-test='ctrl-prev-game']").exists()).toBe(false);
+    expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(false);
+  });
+
   it("showRecite 为 true 时渲染背谱按钮并发出 recite", async () => {
     const wrapper = mount(BoardControls, { props: { showRecite: true } });
     const recite = wrapper.find("[data-test='ctrl-recite']");
@@ -44,10 +62,16 @@
     expect(wrapper.find("[data-test='ctrl-recite']").exists()).toBe(false);
   });
 
-  it("mode 为 recite 时只渲染翻转/看答案/退出背谱", async () => {
-    const wrapper = mount(BoardControls, { props: { mode: "recite" } });
-    const buttons = wrapper.findAll("button");
-    expect(buttons.map((b) => b.text())).toEqual(["翻转", "看答案", "退出背谱"]);
+  it("mode 为 recite 时只渲染导航与背谱操作按钮", async () => {
+    const wrapper = mount(BoardControls, { props: { mode: "recite", showNav: true } });
+    const buttons = wrapper.findAll(".board-controls__track button");
+    expect(buttons.map((b) => b.text())).toEqual([
+      "上一盘",
+      "下一盘",
+      "翻转",
+      "看答案",
+      "退出背谱",
+    ]);
     await wrapper.find("[data-test='ctrl-reveal']").trigger("click");
     await wrapper.find("[data-test='ctrl-exit-recite']").trigger("click");
     expect(wrapper.emitted("reveal")).toHaveLength(1);
@@ -55,91 +79,168 @@
   });
 ```
 
+同时把原有两条断言按钮数量的用例，改从 `.board-controls__track button` 查找：
+
+```js
+  it("渲染 7 个控制按钮", () => {
+    const wrapper = mount(BoardControls);
+    const buttons = wrapper.findAll(".board-controls__track button");
+    expect(buttons).toHaveLength(7);
+    expect(buttons.map((b) => b.text())).toEqual([
+      "开局",
+      "后退",
+      "前进",
+      "终局",
+      "翻转",
+      "编辑",
+      "扫描",
+    ]);
+  });
+```
+
 **Step 2: 运行测试确认失败**
 
 Run: `npx vitest run src/mobile/components/__tests__/BoardControls.test.js`
-Expected: 新增用例 FAIL（`ctrl-recite` 不存在）
+Expected: 新增用例 FAIL
 
 **Step 3: 实现**
 
-将 `BoardControls.vue` 的 `<template>` 与 `<script setup>` 替换为：
+用以下内容替换 `BoardControls.vue` 的 `<template>`、`<script setup>`、`<style scoped>`：
 
 ```vue
 <template>
   <div class="board-controls">
-    <template v-if="mode === 'recite'">
-      <button
-        type="button"
-        data-test="ctrl-flip"
-        :aria-pressed="flipped ? 'true' : 'false'"
-        @click="emit('flip')"
-      >
-        翻转
-      </button>
-      <button type="button" data-test="ctrl-reveal" @click="emit('reveal')">看答案</button>
-      <button type="button" data-test="ctrl-exit-recite" @click="emit('exit-recite')">
-        退出背谱
-      </button>
-    </template>
-    <template v-else>
-      <button type="button" data-test="ctrl-start" :disabled="!canStart" @click="emit('start')">
-        开局
-      </button>
-      <button type="button" data-test="ctrl-prev" :disabled="!canPrev" @click="emit('prev')">
-        后退
-      </button>
-      <button type="button" data-test="ctrl-next" :disabled="!canNext" @click="emit('next')">
-        前进
-      </button>
-      <button type="button" data-test="ctrl-end" :disabled="!canEnd" @click="emit('end')">
-        终局
-      </button>
-      <button
-        type="button"
-        data-test="ctrl-flip"
-        :aria-pressed="flipped ? 'true' : 'false'"
-        @click="emit('flip')"
-      >
-        翻转
-      </button>
-      <button
-        v-if="showUndo"
-        type="button"
-        data-test="ctrl-undo"
-        :disabled="!canUndo"
-        @click="emit('undo')"
-      >
-        悔棋
-      </button>
-      <button type="button" data-test="ctrl-edit" :disabled="!canEdit" @click="emit('edit')">
-        编辑
-      </button>
-      <button type="button" data-test="ctrl-scan" :disabled="!canScan" @click="emit('scan')">
-        扫描
-      </button>
-      <button
-        v-if="showInfer"
-        type="button"
-        data-test="ctrl-infer"
-        :disabled="!canInfer"
-        @click="emit('infer')"
-      >
-        推演
-      </button>
-      <button
-        v-if="showRecite"
-        type="button"
-        data-test="ctrl-recite"
-        @click="emit('recite')"
-      >
-        背谱
-      </button>
-    </template>
+    <button
+      v-if="canLeft"
+      type="button"
+      class="board-controls__arrow board-controls__arrow--left"
+      data-test="ctrl-scroll-left"
+      aria-label="向左滚动"
+      @click="scrollBy(-1)"
+    >
+      ‹
+    </button>
+    <div ref="scroller" class="board-controls__scroller">
+      <div class="board-controls__track">
+        <template v-if="mode === 'recite'">
+          <button
+            v-if="showNav"
+            type="button"
+            data-test="ctrl-prev-game"
+            @click="emit('prev-game')"
+          >
+            上一盘
+          </button>
+          <button
+            v-if="showNav"
+            type="button"
+            data-test="ctrl-next-game"
+            @click="emit('next-game')"
+          >
+            下一盘
+          </button>
+          <button
+            type="button"
+            data-test="ctrl-flip"
+            :aria-pressed="flipped ? 'true' : 'false'"
+            @click="emit('flip')"
+          >
+            翻转
+          </button>
+          <button type="button" data-test="ctrl-reveal" @click="emit('reveal')">看答案</button>
+          <button type="button" data-test="ctrl-exit-recite" @click="emit('exit-recite')">
+            退出背谱
+          </button>
+        </template>
+        <template v-else>
+          <button type="button" data-test="ctrl-start" :disabled="!canStart" @click="emit('start')">
+            开局
+          </button>
+          <button type="button" data-test="ctrl-prev" :disabled="!canPrev" @click="emit('prev')">
+            后退
+          </button>
+          <button type="button" data-test="ctrl-next" :disabled="!canNext" @click="emit('next')">
+            前进
+          </button>
+          <button type="button" data-test="ctrl-end" :disabled="!canEnd" @click="emit('end')">
+            终局
+          </button>
+          <button
+            v-if="showNav"
+            type="button"
+            data-test="ctrl-prev-game"
+            @click="emit('prev-game')"
+          >
+            上一盘
+          </button>
+          <button
+            v-if="showNav"
+            type="button"
+            data-test="ctrl-next-game"
+            @click="emit('next-game')"
+          >
+            下一盘
+          </button>
+          <button
+            type="button"
+            data-test="ctrl-flip"
+            :aria-pressed="flipped ? 'true' : 'false'"
+            @click="emit('flip')"
+          >
+            翻转
+          </button>
+          <button
+            v-if="showUndo"
+            type="button"
+            data-test="ctrl-undo"
+            :disabled="!canUndo"
+            @click="emit('undo')"
+          >
+            悔棋
+          </button>
+          <button type="button" data-test="ctrl-edit" :disabled="!canEdit" @click="emit('edit')">
+            编辑
+          </button>
+          <button type="button" data-test="ctrl-scan" :disabled="!canScan" @click="emit('scan')">
+            扫描
+          </button>
+          <button
+            v-if="showInfer"
+            type="button"
+            data-test="ctrl-infer"
+            :disabled="!canInfer"
+            @click="emit('infer')"
+          >
+            推演
+          </button>
+          <button
+            v-if="showRecite"
+            type="button"
+            data-test="ctrl-recite"
+            @click="emit('recite')"
+          >
+            背谱
+          </button>
+        </template>
+      </div>
+    </div>
+    <button
+      v-if="canRight"
+      type="button"
+      class="board-controls__arrow board-controls__arrow--right"
+      data-test="ctrl-scroll-right"
+      aria-label="向右滚动"
+      @click="scrollBy(1)"
+    >
+      ›
+    </button>
   </div>
 </template>
 
 <script setup>
-defineProps({
+import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+
+const props = defineProps({
   flipped: { type: Boolean, default: false },
   canStart: { type: Boolean, default: false },
   canPrev: { type: Boolean, default: false },
@@ -152,6 +253,7 @@ defineProps({
   showUndo: { type: Boolean, default: false },
   canUndo: { type: Boolean, default: false },
   mode: { type: String, default: "browse" },
+  showNav: { type: Boolean, default: false },
   showRecite: { type: Boolean, default: false },
 });
 
@@ -165,360 +267,315 @@ const emit = defineEmits([
   "scan",
   "undo",
   "infer",
+  "prev-game",
+  "next-game",
   "recite",
   "reveal",
   "exit-recite",
 ]);
-</script>
-```
 
-注意：`<style scoped>` 保持不变。
+const scroller = ref(null);
+const canLeft = ref(false);
+const canRight = ref(false);
+let resizeObserver = null;
 
-**Step 4: 运行测试确认通过**
+function updateArrows() {
+  const el = scroller.value;
+  if (!el) return;
+  canLeft.value = el.scrollLeft > 1;
+  canRight.value = Math.ceil(el.scrollLeft + el.clientWidth) < el.scrollWidth - 1;
+}
 
-Run: `npx vitest run src/mobile/components/__tests__/BoardControls.test.js`
-Expected: 全部 PASS
+function scrollBy(direction) {
+  const el = scroller.value;
+  if (!el) return;
+  el.scrollBy({ left: direction * Math.round(el.clientWidth * 0.8), behavior: "smooth" });
+}
 
-**Step 5: 提交**
-
-```bash
-git add frontend/src/mobile/components/BoardControls.vue frontend/src/mobile/components/__tests__/BoardControls.test.js
-git commit -m "feat(mobile): BoardControls 支持背谱模式按钮组"
-```
-
----
-
-## Task 2: 新增复习队列弹窗 MobileReviewQueue
-
-**Files:**
-- Create: `frontend/src/mobile/components/MobileReviewQueue.vue`
-- Test: `frontend/src/mobile/components/__tests__/MobileReviewQueue.test.js`
-
-**Step 1: 写失败测试**
-
-创建 `MobileReviewQueue.test.js`：
-
-```js
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { flushPromises, mount } from "@vue/test-utils";
-
-vi.mock("../../../api", () => ({
-  api: { reviewQueue: vi.fn() },
-}));
-
-import { api } from "../../../api";
-import MobileReviewQueue from "../MobileReviewQueue.vue";
-
-describe("MobileReviewQueue", () => {
-  beforeEach(() => {
-    api.reviewQueue.mockReset();
-  });
-
-  it("加载并渲染队列条目", async () => {
-    api.reviewQueue.mockResolvedValue({
-      items: [
-        {
-          game: { id: 7, name: "桔中秘第一局", red_player: "红甲", black_player: "黑乙" },
-          due_date: "2026-09-29",
-          is_new: false,
-        },
-      ],
-      count: 1,
-    });
-    const wrapper = mount(MobileReviewQueue);
-    await flushPromises();
-    expect(api.reviewQueue).toHaveBeenCalledTimes(1);
-    const item = wrapper.find("[data-game='7']");
-    expect(item.exists()).toBe(true);
-    expect(item.text()).toContain("桔中秘第一局");
-  });
-
-  it("空队列显示空态", async () => {
-    api.reviewQueue.mockResolvedValue({ items: [], count: 0 });
-    const wrapper = mount(MobileReviewQueue);
-    await flushPromises();
-    expect(wrapper.find("[data-test='queue-empty']").exists()).toBe(true);
-  });
-
-  it("点选条目发出 select", async () => {
-    api.reviewQueue.mockResolvedValue({
-      items: [
-        {
-          game: { id: 3, name: "测试局", red_player: "", black_player: "" },
-          due_date: "2026-09-29",
-          is_new: true,
-        },
-      ],
-      count: 1,
-    });
-    const wrapper = mount(MobileReviewQueue);
-    await flushPromises();
-    await wrapper.find("[data-game='3']").trigger("click");
-    expect(wrapper.emitted("select")[0][0]).toMatchObject({ id: 3 });
-  });
-
-  it("点关闭发出 cancel", async () => {
-    api.reviewQueue.mockResolvedValue({ items: [], count: 0 });
-    const wrapper = mount(MobileReviewQueue);
-    await flushPromises();
-    await wrapper.find("[data-test='queue-cancel']").trigger("click");
-    expect(wrapper.emitted("cancel")).toHaveLength(1);
-  });
-});
-```
-
-**Step 2: 运行测试确认失败**
-
-Run: `npx vitest run src/mobile/components/__tests__/MobileReviewQueue.test.js`
-Expected: FAIL（模块不存在）
-
-**Step 3: 实现**
-
-创建 `MobileReviewQueue.vue`：
-
-```vue
-<script setup>
-import { onMounted, ref } from "vue";
-import { api } from "../../api";
-
-const emit = defineEmits(["select", "cancel"]);
-const items = ref([]);
-const loading = ref(true);
-const error = ref(false);
-
-async function load() {
-  loading.value = true;
-  error.value = false;
-  try {
-    const data = await api.reviewQueue();
-    items.value = data.items || [];
-  } catch {
-    error.value = true;
-  } finally {
-    loading.value = false;
+onMounted(() => {
+  updateArrows();
+  const el = scroller.value;
+  el?.addEventListener("scroll", updateArrows, { passive: true });
+  if (typeof ResizeObserver !== "undefined" && el) {
+    resizeObserver = new ResizeObserver(updateArrows);
+    resizeObserver.observe(el);
+    const track = el.firstElementChild;
+    if (track) resizeObserver.observe(track);
   }
-}
+});
 
-onMounted(load);
+onUnmounted(() => {
+  scroller.value?.removeEventListener("scroll", updateArrows);
+  resizeObserver?.disconnect();
+});
 
-function players(game) {
-  const red = game.red_player || "红方";
-  const black = game.black_player || "黑方";
-  return `${red} vs ${black}`;
-}
-
-function meta(entry) {
-  return entry.is_new ? "新" : `到期 ${entry.due_date}`;
-}
+watch(
+  () => [props.mode, props.showNav, props.showRecite, props.showUndo, props.showInfer],
+  () => nextTick(updateArrows)
+);
 </script>
-
-<template>
-  <div class="queue-mask" data-test="queue-mask" @click.self="emit('cancel')">
-    <div class="queue-card" data-test="queue-card">
-      <h3 class="queue-title">复习背谱</h3>
-      <p v-if="loading" class="queue-hint">加载中…</p>
-      <p v-else-if="error" class="queue-hint" data-test="queue-error">
-        加载失败
-        <button type="button" data-test="queue-retry" @click="load">重试</button>
-      </p>
-      <p v-else-if="items.length === 0" class="queue-hint" data-test="queue-empty">
-        暂无待复习棋谱
-      </p>
-      <ul v-else class="queue-list">
-        <li v-for="entry in items" :key="entry.game.id">
-          <button
-            type="button"
-            class="queue-item"
-            :data-game="entry.game.id"
-            @click="emit('select', entry.game)"
-          >
-            <span class="queue-name">{{ entry.game.name }}</span>
-            <span class="queue-sub">{{ players(entry.game) }} · {{ meta(entry) }}</span>
-          </button>
-        </li>
-      </ul>
-      <div class="queue-actions">
-        <button type="button" data-test="queue-cancel" @click="emit('cancel')">关闭</button>
-      </div>
-    </div>
-  </div>
-</template>
 
 <style scoped>
-.queue-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  background: rgba(0, 0, 0, 0.45);
+.board-controls {
+  position: relative;
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 16px;
-  overflow-y: auto;
+  align-items: stretch;
 }
 
-.queue-card {
-  width: 100%;
-  max-width: 420px;
-  height: min(520px, calc(100vh - 32px));
-  margin: auto;
-  background: #faf6ee;
-  border-radius: 12px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.queue-title {
-  margin: 0;
-}
-
-.queue-hint {
-  margin: 0;
-  color: #6b5a45;
-}
-
-.queue-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.board-controls__scroller {
   flex: 1;
-  min-height: 120px;
-  overflow-y: auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.board-controls__scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.board-controls__track {
   display: flex;
-  flex-direction: column;
   gap: 8px;
+  width: max-content;
+  padding: 2px;
 }
 
-.queue-item {
-  width: 100%;
-  min-height: 52px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 8px 12px;
-  border: 1px solid #cbb89a;
-  border-radius: 8px;
-  background: #fff;
-  cursor: pointer;
-  text-align: left;
-}
-
-.queue-name {
-  color: #7a3b2e;
-  font-size: 16px;
-}
-
-.queue-sub {
-  color: #8a7a63;
-  font-size: 12px;
-}
-
-.queue-actions {
-  display: flex;
-}
-
-.queue-actions button {
-  flex: 1;
+.board-controls__track button {
+  flex: 0 0 auto;
   min-height: 44px;
+  padding: 8px 14px;
+  font-size: 14px;
+  white-space: nowrap;
+  color: #7a3b2e;
+  background: #fff;
   border: 1px solid #cbb89a;
   border-radius: 6px;
-  background: #fff;
-  color: #7a3b2e;
   cursor: pointer;
+}
+
+.board-controls__track button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.board-controls__track button[aria-pressed="true"] {
+  background: #f4e3c1;
+  border-color: #7a3b2e;
+}
+
+.board-controls__arrow {
+  flex: 0 0 auto;
+  width: 28px;
+  padding: 0;
+  border: none;
+  background: rgba(250, 246, 238, 0.95);
+  color: #7a3b2e;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.board-controls__arrow--left {
+  border-radius: 6px 0 0 6px;
+}
+
+.board-controls__arrow--right {
+  border-radius: 0 6px 6px 0;
 }
 </style>
 ```
 
 **Step 4: 运行测试确认通过**
 
-Run: `npx vitest run src/mobile/components/__tests__/MobileReviewQueue.test.js`
-Expected: 全部 PASS
+Run: `npx vitest run src/mobile/components/__tests__/BoardControls.test.js`
+Expected: 全部 PASS（jsdom 中 `clientWidth/scrollWidth` 为 0，箭头不渲染，不影响按钮计数）
 
 **Step 5: 提交**
 
 ```bash
-git add frontend/src/mobile/components/MobileReviewQueue.vue frontend/src/mobile/components/__tests__/MobileReviewQueue.test.js
-git commit -m "feat(mobile): 新增复习队列弹窗组件"
+git add frontend/src/mobile/components/BoardControls.vue frontend/src/mobile/components/__tests__/BoardControls.test.js
+git commit -m "refactor(mobile): 控制栏改为单行横向滚动并新增导航/背谱按钮"
 ```
 
 ---
 
-## Task 3: 顶栏新增复习入口
+## Task 2: MobileGamePicker 新增「复习」入口与来源传递
 
 **Files:**
-- Modify: `frontend/src/mobile/layouts/MobileLayout.vue`
-- Test: `frontend/src/mobile/layouts/__tests__/MobileLayout.test.js`
+- Modify: `frontend/src/api/index.js`
+- Modify: `frontend/src/mobile/components/MobileGamePicker.vue`
+- Test: `frontend/src/mobile/components/__tests__/MobileGamePicker.test.js`
 
 **Step 1: 写失败测试**
 
-在 `MobileLayout.test.js` 的 `describe` 内追加：
+修改 `MobileGamePicker.test.js` 的 mock 与 beforeEach，加入 `reviewQueue`：
 
 ```js
-  it("复习图标点击派发 mobile-review 事件", async () => {
-    await router.push("/m");
-    await router.isReady();
-    const review = vi.fn();
-    window.addEventListener("mobile-review", review);
-    const wrapper = mount(MobileLayout, { global: { plugins: [router] } });
+vi.mock("../../../api", () => ({
+  api: { listGames: vi.fn(), listCollections: vi.fn(), listEvents: vi.fn(), reviewQueue: vi.fn() },
+}));
+```
+
+```js
+  beforeEach(() => {
+    api.listGames.mockReset();
+    api.listCollections.mockReset();
+    api.listEvents.mockReset();
+    api.reviewQueue.mockReset();
+  });
+```
+
+在 `describe` 内追加：
+
+```js
+  it("复习入口加载待复习棋谱并携带来源", async () => {
+    api.reviewQueue.mockResolvedValue({
+      items: [
+        {
+          game: { id: 5, name: "待复习局", red_player: "红甲", black_player: "黑乙" },
+          due_date: "2026-09-29",
+          is_new: false,
+        },
+      ],
+      count: 1,
+    });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-review']").trigger("click");
     await flushPromises();
-    await wrapper.find("[data-test='header-review']").trigger("click");
-    window.removeEventListener("mobile-review", review);
-    expect(review).toHaveBeenCalledTimes(1);
+    expect(api.reviewQueue).toHaveBeenCalledWith({ limit: 200 });
+    expect(wrapper.find("[data-review='5']").exists()).toBe(true);
+    await wrapper.find("[data-review='5']").trigger("click");
+    expect(wrapper.emitted("select")[0][1]).toEqual({ type: "review" });
+  });
+
+  it("复习空队列显示空态", async () => {
+    api.reviewQueue.mockResolvedValue({ items: [], count: 0 });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-review']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='picker-empty']").exists()).toBe(true);
+  });
+
+  it("棋谱选择携带来源", async () => {
+    api.listGames.mockResolvedValue({ items: [game(7, "开局")], total: 1 });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-other']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-game='7']").trigger("click");
+    expect(wrapper.emitted("select")[0][1]).toMatchObject({ type: "other" });
   });
 ```
 
 **Step 2: 运行测试确认失败**
 
-Run: `npx vitest run src/mobile/layouts/__tests__/MobileLayout.test.js`
-Expected: 新用例 FAIL（`header-review` 不存在）
+Run: `npx vitest run src/mobile/components/__tests__/MobileGamePicker.test.js`
+Expected: 新增用例 FAIL
 
 **Step 3: 实现**
 
-在 `MobileLayout.vue` 顶部 `<div class="mobile-topbar-actions">` 内、`header-open` 按钮之前插入：
+`api/index.js` 修改 `reviewQueue`：
+
+```js
+  reviewQueue: (params) => http.get("/review/queue", { params }).then((r) => r.data),
+```
+
+`MobileGamePicker.vue` 的 `load()` 增加 `review` 分支：
+
+```js
+    } else if (view.value === "review") {
+      const data = await api.reviewQueue({ limit: 200 });
+      items.value = data.items || [];
+      total.value = items.value.length;
+    } else if (view.value === "games") {
+```
+
+`openCategory` 增加 `review` 分支：
+
+```js
+  } else if (name === "review") {
+    scope.value = "review";
+    view.value = "review";
+  } else {
+```
+
+`title()` 增加：
+
+```js
+  if (view.value === "review") return "复习";
+```
+
+`back()` 保持不变（非 games 一律回 menu，已覆盖 review）。
+
+新增方法（放在 `back` 之后）：
+
+```js
+function gamesSource() {
+  return {
+    type: scope.value,
+    collection: collection.value || undefined,
+    event: event.value || undefined,
+  };
+}
+
+function selectGame(item) {
+  emit("select", item, gamesSource());
+}
+
+function selectReview(entry) {
+  emit("select", entry.game, { type: "review" });
+}
+
+function reviewMeta(entry) {
+  return entry.is_new ? "新" : `到期 ${entry.due_date}`;
+}
+```
+
+模板菜单中 `menu-tournament` 之后插入：
 
 ```html
-        <button
-          type="button"
-          class="topbar-icon"
-          data-test="header-review"
-          aria-label="复习背谱"
-          title="复习背谱"
-          @click="publish('mobile-review')"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="22"
-            height="22"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-            <path d="M3 3v5h5" />
-          </svg>
+        <button type="button" class="picker-menu-btn" data-test="menu-review" @click="openCategory('review')">
+          复习
         </button>
+```
+
+模板列表 `events` 分支之后、`v-else`（games）之前插入 review 分支，并把 games 的 `emit('select', item)` 改为 `selectGame(item)`：
+
+```html
+          <template v-else-if="view === 'review'">
+            <li v-for="entry in items" :key="entry.game.id">
+              <button
+                type="button"
+                class="picker-item"
+                :data-review="entry.game.id"
+                @click="selectReview(entry)"
+              >
+                <span class="picker-name">{{ entry.game.name }}</span>
+                <span class="picker-sub">
+                  {{ entry.game.red_player || "红方" }} vs {{ entry.game.black_player || "黑方" }} ·
+                  {{ reviewMeta(entry) }}
+                </span>
+              </button>
+            </li>
+          </template>
+          <template v-else>
 ```
 
 **Step 4: 运行测试确认通过**
 
-Run: `npx vitest run src/mobile/layouts/__tests__/MobileLayout.test.js`
+Run: `npx vitest run src/mobile/components/__tests__/MobileGamePicker.test.js`
 Expected: 全部 PASS
 
 **Step 5: 提交**
 
 ```bash
-git add frontend/src/mobile/layouts/MobileLayout.vue frontend/src/mobile/layouts/__tests__/MobileLayout.test.js
-git commit -m "feat(mobile): 顶栏新增复习入口"
+git add frontend/src/api/index.js frontend/src/mobile/components/MobileGamePicker.vue frontend/src/mobile/components/__tests__/MobileGamePicker.test.js
+git commit -m "feat(mobile): 打开棋谱弹窗新增复习入口并传递来源"
 ```
 
 ---
 
-## Task 4: MobileHomeView 背谱入口与确认条
+## Task 3: MobileHomeView 背谱入口、确认条与来源记录
 
 **Files:**
 - Modify: `frontend/src/mobile/views/MobileHomeView.vue`
@@ -526,7 +583,7 @@ git commit -m "feat(mobile): 顶栏新增复习入口"
 
 **Step 1: 写失败测试**
 
-创建 `MobileHomeView.test.js`（后续任务继续在此文件追加用例）：
+创建 `MobileHomeView.test.js`：
 
 ```js
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -538,6 +595,7 @@ vi.mock("../../../api", () => ({
     checkMove: vi.fn(),
     submitReview: vi.fn(() => Promise.resolve({ quality: 5 })),
     reviewQueue: vi.fn(() => Promise.resolve({ items: [], count: 0 })),
+    listGames: vi.fn(() => Promise.resolve({ items: [], total: 0 })),
     openGame: vi.fn(() => Promise.resolve({ favorited: false })),
     favoriteGame: vi.fn(),
     bestMove: vi.fn(),
@@ -582,20 +640,15 @@ function makeWrapper() {
           emits: ["select", "cancel"],
           template: '<div data-test="game-picker"></div>',
         },
-        MobileReviewQueue: {
-          name: "MobileReviewQueue",
-          emits: ["select", "cancel"],
-          template: '<div data-test="review-queue"></div>',
-        },
       },
     },
   });
 }
 
-async function openGame(wrapper, game = GAME) {
+async function openGame(wrapper, game = GAME, source = { type: "collection", collection: "测试" }) {
   window.dispatchEvent(new CustomEvent("mobile-open"));
   await flushPromises();
-  wrapper.findComponent({ name: "MobileGamePicker" }).vm.$emit("select", game);
+  wrapper.findComponent({ name: "MobileGamePicker" }).vm.$emit("select", game, source);
   await flushPromises();
 }
 
@@ -604,6 +657,7 @@ describe("MobileHomeView 背谱", () => {
     api.checkMove.mockReset();
     api.submitReview.mockClear();
     api.openGame.mockClear();
+    api.listGames.mockReset();
   });
 
   it("打开棋谱后显示背谱按钮，点击弹出确认条", async () => {
@@ -642,31 +696,42 @@ describe("MobileHomeView 背谱", () => {
     await wrapper.find("[data-test='ctrl-end']").trigger("click");
     expect(wrapper.find("[data-test='ctrl-recite']").exists()).toBe(false);
   });
+
+  it("最近来源的有分类棋谱转换为棋谱集来源并显示导航", async () => {
+    const wrapper = makeWrapper();
+    await openGame(wrapper, GAME, { type: "recent" });
+    expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(true);
+  });
+
+  it("最近来源的无分类棋谱不显示导航", async () => {
+    const wrapper = makeWrapper();
+    await openGame(wrapper, { ...GAME, category: "", event: "" }, { type: "recent" });
+    expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(false);
+  });
 });
 ```
 
 **Step 2: 运行测试确认失败**
 
 Run: `npx vitest run src/mobile/views/__tests__/MobileHomeView.test.js`
-Expected: FAIL（无 `ctrl-recite` / `recite-confirm`）
+Expected: FAIL
 
 **Step 3: 实现**
 
-在 `MobileHomeView.vue` `<script setup>` 中新增状态：
+`MobileHomeView.vue` `<script setup>` 新增状态：
 
 ```js
 const reciteMode = ref(false);
 const reciteConfirmOpen = ref(false);
+const reciteStartPly = ref(0);
+const reciteMistakes = ref(0);
+const reciteRevealed = ref(false);
+const reciteStartedAt = ref(0);
+const navSource = ref(null);
+const COLLECTION_PREFIX = "古谱 · ";
 ```
 
-在 `onOpenGame` 与 `onApply` 末尾增加重置：
-
-```js
-  reciteMode.value = false;
-  reciteConfirmOpen.value = false;
-```
-
-新增计算属性与方法：
+新增计算属性：
 
 ```js
 const reciteMeta = computed(() => {
@@ -674,6 +739,24 @@ const reciteMeta = computed(() => {
   const players = [game.red_player, game.black_player].filter(Boolean).join(" vs ");
   return [players, game.event, game.result, game.category].filter(Boolean).join(" · ");
 });
+
+const showNav = computed(() => !!currentGame.value && !!navSource.value);
+```
+
+新增方法：
+
+```js
+function normalizeSource(game, source) {
+  if (!source) return null;
+  if (source.type !== "recent") return source;
+  if ((game.category || "").startsWith(COLLECTION_PREFIX)) {
+    return { type: "collection", collection: game.category.slice(COLLECTION_PREFIX.length) };
+  }
+  if (game.event && game.event !== "NA") {
+    return { type: "event", event: game.event };
+  }
+  return null;
+}
 
 function openReciteConfirm() {
   if (!currentGame.value || ply.value >= moves.value.length) return;
@@ -696,16 +779,41 @@ function confirmRecite(fromStart) {
 }
 ```
 
-其中 `reciteStartPly`、`reciteMistakes`、`reciteRevealed`、`reciteStartedAt` 也一并声明：
+修改 `onOpenGame` 签名为 `function onOpenGame(game, source)`，把 `currentGame.value = game;` 之后改为同时记录来源，并在函数末尾重置背谱状态：
 
 ```js
-const reciteStartPly = ref(0);
-const reciteMistakes = ref(0);
-const reciteRevealed = ref(false);
-const reciteStartedAt = ref(0);
+function onOpenGame(game, source = null) {
+  const fen = game.initial_fen || INITIAL_FEN;
+  basePieces.value = fenToPieces(fen);
+  initialFen.value = fen;
+  moves.value = game.moves || [];
+  ply.value = 0;
+  pickerOpen.value = false;
+  currentGame.value = game;
+  favorited.value = !!game.favorited;
+  navSource.value = normalizeSource(game, source);
+  engineSide.value = "none";
+  inferOpen.value = false;
+  reciteMode.value = false;
+  reciteConfirmOpen.value = false;
+  engineToken += 1;
+  moveToken += 1;
+  engineThinking.value = false;
+  selected.value = null;
+  hint.value = "";
+  api
+    .openGame(game.id)
+    .then((res) => {
+      favorited.value = !!res.favorited;
+      publishFavoriteState();
+    })
+    .catch(() => {});
+}
 ```
 
-模板中把 `BoardControls` 改为：
+`onApply` 中在 `currentGame.value = null;` 附近补 `navSource.value = null; reciteMode.value = false; reciteConfirmOpen.value = false;`。
+
+模板 `BoardControls` 改为：
 
 ```html
     <BoardControls
@@ -721,6 +829,7 @@ const reciteStartedAt = ref(0);
       :can-undo="(!isReview || engineSide !== 'none') && moves.length > 0"
       :show-infer="isReview && !reciteMode"
       :can-infer="isReview && !reciteMode"
+      :show-nav="showNav"
       :show-recite="isReview && !reciteMode && moves.length > ply"
       @start="ply = 0"
       @prev="ply -= 1"
@@ -735,7 +844,9 @@ const reciteStartedAt = ref(0);
     />
 ```
 
-在模板 `settings-mask` 之前插入确认条：
+模板 `MobileAnalysis` 增加 `v-if="!reciteMode"`。
+
+在模板 `settings-mask` 之前插入背谱确认条：
 
 ```html
     <div
@@ -770,7 +881,7 @@ const reciteStartedAt = ref(0);
     </div>
 ```
 
-在 `<style scoped>` 末尾补充：
+`<style scoped>` 末尾补充：
 
 ```css
 .recite-meta {
@@ -794,12 +905,12 @@ Expected: 全部 PASS
 
 ```bash
 git add frontend/src/mobile/views/MobileHomeView.vue frontend/src/mobile/views/__tests__/MobileHomeView.test.js
-git commit -m "feat(mobile): 背谱入口与起点确认条"
+git commit -m "feat(mobile): 背谱入口、确认条与来源记录"
 ```
 
 ---
 
-## Task 5: 背谱走子校验与错误计数
+## Task 4: 背谱走子校验与错误计数
 
 **Files:**
 - Modify: `frontend/src/mobile/views/MobileHomeView.vue`
@@ -811,7 +922,7 @@ git commit -m "feat(mobile): 背谱入口与起点确认条"
 
 ```js
   it("背谱走对推进一步", async () => {
-    api.checkMove.mockResolvedValue({ correct: true, expected: GAME.moves[0] });
+    api.checkMove.mockResolvedValue({ correct: true });
     const wrapper = makeWrapper();
     await openGame(wrapper);
     await wrapper.find("[data-test='ctrl-recite']").trigger("click");
@@ -828,7 +939,7 @@ git commit -m "feat(mobile): 背谱入口与起点确认条"
   });
 
   it("背谱走错不推进且提示错误", async () => {
-    api.checkMove.mockResolvedValue({ correct: false, expected: GAME.moves[0] });
+    api.checkMove.mockResolvedValue({ correct: false });
     const wrapper = makeWrapper();
     await openGame(wrapper);
     await wrapper.find("[data-test='ctrl-recite']").trigger("click");
@@ -841,7 +952,7 @@ git commit -m "feat(mobile): 背谱入口与起点确认条"
     expect(api.submitReview).not.toHaveBeenCalled();
   });
 
-  it("背谱走子网络失败提示校验失败不计错", async () => {
+  it("背谱走子网络失败提示且不计错", async () => {
     api.checkMove.mockRejectedValue({ response: { data: { error: "校验失败" } } });
     const wrapper = makeWrapper();
     await openGame(wrapper);
@@ -934,7 +1045,7 @@ git commit -m "feat(mobile): 背谱走子校验与错误计数"
 
 ---
 
-## Task 6: 看答案、完成提交与中途退出
+## Task 5: 看答案、完成提交与中途退出
 
 **Files:**
 - Modify: `frontend/src/mobile/views/MobileHomeView.vue`
@@ -966,7 +1077,7 @@ git commit -m "feat(mobile): 背谱走子校验与错误计数"
     expect(wrapper.find("[data-test='ctrl-reveal']").exists()).toBe(false);
   });
 
-  it("看答案标记 revealed 并推进", async () => {
+  it("看答案标记 revealed 并推进至完成", async () => {
     const wrapper = makeWrapper();
     await openGame(wrapper);
     await wrapper.find("[data-test='ctrl-recite']").trigger("click");
@@ -1001,7 +1112,7 @@ Expected: 新增用例 FAIL
 
 **Step 3: 实现**
 
-在 `submitReciteMove` 的 `ply.value += 1;` 之后补完成判定：
+`submitReciteMove` 推进后补完成判定：
 
 ```js
     ply.value += 1;
@@ -1029,11 +1140,13 @@ function finishRecite() {
   reciteMode.value = false;
   hint.value = `背谱完成 · 错 ${mistakeCount} 次 · 用时 ${Math.round(duration / 1000)} 秒`;
   if (game) {
-    api.submitReview(game.id, {
-      mistake_count: mistakeCount,
-      duration_ms: duration,
-      revealed,
-    }).catch(() => {});
+    api
+      .submitReview(game.id, {
+        mistake_count: mistakeCount,
+        duration_ms: duration,
+        revealed,
+      })
+      .catch(() => {});
   }
 }
 
@@ -1048,7 +1161,7 @@ function exitRecite() {
 }
 ```
 
-在模板 `BoardControls` 上补事件绑定：
+`BoardControls` 增加事件绑定：
 
 ```html
       @reveal="revealAnswer"
@@ -1069,7 +1182,7 @@ git commit -m "feat(mobile): 看答案、完成提交 SRS 与中途退出"
 
 ---
 
-## Task 7: 复习队列入口接入首页
+## Task 6: 上一盘/下一盘导航与切换确认
 
 **Files:**
 - Modify: `frontend/src/mobile/views/MobileHomeView.vue`
@@ -1080,74 +1193,154 @@ git commit -m "feat(mobile): 看答案、完成提交 SRS 与中途退出"
 在 `MobileHomeView.test.js` 的 `describe` 内追加：
 
 ```js
-  it("顶栏复习事件打开队列并选中棋谱进入浏览态", async () => {
+  it("下一盘切换到来源列表的下一条", async () => {
+    api.listGames.mockResolvedValue({
+      items: [GAME, { ...GAME, id: 2, name: "第二谱" }],
+      total: 2,
+    });
     const wrapper = makeWrapper();
-    window.dispatchEvent(new CustomEvent("mobile-review"));
+    await openGame(wrapper);
+    await wrapper.find("[data-test='ctrl-next-game']").trigger("click");
     await flushPromises();
-    const queue = wrapper.findComponent({ name: "MobileReviewQueue" });
-    expect(queue.exists()).toBe(true);
-    queue.vm.$emit("select", GAME);
+    expect(api.listGames).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "collection", collection: "测试", page: 1 })
+    );
+    expect(api.openGame).toHaveBeenLastCalledWith(2);
+  });
+
+  it("已是最后一盘时提示", async () => {
+    api.listGames.mockResolvedValue({ items: [GAME], total: 1 });
+    const wrapper = makeWrapper();
+    await openGame(wrapper);
+    await wrapper.find("[data-test='ctrl-next-game']").trigger("click");
     await flushPromises();
-    expect(wrapper.find("[data-test='review-queue']").exists()).toBe(false);
-    expect(wrapper.find("[data-test='ctrl-recite']").exists()).toBe(true);
+    expect(wrapper.find("[data-test='hint']").text()).toContain("最后一盘");
+  });
+
+  it("背谱未完成时切换先弹确认，确认后不提交 SRS 并切换", async () => {
+    api.listGames.mockResolvedValue({
+      items: [GAME, { ...GAME, id: 2, name: "第二谱" }],
+      total: 2,
+    });
+    const wrapper = makeWrapper();
+    await openGame(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-start']").trigger("click");
+    await wrapper.find("[data-test='ctrl-next-game']").trigger("click");
+    expect(wrapper.find("[data-test='nav-confirm']").exists()).toBe(true);
+    await wrapper.find("[data-test='nav-confirm-ok']").trigger("click");
+    await flushPromises();
+    expect(api.submitReview).not.toHaveBeenCalled();
+    expect(api.openGame).toHaveBeenLastCalledWith(2);
+    expect(wrapper.find("[data-test='ctrl-reveal']").exists()).toBe(false);
   });
 ```
 
 **Step 2: 运行测试确认失败**
 
 Run: `npx vitest run src/mobile/views/__tests__/MobileHomeView.test.js`
-Expected: 新用例 FAIL
+Expected: 新增用例 FAIL
 
 **Step 3: 实现**
 
-在 `import` 区加入：
+新增状态：
 
 ```js
-import MobileReviewQueue from "../components/MobileReviewQueue.vue";
+const navConfirmOpen = ref(false);
+const navDirection = ref(1);
 ```
 
-新增状态与方法：
+新增方法：
 
 ```js
-const queueOpen = ref(false);
+async function collectSourceGames(source) {
+  if (source.type === "review") {
+    const data = await api.reviewQueue({ limit: 200 });
+    return (data.items || []).map((entry) => entry.game);
+  }
+  const pageSize = 100;
+  const all = [];
+  let page = 1;
+  for (;;) {
+    const data = await api.listGames({
+      scope: source.type,
+      collection: source.collection || undefined,
+      event: source.event || undefined,
+      sort: "created_desc",
+      page,
+      page_size: pageSize,
+    });
+    const items = data.items || [];
+    all.push(...items);
+    if (!items.length || all.length >= (data.total || 0) || page >= 20) break;
+    page += 1;
+  }
+  return all;
+}
 
-function onQueueSelect(game) {
-  queueOpen.value = false;
-  onOpenGame(game);
+function requestNav(direction) {
+  if (reciteMode.value) {
+    navDirection.value = direction;
+    navConfirmOpen.value = true;
+    return;
+  }
+  runNav(direction);
+}
+
+async function confirmNav() {
+  navConfirmOpen.value = false;
+  exitRecite();
+  await runNav(navDirection.value);
+}
+
+async function runNav(direction) {
+  const source = navSource.value;
+  if (!source || !currentGame.value) return;
+  hint.value = "";
+  try {
+    const games = await collectSourceGames(source);
+    const index = games.findIndex((item) => item.id === currentGame.value.id);
+    const target = index === -1 ? null : games[index + direction];
+    if (!target) {
+      hint.value = direction < 0 ? "已是第一盘" : "已是最后一盘";
+      return;
+    }
+    onOpenGame(target, source);
+  } catch {
+    hint.value = "切换失败，请重试";
+  }
 }
 ```
 
-在模板中 `MobileGamePicker` 之后插入：
+`BoardControls` 增加事件绑定：
 
 ```html
-    <MobileReviewQueue
-      v-if="queueOpen"
-      @select="onQueueSelect"
-      @cancel="queueOpen = false"
-    />
+      @prev-game="requestNav(-1)"
+      @next-game="requestNav(1)"
 ```
 
-新增事件监听函数并注册：
-
-```js
-function onReviewEvent() {
-  queueOpen.value = true;
-}
-```
-
-在 `onMounted` 中加 `window.addEventListener("mobile-review", onReviewEvent);`，在 `onUnmounted` 中加 `window.removeEventListener("mobile-review", onReviewEvent);`。
-
-顺带给 `MobileAnalysis` 加背谱隐藏：
+在模板背谱确认条之后插入切换确认框：
 
 ```html
-    <MobileAnalysis
-      v-if="!reciteMode"
-      :initial-fen="initialFen"
-      :moves="moveSlice"
-      :score="settings.score"
-      :intent="settings.intent"
-      @arrows="analysisArrows = $event"
-    />
+    <div
+      v-if="navConfirmOpen"
+      class="settings-mask"
+      data-test="nav-confirm"
+      @click.self="navConfirmOpen = false"
+    >
+      <div class="settings-card">
+        <h3 class="settings-title">放弃当前背谱？</h3>
+        <p class="recite-meta">当前背谱尚未完成，切换将放弃本次进度且不记录。</p>
+        <div class="settings-actions">
+          <button type="button" data-test="nav-confirm-cancel" @click="navConfirmOpen = false">
+            继续背谱
+          </button>
+          <button type="button" data-test="nav-confirm-ok" @click="confirmNav">
+            放弃并切换
+          </button>
+        </div>
+      </div>
+    </div>
 ```
 
 **Step 4: 运行测试确认通过**
@@ -1159,12 +1352,12 @@ Expected: 全部 PASS
 
 ```bash
 git add frontend/src/mobile/views/MobileHomeView.vue frontend/src/mobile/views/__tests__/MobileHomeView.test.js
-git commit -m "feat(mobile): 复习队列入口接入首页"
+git commit -m "feat(mobile): 上一盘/下一盘导航与切换确认"
 ```
 
 ---
 
-## Task 8: 全量测试与构建
+## Task 7: 全量测试与构建
 
 **Files:**
 - Build: `frontend/dist/`
@@ -1193,10 +1386,14 @@ git commit -m "chore(mobile): 构建背谱模式产物"
 
 ## 验证清单
 
-- [ ] 打开棋谱后出现「背谱」，点击弹确认条显示对手/赛事/结果/分类与步数范围
-- [ ] 从头背或从当前步起背都能进入背谱态，翻页/编辑/扫描/推演/悔棋隐藏
+- [ ] 打开棋谱弹窗菜单有「复习」，点入列出待复习棋谱，空态正常
+- [ ] 打开棋谱后出现「背谱」，确认条显示对手/赛事/结果/分类与步数范围
+- [ ] 从头背或从当前步起背都能进入背谱态；背谱态只显示导航与背谱操作
 - [ ] 双方都需自己走；走对推进，走错提示且不推进，错误数累计
 - [ ] 看答案揭示并替走，完成后 `revealed=true` 提交
-- [ ] 中途退出不写 SRS
-- [ ] 顶栏复习入口列出到期/新棋谱，选中后进入浏览态可先看再背
+- [ ] 中途退出或切换棋谱不写 SRS
+- [ ] 上一盘/下一盘按来源切换，边界提示正确
+- [ ] 背谱未完成时切换弹出确认，确认后放弃且不记录
+- [ ] 最近来源按所属棋谱集/赛事切换，两者都无则不显示导航
+- [ ] 控制栏单行横向滚动，两端箭头按可滚动方向显隐
 - [ ] `npm test` 与 `npm run build` 均通过
