@@ -353,13 +353,39 @@ async function submitMove(move) {
   if (token === moveToken) maybeEngineMove();
 }
 
+async function submitReciteMove(move) {
+  hint.value = "";
+  pending = true;
+  const token = ++moveToken;
+  try {
+    const data = await api.checkMove(currentGame.value.id, { ply: ply.value, move });
+    if (token !== moveToken) return;
+    if (!data.correct) {
+      reciteMistakes.value += 1;
+      hint.value = "着法错误，请重试";
+      return;
+    }
+    ply.value += 1;
+    selected.value = null;
+  } catch (err) {
+    if (token !== moveToken) return;
+    hint.value =
+      err?.response?.data?.error || err?.response?.data?.detail || "校验失败，请重试";
+  } finally {
+    if (token === moveToken) pending = false;
+  }
+}
+
 function onCellClick(x, y) {
-  if (isReview.value || pending) return;
-  if (engineSide.value !== "none" && ply.value !== moves.value.length) return;
-  if (gameOver.value || engineThinking.value) return;
-  if (isEngineTurn.value) {
-    runEngineMove();
-    return;
+  if (isReview.value && !reciteMode.value) return;
+  if (pending) return;
+  if (!reciteMode.value) {
+    if (engineSide.value !== "none" && ply.value !== moves.value.length) return;
+    if (gameOver.value || engineThinking.value) return;
+    if (isEngineTurn.value) {
+      runEngineMove();
+      return;
+    }
   }
   const piece = pieces.value.find((p) => p.x === x && p.y === y);
   if (selected.value) {
@@ -368,7 +394,9 @@ function onCellClick(x, y) {
       selected.value = same ? null : { x, y };
       return;
     }
-    submitMove({ x1: selected.value.x, y1: selected.value.y, x2: x, y2: y });
+    const move = { x1: selected.value.x, y1: selected.value.y, x2: x, y2: y };
+    if (reciteMode.value) submitReciteMove(move);
+    else submitMove(move);
     return;
   }
   if (piece && piece.side === sideToMove.value) selected.value = { x, y };

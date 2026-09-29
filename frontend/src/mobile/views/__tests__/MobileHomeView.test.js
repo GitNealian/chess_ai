@@ -30,6 +30,8 @@ vi.mock("../../../api", () => ({
     validateMove: vi.fn(),
     bestMove: vi.fn(),
     recognize: vi.fn(),
+    checkMove: vi.fn(),
+    submitReview: vi.fn(),
   },
   analyzeStream: vi.fn(),
   intentStream: vi.fn(),
@@ -424,6 +426,8 @@ async function openGameWithSource(
 describe("MobileHomeView 背谱", () => {
   beforeEach(() => {
     localStorage.clear();
+    api.checkMove.mockReset();
+    api.submitReview.mockReset();
   });
 
   it("打开棋谱后显示背谱按钮，点击弹出确认条", async () => {
@@ -493,6 +497,51 @@ describe("MobileHomeView 背谱", () => {
     );
     expect(wrapper.vm.$.setupState.navSource).toBe(null);
     expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(false);
+  });
+
+  it("背谱走对推进一步", async () => {
+    api.checkMove.mockResolvedValue({ correct: true });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 3);
+    board.vm.$emit("cell-click", 0, 4);
+    await flushPromises();
+    expect(api.checkMove).toHaveBeenCalledWith(1, {
+      ply: 0,
+      move: { x1: 0, y1: 3, x2: 0, y2: 4 },
+    });
+    expect(wrapper.find("[data-test='ctrl-reveal']").exists()).toBe(true);
+  });
+
+  it("背谱走错不推进且提示错误", async () => {
+    api.checkMove.mockResolvedValue({ correct: false });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 3);
+    board.vm.$emit("cell-click", 0, 5);
+    await flushPromises();
+    expect(wrapper.find("[data-test='hint']").text()).toContain("错误");
+    expect(api.submitReview).not.toHaveBeenCalled();
+  });
+
+  it("背谱走子网络失败提示且不计错", async () => {
+    api.checkMove.mockRejectedValue({ response: { data: { error: "校验失败" } } });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 3);
+    board.vm.$emit("cell-click", 0, 4);
+    await flushPromises();
+    expect(wrapper.find("[data-test='hint']").exists()).toBe(true);
+    expect(api.submitReview).not.toHaveBeenCalled();
   });
 });
 
