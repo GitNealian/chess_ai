@@ -264,6 +264,33 @@ describe("MobileHomeView", () => {
     expect(arrows.map((a) => a.kind)).toEqual(["best", "reply"]);
   });
 
+  it("关闭评分后棋盘箭头清除（意图仍开启）", async () => {
+    localStorage.setItem(
+      "chess:mobile-settings",
+      JSON.stringify({ score: true, intent: true, level: "normal" })
+    );
+    intentStream.mockImplementation((payload, { onDone }) => onDone());
+    analyzeStream.mockImplementation((payload, { onResult }) => {
+      onResult({
+        depth: 9,
+        score_red: 5,
+        mate: null,
+        pv: [
+          { x1: 0, y1: 0, x2: 0, y2: 1 },
+          { x1: 1, y1: 0, x2: 1, y2: 1 },
+        ],
+        time_ms: 3,
+      });
+    });
+    const wrapper = mount(MobileHomeView);
+    await nextTick();
+    expect(wrapper.findComponent(ChessBoard).props("arrows")).toHaveLength(2);
+    await openSettings();
+    await wrapper.find("[data-test='setting-score']").setValue(false);
+    await flushPromises();
+    expect(wrapper.findComponent(ChessBoard).props("arrows")).toEqual([]);
+  });
+
   it("设置中可选引擎执子与思考程度", async () => {
     const wrapper = mount(MobileHomeView);
     await openSettings();

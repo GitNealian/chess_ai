@@ -87,4 +87,47 @@ describe("MobileAnalysis", () => {
       { x1: 1, y1: 0, x2: 1, y2: 1, chinese: "马二进三", kind: "reply" },
     ]);
   });
+
+  it("关闭评分后清空棋盘箭头", async () => {
+    analyzeStream.mockImplementation((payload, { onResult }) => {
+      onResult({
+        depth: 11,
+        score_red: 20,
+        mate: null,
+        pv: [
+          { x1: 0, y1: 0, x2: 0, y2: 1, chinese: "炮二平三" },
+          { x1: 1, y1: 0, x2: 1, y2: 1, chinese: "马二进三" },
+        ],
+        time_ms: 12,
+      });
+    });
+    const wrapper = mountAnalysis({ score: true });
+    await nextTick();
+    expect(wrapper.emitted("arrows").at(-1)[0]).toHaveLength(2);
+    await wrapper.setProps({ score: false });
+    await nextTick();
+    expect(wrapper.emitted("arrows").at(-1)[0]).toEqual([]);
+  });
+
+  it("意图与评分同开后关闭评分时清空箭头", async () => {
+    intentStream.mockImplementation((payload, { onDone }) => onDone());
+    analyzeStream.mockImplementation((payload, { onResult }) => {
+      onResult({
+        depth: 11,
+        score_red: 20,
+        mate: null,
+        pv: [
+          { x1: 0, y1: 0, x2: 0, y2: 1, chinese: "炮二平三" },
+          { x1: 1, y1: 0, x2: 1, y2: 1, chinese: "马二进三" },
+        ],
+        time_ms: 12,
+      });
+    });
+    const wrapper = mountAnalysis({ score: true, intent: true });
+    await nextTick();
+    expect(wrapper.emitted("arrows").at(-1)[0]).toHaveLength(2);
+    await wrapper.setProps({ score: false });
+    await nextTick();
+    expect(wrapper.emitted("arrows").at(-1)[0]).toEqual([]);
+  });
 });

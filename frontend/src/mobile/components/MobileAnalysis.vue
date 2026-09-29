@@ -182,6 +182,10 @@ function run() {
     reset();
     return;
   }
+  if (!props.score) {
+    stopAnalysis();
+    analysis.value = emptyAnalysis("idle");
+  }
   if (props.intent) startIntent();
   else startAnalysis();
 }
