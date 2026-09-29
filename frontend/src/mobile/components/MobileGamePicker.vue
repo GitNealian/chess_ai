@@ -246,7 +246,7 @@ const title = () => {
       </template>
 
       <MobilePager
-        v-if="view !== 'menu' && !error"
+        v-if="view !== 'menu' && view !== 'review' && !error"
         :page="page"
         :page-size="PAGE_SIZE"
         :total="total"

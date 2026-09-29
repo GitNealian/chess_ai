@@ -186,6 +186,23 @@ describe("MobileGamePicker", () => {
     expect(wrapper.find("[data-test='picker-empty']").exists()).toBe(true);
   });
 
+  it("复习视图不渲染分页控件", async () => {
+    api.reviewQueue.mockResolvedValue({
+      items: [
+        {
+          game: { id: 5, name: "待复习局", red_player: "", black_player: "" },
+          due_date: "2026-09-29",
+          is_new: false,
+        },
+      ],
+      count: 1,
+    });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-review']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='pager-next']").exists()).toBe(false);
+  });
+
   it("棋谱选择携带来源", async () => {
     api.listGames.mockResolvedValue({ items: [game(7, "开局")], total: 1 });
     const wrapper = mount(MobileGamePicker);
