@@ -35,6 +35,8 @@
       @undo="undo"
       @infer="inferOpen = true"
       @recite="openReciteConfirm"
+      @reveal="revealAnswer"
+      @exit-recite="exitRecite"
     />
     <p v-if="hint" class="mobile-home__hint" data-test="hint">{{ hint }}</p>
     <MobileAnalysis
@@ -367,6 +369,7 @@ async function submitReciteMove(move) {
     }
     ply.value += 1;
     selected.value = null;
+    if (ply.value >= moves.value.length) finishRecite();
   } catch (err) {
     if (token !== moveToken) return;
     hint.value =
@@ -374,6 +377,43 @@ async function submitReciteMove(move) {
   } finally {
     if (token === moveToken) pending = false;
   }
+}
+
+function revealAnswer() {
+  if (!reciteMode.value || ply.value >= moves.value.length) return;
+  reciteRevealed.value = true;
+  ply.value += 1;
+  selected.value = null;
+  hint.value = "已看答案";
+  if (ply.value >= moves.value.length) finishRecite();
+}
+
+function finishRecite() {
+  const game = currentGame.value;
+  const duration = Math.max(0, Date.now() - reciteStartedAt.value);
+  const mistakeCount = reciteMistakes.value;
+  const revealed = reciteRevealed.value;
+  reciteMode.value = false;
+  hint.value = `背谱完成 · 错 ${mistakeCount} 次 · 用时 ${Math.round(duration / 1000)} 秒`;
+  if (game) {
+    api
+      .submitReview(game.id, {
+        mistake_count: mistakeCount,
+        duration_ms: duration,
+        revealed,
+      })
+      .catch(() => {});
+  }
+}
+
+function exitRecite() {
+  reciteMode.value = false;
+  reciteMistakes.value = 0;
+  reciteRevealed.value = false;
+  selected.value = null;
+  hint.value = "";
+  moveToken += 1;
+  pending = false;
 }
 
 function onCellClick(x, y) {
@@ -418,6 +458,7 @@ function undo() {
 }
 
 function onEngineSide(value) {
+  if (reciteMode.value) return;
   engineSide.value = value;
   engineToken += 1;
   moveToken += 1;

@@ -31,6 +31,7 @@ vi.mock("../../../api", () => ({
     bestMove: vi.fn(),
     recognize: vi.fn(),
     checkMove: vi.fn(),
+    submitReview: vi.fn().mockResolvedValue({}),
   },
   analyzeStream: vi.fn(),
   intentStream: vi.fn(),
@@ -426,6 +427,8 @@ describe("MobileHomeView 背谱", () => {
   beforeEach(() => {
     localStorage.clear();
     api.checkMove.mockReset();
+    api.submitReview.mockReset();
+    api.submitReview.mockResolvedValue({});
   });
 
   it("打开棋谱后显示背谱按钮，点击弹出确认条", async () => {
@@ -542,6 +545,65 @@ describe("MobileHomeView 背谱", () => {
     expect(wrapper.find("[data-test='hint']").exists()).toBe(true);
     expect(wrapper.vm.$.setupState.ply).toBe(0);
     expect(wrapper.vm.$.setupState.reciteMistakes).toBe(0);
+  });
+
+  it("走完整条棋谱提交 SRS 且错误数为 0", async () => {
+    api.checkMove.mockResolvedValue({ correct: true });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 3);
+    board.vm.$emit("cell-click", 0, 4);
+    await flushPromises();
+    board.vm.$emit("cell-click", 0, 6);
+    board.vm.$emit("cell-click", 0, 5);
+    await flushPromises();
+    expect(api.submitReview).toHaveBeenCalledWith(1, {
+      mistake_count: 0,
+      duration_ms: expect.any(Number),
+      revealed: false,
+    });
+    expect(wrapper.vm.$.setupState.reciteMode).toBe(false);
+  });
+
+  it("看答案标记 revealed 并推进至完成", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    await wrapper.find("[data-test='ctrl-reveal']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-test='ctrl-reveal']").trigger("click");
+    await flushPromises();
+    expect(api.submitReview).toHaveBeenCalledWith(1, {
+      mistake_count: 0,
+      duration_ms: expect.any(Number),
+      revealed: true,
+    });
+  });
+
+  it("中途退出背谱不提交 SRS", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    await wrapper.find("[data-test='ctrl-exit-recite']").trigger("click");
+    expect(api.submitReview).not.toHaveBeenCalled();
+    expect(wrapper.vm.$.setupState.reciteMode).toBe(false);
+  });
+
+  it("背谱态切换执子不会截断棋谱", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    const before = wrapper.vm.$.setupState.moves.length;
+    window.dispatchEvent(new CustomEvent("mobile-settings"));
+    await flushPromises();
+    await wrapper.find("[data-test='engine-red']").setValue();
+    expect(wrapper.vm.$.setupState.moves.length).toBe(before);
   });
 });
 
