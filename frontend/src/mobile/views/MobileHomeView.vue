@@ -398,7 +398,7 @@ function finishRecite() {
   const revealed = reciteRevealed.value;
   reciteMode.value = false;
   reciteMistakes.value = 0;
-  reciteRevealed.value = 0;
+  reciteRevealed.value = false;
   hint.value = `背谱完成 · 错 ${mistakeCount} 次 · 用时 ${Math.round(duration / 1000)} 秒`;
   if (game) {
     api
