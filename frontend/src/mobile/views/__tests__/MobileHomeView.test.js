@@ -31,7 +31,6 @@ vi.mock("../../../api", () => ({
     bestMove: vi.fn(),
     recognize: vi.fn(),
     checkMove: vi.fn(),
-    submitReview: vi.fn(),
   },
   analyzeStream: vi.fn(),
   intentStream: vi.fn(),
@@ -427,7 +426,6 @@ describe("MobileHomeView 背谱", () => {
   beforeEach(() => {
     localStorage.clear();
     api.checkMove.mockReset();
-    api.submitReview.mockReset();
   });
 
   it("打开棋谱后显示背谱按钮，点击弹出确认条", async () => {
@@ -513,7 +511,7 @@ describe("MobileHomeView 背谱", () => {
       ply: 0,
       move: { x1: 0, y1: 3, x2: 0, y2: 4 },
     });
-    expect(wrapper.find("[data-test='ctrl-reveal']").exists()).toBe(true);
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
   });
 
   it("背谱走错不推进且提示错误", async () => {
@@ -527,7 +525,8 @@ describe("MobileHomeView 背谱", () => {
     board.vm.$emit("cell-click", 0, 5);
     await flushPromises();
     expect(wrapper.find("[data-test='hint']").text()).toContain("错误");
-    expect(api.submitReview).not.toHaveBeenCalled();
+    expect(wrapper.vm.$.setupState.ply).toBe(0);
+    expect(wrapper.vm.$.setupState.reciteMistakes).toBe(1);
   });
 
   it("背谱走子网络失败提示且不计错", async () => {
@@ -541,7 +540,8 @@ describe("MobileHomeView 背谱", () => {
     board.vm.$emit("cell-click", 0, 4);
     await flushPromises();
     expect(wrapper.find("[data-test='hint']").exists()).toBe(true);
-    expect(api.submitReview).not.toHaveBeenCalled();
+    expect(wrapper.vm.$.setupState.ply).toBe(0);
+    expect(wrapper.vm.$.setupState.reciteMistakes).toBe(0);
   });
 });
 
