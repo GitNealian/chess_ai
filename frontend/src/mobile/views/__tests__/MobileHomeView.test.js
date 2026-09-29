@@ -422,6 +422,10 @@ async function openGameWithSource(
 }
 
 describe("MobileHomeView 背谱", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("打开棋谱后显示背谱按钮，点击弹出确认条", async () => {
     const wrapper = mount(MobileHomeView);
     await openGameWithSource(wrapper);
@@ -460,9 +464,23 @@ describe("MobileHomeView 背谱", () => {
     expect(wrapper.find("[data-test='ctrl-recite']").exists()).toBe(false);
   });
 
+  it("进入背谱态清空残留分析箭头", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.analysisArrows = [{ from: { x: 0, y: 0 }, to: { x: 0, y: 1 } }];
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    expect(wrapper.vm.$.setupState.analysisArrows).toEqual([]);
+    expect(wrapper.findComponent(ChessBoard).props("arrows")).toEqual([]);
+  });
+
   it("最近来源的有分类棋谱转换为棋谱集来源并显示导航", async () => {
     const wrapper = mount(MobileHomeView);
     await openGameWithSource(wrapper, RECITE_GAME, { type: "recent" });
+    expect(wrapper.vm.$.setupState.navSource).toEqual({
+      type: "collection",
+      collection: "测试",
+    });
     expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(true);
   });
 
@@ -473,6 +491,7 @@ describe("MobileHomeView 背谱", () => {
       { ...RECITE_GAME, category: "", event: "" },
       { type: "recent" }
     );
+    expect(wrapper.vm.$.setupState.navSource).toBe(null);
     expect(wrapper.find("[data-test='ctrl-next-game']").exists()).toBe(false);
   });
 });

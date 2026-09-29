@@ -5,7 +5,7 @@
         :position="position"
         :selected="selected"
         :last-move="lastInfo"
-        :arrows="analysisArrows"
+        :arrows="reciteMode ? [] : analysisArrows"
         :flipped="flipped"
         @cell-click="onCellClick"
       />
@@ -224,7 +224,6 @@ const analysisArrows = ref([]);
 const inferOpen = ref(false);
 const reciteMode = ref(false);
 const reciteConfirmOpen = ref(false);
-const reciteStartPly = ref(0);
 const reciteMistakes = ref(0);
 const reciteRevealed = ref(false);
 const reciteStartedAt = ref(0);
@@ -262,7 +261,8 @@ const moveSlice = computed(() => moves.value.slice(0, ply.value));
 const reciteMeta = computed(() => {
   const game = currentGame.value || {};
   const players = [game.red_player, game.black_player].filter(Boolean).join(" vs ");
-  return [players, game.event, game.result, game.category].filter(Boolean).join(" · ");
+  const event = game.event && game.event !== "NA" ? game.event : "";
+  return [players, event, game.result, game.category].filter(Boolean).join(" · ");
 });
 
 const showNav = computed(() => !!currentGame.value && !!navSource.value);
@@ -421,8 +421,8 @@ function openReciteConfirm() {
 }
 
 function confirmRecite(fromStart) {
-  reciteStartPly.value = fromStart ? 0 : ply.value;
-  ply.value = reciteStartPly.value;
+  const start = fromStart ? 0 : ply.value;
+  ply.value = start;
   reciteMistakes.value = 0;
   reciteRevealed.value = false;
   reciteStartedAt.value = Date.now();
@@ -430,6 +430,8 @@ function confirmRecite(fromStart) {
   reciteConfirmOpen.value = false;
   selected.value = null;
   hint.value = "";
+  analysisArrows.value = [];
+  pending = false;
   moveToken += 1;
   engineToken += 1;
   engineThinking.value = false;
@@ -494,6 +496,9 @@ function onApply(next, fen) {
   navSource.value = null;
   reciteMode.value = false;
   reciteConfirmOpen.value = false;
+  reciteMistakes.value = 0;
+  reciteRevealed.value = false;
+  reciteStartedAt.value = 0;
   publishFavoriteState();
   engineToken += 1;
   moveToken += 1;
