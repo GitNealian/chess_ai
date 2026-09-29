@@ -99,7 +99,7 @@ python3 -m venv .venv
 .venv/bin/python app.py
 ```
 
-默认监听所有网卡 `0.0.0.0:5000`（局域网可访问），本机访问 `http://localhost:5000`；如需仅本机监听，设置 `HOST=127.0.0.1`。数据库为 `backend/chess.db`（SQLite，首次启动自动建表）。
+默认监听所有网卡 `0.0.0.0:4098`（局域网可访问），本机访问 `http://localhost:4098`；如需仅本机监听，设置 `HOST=127.0.0.1`。数据库为 `backend/chess.db`（SQLite，首次启动自动建表）。
 
 ### 密码登录（可选）
 
@@ -119,7 +119,7 @@ npm install
 npm run dev
 ```
 
-开发服务器运行在 `http://localhost:5173`，Vite 将 `/api` 代理到 `http://localhost:5000`。
+开发服务器运行在 `http://localhost:5173`，Vite 将 `/api` 代理到 `http://localhost:4098`。
 
 ## 测试
 
@@ -133,14 +133,14 @@ cd frontend && npx vitest run
 
 默认 Cython 后端无 JIT 预热（扩展构建见「环境要求」）；回退 numba 后端时首次运行需等待 JIT 编译（搜索模块不使用磁盘缓存，每个新进程都要重新编译），整体约 40s；引擎预热耗时见「环境要求」。
 
-## 生产构建（单端口 5000）
+## 生产构建（单端口 4098）
 
 ```bash
 cd frontend && npm run build      # 产物输出到 frontend/dist
 cd backend && .venv/bin/python app.py
 ```
 
-Flask 检测到 `frontend/dist` 后会托管静态资源，访问 `http://localhost:5000/` 即可；非 `/api/*` 的未知路径回退到 `index.html`（支持前端路由）。
+Flask 检测到 `frontend/dist` 后会托管静态资源，访问 `http://localhost:4098/` 即可；非 `/api/*` 的未知路径回退到 `index.html`（支持前端路由）。
 
 ### 手机 / 局域网访问
 
@@ -150,7 +150,7 @@ Flask 检测到 `frontend/dist` 后会托管静态资源，访问 `http://localh
 cd backend && .venv/bin/python app.py
 ```
 
-然后在手机浏览器打开 `http://<电脑局域网IP>:5000`（如 `http://192.168.1.10:5000`）。查看 IP：Linux/macOS 用 `hostname -I` 或 `ip addr`，Windows 用 `ipconfig`。也可用环境变量 `PORT` 改端口（如 `PORT=8080`）。
+然后在手机浏览器打开 `http://<电脑局域网IP>:4098`（如 `http://192.168.1.10:4098`）。查看 IP：Linux/macOS 用 `hostname -I` 或 `ip addr`，Windows 用 `ipconfig`。也可用环境变量 `PORT` 改端口（如 `PORT=8080`）。
 
 注意：默认监听所有网卡会向局域网暴露服务，请确保在可信网络，必要时设置 `AUTH_PASSWORD`；如需仅本机访问，设置 `HOST=127.0.0.1`。
 
@@ -162,7 +162,7 @@ cd backend && .venv/bin/python app.py
 
 ```bash
 cd backend && .venv/bin/python setup.py build_ext --inplace   # 构建 Cython 扩展
-ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "app:create_app()"
+ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:4098 "app:create_app()"
 ```
 
 `create_app()` 在应用工厂内自动建表（幂等），gunicorn 导入时即可完成初始化。
