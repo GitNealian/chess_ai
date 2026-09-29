@@ -3,7 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import MobileGamePicker from "../MobileGamePicker.vue";
 
 vi.mock("../../../api", () => ({
-  api: { listGames: vi.fn(), listCollections: vi.fn(), listEvents: vi.fn() },
+  api: { listGames: vi.fn(), listCollections: vi.fn(), listEvents: vi.fn(), reviewQueue: vi.fn() },
 }));
 
 import { api } from "../../../api";
@@ -15,6 +15,7 @@ describe("MobileGamePicker", () => {
     api.listGames.mockReset();
     api.listCollections.mockReset();
     api.listEvents.mockReset();
+    api.reviewQueue.mockReset();
   });
 
   it("初始显示分类按钮且不加载列表", () => {
@@ -155,5 +156,42 @@ describe("MobileGamePicker", () => {
     const wrapper = mount(MobileGamePicker);
     await wrapper.find("[data-test='picker-cancel']").trigger("click");
     expect(wrapper.emitted("cancel")).toHaveLength(1);
+  });
+
+  it("复习入口加载待复习棋谱并携带来源", async () => {
+    api.reviewQueue.mockResolvedValue({
+      items: [
+        {
+          game: { id: 5, name: "待复习局", red_player: "红甲", black_player: "黑乙" },
+          due_date: "2026-09-29",
+          is_new: false,
+        },
+      ],
+      count: 1,
+    });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-review']").trigger("click");
+    await flushPromises();
+    expect(api.reviewQueue).toHaveBeenCalledWith({ limit: 200 });
+    expect(wrapper.find("[data-review='5']").exists()).toBe(true);
+    await wrapper.find("[data-review='5']").trigger("click");
+    expect(wrapper.emitted("select")[0][1]).toEqual({ type: "review" });
+  });
+
+  it("复习空队列显示空态", async () => {
+    api.reviewQueue.mockResolvedValue({ items: [], count: 0 });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-review']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='picker-empty']").exists()).toBe(true);
+  });
+
+  it("棋谱选择携带来源", async () => {
+    api.listGames.mockResolvedValue({ items: [game(7, "开局")], total: 1 });
+    const wrapper = mount(MobileGamePicker);
+    await wrapper.find("[data-test='menu-other']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-game='7']").trigger("click");
+    expect(wrapper.emitted("select")[0][1]).toMatchObject({ type: "other" });
   });
 });

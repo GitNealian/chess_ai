@@ -134,7 +134,7 @@ export const api = {
   parse: (data) => http.post("/games/parse", data).then((r) => r.data),
   importPgn: (data) => http.post("/games/import-pgn", data).then((r) => r.data),
   checkMove: (id, data) => http.post(`/games/${id}/check-move`, data).then((r) => r.data),
-  reviewQueue: () => http.get("/review/queue").then((r) => r.data),
+  reviewQueue: (params) => http.get("/review/queue", { params }).then((r) => r.data),
   submitReview: (id, data) => http.post(`/review/${id}/submit`, data).then((r) => r.data),
   stats: () => http.get("/stats").then((r) => r.data),
   validateMove: (data) => http.post("/engine/validate-move", data).then((r) => r.data),

@@ -28,6 +28,10 @@ async function load() {
       const data = await api.listEvents({ page: page.value, page_size: PAGE_SIZE });
       items.value = data.items || [];
       total.value = data.total || 0;
+    } else if (view.value === "review") {
+      const data = await api.reviewQueue({ limit: 200 });
+      items.value = data.items || [];
+      total.value = items.value.length;
     } else if (view.value === "games") {
       const data = await api.listGames({
         scope: scope.value,
@@ -61,6 +65,9 @@ function openCategory(name) {
   } else if (name === "tournament") {
     scope.value = "tournament";
     view.value = "events";
+  } else if (name === "review") {
+    scope.value = "review";
+    view.value = "review";
   } else {
     scope.value = name;
     view.value = "games";
@@ -92,9 +99,30 @@ function back() {
   page.value = 1;
 }
 
+function gamesSource() {
+  return {
+    type: scope.value,
+    collection: collection.value || undefined,
+    event: event.value || undefined,
+  };
+}
+
+function selectGame(item) {
+  emit("select", item, gamesSource());
+}
+
+function selectReview(entry) {
+  emit("select", entry.game, { type: "review" });
+}
+
+function reviewMeta(entry) {
+  return entry.is_new ? "新" : `到期 ${entry.due_date}`;
+}
+
 const title = () => {
   if (view.value === "collections") return "棋谱集";
   if (view.value === "events") return "赛事";
+  if (view.value === "review") return "复习";
   if (view.value === "games") {
     if (scope.value === "collection") return collection.value;
     if (scope.value === "event") return event.value;
@@ -129,6 +157,9 @@ const title = () => {
         </button>
         <button type="button" class="picker-menu-btn" data-test="menu-tournament" @click="openCategory('tournament')">
           赛事
+        </button>
+        <button type="button" class="picker-menu-btn" data-test="menu-review" @click="openCategory('review')">
+          复习
         </button>
         <button type="button" class="picker-menu-btn" data-test="menu-other" @click="openCategory('other')">
           其它
@@ -180,13 +211,29 @@ const title = () => {
               </button>
             </li>
           </template>
+          <template v-else-if="view === 'review'">
+            <li v-for="entry in items" :key="entry.game.id">
+              <button
+                type="button"
+                class="picker-item"
+                :data-review="entry.game.id"
+                @click="selectReview(entry)"
+              >
+                <span class="picker-name">{{ entry.game.name }}</span>
+                <span class="picker-sub">
+                  {{ entry.game.red_player || "红方" }} vs {{ entry.game.black_player || "黑方" }} ·
+                  {{ reviewMeta(entry) }}
+                </span>
+              </button>
+            </li>
+          </template>
           <template v-else>
             <li v-for="item in items" :key="item.id">
               <button
                 type="button"
                 class="picker-item"
                 :data-game="item.id"
-                @click="emit('select', item)"
+                @click="selectGame(item)"
               >
                 <span class="picker-name">{{ item.name }}</span>
                 <span class="picker-sub">
