@@ -628,6 +628,48 @@ describe("MobileHomeView 背谱", () => {
     await flushPromises();
     expect(wrapper.vm.$.setupState.ply).toBe(1);
   });
+
+  it("下一盘切换到来源列表的下一条", async () => {
+    api.listGames.mockResolvedValue({
+      items: [RECITE_GAME, { ...RECITE_GAME, id: 2, name: "第二谱" }],
+      total: 2,
+    });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-next-game']").trigger("click");
+    await flushPromises();
+    expect(api.listGames).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "collection", collection: "测试", page: 1 })
+    );
+    expect(api.openGame).toHaveBeenLastCalledWith(2);
+  });
+
+  it("已是最后一盘时提示", async () => {
+    api.listGames.mockResolvedValue({ items: [RECITE_GAME], total: 1 });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-next-game']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='hint']").text()).toContain("最后一盘");
+  });
+
+  it("背谱未完成时切换先弹确认，确认后不提交 SRS 并切换", async () => {
+    api.listGames.mockResolvedValue({
+      items: [RECITE_GAME, { ...RECITE_GAME, id: 2, name: "第二谱" }],
+      total: 2,
+    });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+    await wrapper.find("[data-test='ctrl-next-game']").trigger("click");
+    expect(wrapper.find("[data-test='nav-confirm']").exists()).toBe(true);
+    await wrapper.find("[data-test='nav-confirm-ok']").trigger("click");
+    await flushPromises();
+    expect(api.submitReview).not.toHaveBeenCalled();
+    expect(api.openGame).toHaveBeenLastCalledWith(2);
+    expect(wrapper.vm.$.setupState.reciteMode).toBe(false);
+  });
 });
 
 describe("移动端路由", () => {

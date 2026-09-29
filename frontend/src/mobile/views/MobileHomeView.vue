@@ -37,6 +37,8 @@
       @recite="openReciteConfirm"
       @reveal="revealAnswer"
       @exit-recite="exitRecite"
+      @prev-game="requestNav(-1)"
+      @next-game="requestNav(1)"
     />
     <p v-if="hint" class="mobile-home__hint" data-test="hint">{{ hint }}</p>
     <MobileAnalysis
@@ -91,6 +93,25 @@
           </button>
           <button type="button" data-test="recite-cancel" @click="reciteConfirmOpen = false">
             取消
+          </button>
+        </div>
+      </div>
+    </div>
+    <div
+      v-if="navConfirmOpen"
+      class="settings-mask"
+      data-test="nav-confirm"
+      @click.self="navConfirmOpen = false"
+    >
+      <div class="settings-card">
+        <h3 class="settings-title">放弃当前背谱？</h3>
+        <p class="recite-meta">当前背谱尚未完成，切换将放弃本次进度且不记录。</p>
+        <div class="settings-actions">
+          <button type="button" data-test="nav-confirm-cancel" @click="navConfirmOpen = false">
+            继续背谱
+          </button>
+          <button type="button" data-test="nav-confirm-ok" @click="confirmNav">
+            放弃并切换
           </button>
         </div>
       </div>
@@ -230,6 +251,8 @@ const reciteMistakes = ref(0);
 const reciteRevealed = ref(false);
 const reciteStartedAt = ref(0);
 const navSource = ref(null);
+const navConfirmOpen = ref(false);
+const navDirection = ref(1);
 const COLLECTION_PREFIX = "古谱 · ";
 
 const engineSide = ref("none");
@@ -533,10 +556,69 @@ function onOpenGame(game, source = null) {
   api
     .openGame(game.id)
     .then((res) => {
+      if (currentGame.value?.id !== game.id) return;
       favorited.value = !!res.favorited;
       publishFavoriteState();
     })
     .catch(() => {});
+}
+
+async function collectSourceGames(source) {
+  if (source.type === "review") {
+    const data = await api.reviewQueue({ limit: 200 });
+    return (data.items || []).map((entry) => entry.game);
+  }
+  const pageSize = 100;
+  const all = [];
+  let page = 1;
+  for (;;) {
+    const data = await api.listGames({
+      scope: source.type,
+      collection: source.collection || undefined,
+      event: source.event || undefined,
+      sort: "created_desc",
+      page,
+      page_size: pageSize,
+    });
+    const items = data.items || [];
+    all.push(...items);
+    if (!items.length || all.length >= (data.total || 0) || page >= 20) break;
+    page += 1;
+  }
+  return all;
+}
+
+function requestNav(direction) {
+  if (reciteMode.value) {
+    navDirection.value = direction;
+    navConfirmOpen.value = true;
+    return;
+  }
+  runNav(direction);
+}
+
+async function confirmNav() {
+  navConfirmOpen.value = false;
+  exitRecite();
+  await runNav(navDirection.value);
+}
+
+async function runNav(direction) {
+  const source = navSource.value;
+  if (!source || !currentGame.value) return;
+  hint.value = "";
+  try {
+    const games = await collectSourceGames(source);
+    const index = games.findIndex((item) => item.id === currentGame.value.id);
+    const target = index === -1 ? null : games[index + direction];
+    if (!target) {
+      hint.value = direction < 0 ? "已是第一盘" : "已是最后一盘";
+      return;
+    }
+    onOpenGame(target, source);
+  } catch {
+    hint.value = "切换失败，请重试";
+  }
 }
 
 function publishFavoriteState() {
