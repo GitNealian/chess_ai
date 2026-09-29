@@ -262,6 +262,7 @@ const hint = ref("");
 let pending = false;
 let moveToken = 0;
 let engineToken = 0;
+let navToken = 0;
 
 function sideFromFen(fen) {
   return fen.split(" ")[1] === "b" ? "black" : "red";
@@ -422,6 +423,7 @@ function finishRecite() {
   reciteMode.value = false;
   reciteMistakes.value = 0;
   reciteRevealed.value = false;
+  navConfirmOpen.value = false;
   hint.value = `背谱完成 · 错 ${mistakeCount} 次 · 用时 ${Math.round(duration / 1000)} 秒`;
   if (game) {
     api
@@ -438,6 +440,7 @@ function exitRecite() {
   reciteMode.value = false;
   reciteMistakes.value = 0;
   reciteRevealed.value = false;
+  navConfirmOpen.value = false;
   selected.value = null;
   hint.value = "";
   moveToken += 1;
@@ -548,6 +551,7 @@ function onOpenGame(game, source = null) {
   inferOpen.value = false;
   reciteMode.value = false;
   reciteConfirmOpen.value = false;
+  navConfirmOpen.value = false;
   engineToken += 1;
   moveToken += 1;
   engineThinking.value = false;
@@ -606,9 +610,11 @@ async function confirmNav() {
 async function runNav(direction) {
   const source = navSource.value;
   if (!source || !currentGame.value) return;
+  const token = ++navToken;
   hint.value = "";
   try {
     const games = await collectSourceGames(source);
+    if (token !== navToken) return;
     const index = games.findIndex((item) => item.id === currentGame.value.id);
     const target = index === -1 ? null : games[index + direction];
     if (!target) {
@@ -617,6 +623,7 @@ async function runNav(direction) {
     }
     onOpenGame(target, source);
   } catch {
+    if (token !== navToken) return;
     hint.value = "切换失败，请重试";
   }
 }
@@ -652,6 +659,7 @@ function onApply(next, fen) {
   navSource.value = null;
   reciteMode.value = false;
   reciteConfirmOpen.value = false;
+  navConfirmOpen.value = false;
   reciteMistakes.value = 0;
   reciteRevealed.value = false;
   reciteStartedAt.value = 0;

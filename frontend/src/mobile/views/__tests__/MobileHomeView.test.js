@@ -17,6 +17,7 @@ vi.mock("../../../api", () => ({
     listGames: vi.fn().mockResolvedValue({ items: [] }),
     listCollections: vi.fn().mockResolvedValue({ items: [] }),
     listEvents: vi.fn().mockResolvedValue({ items: [] }),
+    reviewQueue: vi.fn().mockResolvedValue({ items: [] }),
     openGame: vi.fn().mockResolvedValue({ last_opened_at: "2026", favorited: false }),
     favoriteGame: vi.fn().mockResolvedValue({ favorited: false, favorited_at: null }),
     stats: vi.fn().mockResolvedValue({
@@ -429,6 +430,8 @@ describe("MobileHomeView 背谱", () => {
     api.checkMove.mockReset();
     api.submitReview.mockReset();
     api.submitReview.mockResolvedValue({});
+    api.reviewQueue.mockReset();
+    api.listGames.mockReset();
   });
 
   it("打开棋谱后显示背谱按钮，点击弹出确认条", async () => {
@@ -669,6 +672,58 @@ describe("MobileHomeView 背谱", () => {
     expect(api.submitReview).not.toHaveBeenCalled();
     expect(api.openGame).toHaveBeenLastCalledWith(2);
     expect(wrapper.vm.$.setupState.reciteMode).toBe(false);
+  });
+
+  it("复习来源的下一盘来自复习队列", async () => {
+    api.reviewQueue.mockResolvedValue({
+      items: [
+        { game: RECITE_GAME, due_date: "2026-09-29", is_new: false },
+        {
+          game: { ...RECITE_GAME, id: 9, name: "复习第二盘" },
+          due_date: "2026-09-29",
+          is_new: true,
+        },
+      ],
+      count: 2,
+    });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper, RECITE_GAME, { type: "review" });
+    await wrapper.find("[data-test='ctrl-next-game']").trigger("click");
+    await flushPromises();
+    expect(api.reviewQueue).toHaveBeenCalledWith({ limit: 200 });
+    expect(api.openGame).toHaveBeenLastCalledWith(9);
+  });
+
+  it("来源列表跨页时请求后续页定位下一盘", async () => {
+    const all = Array.from({ length: 250 }, (_, i) => ({ ...RECITE_GAME, id: i + 1 }));
+    api.listGames.mockImplementation(({ page }) =>
+      Promise.resolve({ items: all.slice((page - 1) * 100, page * 100), total: 250 })
+    );
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper, all[149]);
+    await wrapper.find("[data-test='ctrl-next-game']").trigger("click");
+    await flushPromises();
+    expect(api.listGames).toHaveBeenCalledTimes(3);
+    expect(api.openGame).toHaveBeenLastCalledWith(151);
+  });
+
+  it("快速连点下一盘只加载一次目标", async () => {
+    api.listGames.mockResolvedValue({
+      items: [
+        RECITE_GAME,
+        { ...RECITE_GAME, id: 2, name: "第二谱" },
+        { ...RECITE_GAME, id: 3, name: "第三谱" },
+      ],
+      total: 3,
+    });
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    const next = wrapper.find("[data-test='ctrl-next-game']");
+    next.trigger("click");
+    next.trigger("click");
+    await flushPromises();
+    expect(api.openGame).toHaveBeenCalledTimes(2);
+    expect(api.openGame).toHaveBeenLastCalledWith(2);
   });
 });
 
