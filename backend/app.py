@@ -28,7 +28,39 @@ def _ensure_schema():
             "ON games (updated_at DESC, id DESC)"
         )
     )
+    if "game_steps" in inspector.get_table_names():
+        db.session.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_game_steps_collection_fen "
+                "ON game_steps (collection, fen_key)"
+            )
+        )
+        db.session.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_game_steps_collection_next "
+                "ON game_steps (collection, next_fen)"
+            )
+        )
+        db.session.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_game_steps_game "
+                "ON game_steps (game_id)"
+            )
+        )
     db.session.commit()
+
+
+def _backfill_variation_index(app):
+    """首启回填古谱集的变着索引；已有数据则跳过。"""
+    from models import Game, GameStep, db
+    from routes.games import rebuild_all_game_steps
+
+    with app.app_context():
+        if db.session.query(GameStep.id).first() is not None:
+            return
+        if Game.query.filter(Game.category.like("古谱 · %")).first() is None:
+            return
+        rebuild_all_game_steps()
 
 
 def _register_frontend(app):
@@ -103,6 +135,12 @@ def create_app(config_class=Config):
         from engine import warmup
 
         threading.Thread(target=warmup, name="engine-warmup", daemon=True).start()
+        threading.Thread(
+            target=_backfill_variation_index,
+            args=(app,),
+            name="variation-backfill",
+            daemon=True,
+        ).start()
 
     return app
 

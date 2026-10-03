@@ -3,8 +3,15 @@ from sqlalchemy.orm import joinedload
 
 from chess_engine.board import INITIAL_FEN, Board
 from chess_engine.move import Move
+from chess_engine.notation import move_to_chinese
 from chess_engine.parser import parse_moves, parse_pgn
-from models import Game, GameActivity, db, _utcnow
+from chess_engine.variation import (
+    VARIATION_MIN_PLY,
+    build_steps,
+    collection_of,
+    fen_key,
+)
+from models import Game, GameActivity, GameStep, db, _utcnow
 
 games_bp = Blueprint("games", __name__)
 
@@ -12,6 +19,104 @@ VALID_SIDES = {"red", "black", "both"}
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
 COLLECTION_PREFIX = "古谱 · "
+
+
+def _rebuild_variation_index(game):
+    """重建单个棋谱的变着索引；非棋谱集则清空其索引后返回。"""
+    db.session.query(GameStep).filter_by(game_id=game.id).delete()
+    collection = collection_of(game.category)
+    if collection is None:
+        return
+    for row in build_steps(game):
+        db.session.add(GameStep(game_id=game.id, collection=collection, **row))
+
+
+def rebuild_all_game_steps():
+    """全量重建所有棋谱集的变着索引（启动回填 / 手动脚本）。"""
+    db.session.query(GameStep).delete()
+    query = Game.query.filter(Game.category.like(f"{COLLECTION_PREFIX}%"))
+    for game in query.yield_per(200):
+        collection = collection_of(game.category)
+        if collection is None:
+            continue
+        for row in build_steps(game):
+            db.session.add(GameStep(game_id=game.id, collection=collection, **row))
+    db.session.commit()
+
+
+def _collection_children(collection, fen, threshold=VARIATION_MIN_PLY):
+    """某局面在某棋谱集内的所有分支与是否构成变着入口。"""
+    key = fen_key(fen)
+    from_rows = GameStep.query.filter_by(collection=collection, fen_key=key).all()
+    to_rows = GameStep.query.filter_by(collection=collection, next_fen=key).all()
+
+    plies_by_game = {}
+    for row in from_rows:
+        plies_by_game[row.game_id] = min(plies_by_game.get(row.game_id, row.ply), row.ply)
+    for row in to_rows:
+        reached = row.ply + 1
+        plies_by_game[row.game_id] = min(plies_by_game.get(row.game_id, reached), reached)
+
+    if not plies_by_game:
+        return {"fen": fen, "branchable": False, "plies": None, "branches": []}
+
+    games = {
+        game.id: game for game in Game.query.filter(Game.id.in_(set(plies_by_game))).all()
+    }
+
+    grouped = {}
+    for row in from_rows:
+        if not row.move or row.move.count(",") != 3:
+            continue
+        node = grouped.setdefault(
+            row.move, {"to_fen": row.next_fen, "game_ids": set(), "end_ids": set()}
+        )
+        node["game_ids"].add(row.game_id)
+        game = games.get(row.game_id)
+        if game is not None and row.ply + 1 == len(game.moves):
+            node["end_ids"].add(row.game_id)
+
+    board = Board()
+    board.load_fen(fen)
+    branches = []
+    for move_text, node in grouped.items():
+        coords = [int(part) for part in move_text.split(",")]
+        try:
+            chinese = move_to_chinese(board, Move(*coords))
+        except Exception:
+            chinese = ""
+        branches.append(
+            {
+                "move": {
+                    "x1": coords[0],
+                    "y1": coords[1],
+                    "x2": coords[2],
+                    "y2": coords[3],
+                    "chinese": chinese,
+                },
+                "to_fen": node["to_fen"],
+                "games": [
+                    {"id": gid, "name": games[gid].name}
+                    for gid in sorted(node["game_ids"])
+                    if gid in games
+                ],
+                "end_games": [
+                    {"id": gid, "name": games[gid].name}
+                    for gid in sorted(node["end_ids"])
+                    if gid in games
+                ],
+            }
+        )
+    branches.sort(key=lambda item: (-len(item["games"]), item["move"]["x1"], item["move"]["y1"]))
+
+    plies = list(plies_by_game.values())
+    branchable = len(grouped) >= 2 and all(ply > threshold for ply in plies)
+    return {
+        "fen": fen,
+        "branchable": branchable,
+        "plies": {"min": min(plies), "max": max(plies)},
+        "branches": branches,
+    }
 
 
 def _error(message, detail=None, step=None, status=400):
@@ -192,6 +297,23 @@ def list_collections():
     )
 
 
+@games_bp.post("/collections/children")
+def collection_children():
+    data = request.get_json(silent=True) or {}
+    collection = data.get("collection")
+    fen = data.get("fen")
+    if not isinstance(collection, str) or not collection:
+        return _error("collection 不能为空")
+    if not isinstance(fen, str) or not fen:
+        return _error("fen 不能为空")
+    board = Board()
+    try:
+        board.load_fen(fen)
+    except ValueError as exc:
+        return _error("fen 无效", detail=str(exc))
+    return jsonify(_collection_children(collection, board.to_fen()))
+
+
 @games_bp.get("/events")
 def list_events():
     page, error = _parse_positive_int(request.args.get("page"), 1, 1)
@@ -297,6 +419,8 @@ def create_game():
     game.moves = data.get("moves", [])
     db.session.add(game)
     db.session.commit()
+    _rebuild_variation_index(game)
+    db.session.commit()
     return jsonify(game.to_dict()), 201
 
 
@@ -357,6 +481,8 @@ def import_pgn():
     game.moves = [move.as_dict() for move in parsed["moves"]]
     db.session.add(game)
     db.session.commit()
+    _rebuild_variation_index(game)
+    db.session.commit()
     return jsonify({"created": [game.to_dict()]}), 201
 
 
@@ -400,6 +526,8 @@ def update_game(game_id):
             setattr(game, field, data[field])
     if "moves" in data:
         game.moves = data["moves"]
+    if "moves" in data or "initial_fen" in data or "category" in data:
+        _rebuild_variation_index(game)
     db.session.commit()
     return jsonify(game.to_dict())
 
@@ -449,6 +577,7 @@ def delete_game(game_id):
     game = db.session.get(Game, game_id)
     if game is None:
         return _error("棋谱不存在", status=404)
+    db.session.query(GameStep).filter_by(game_id=game_id).delete()
     db.session.delete(game)
     db.session.commit()
     return "", 204

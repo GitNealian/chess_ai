@@ -113,3 +113,25 @@ class ReviewLog(db.Model):
     correct = db.Column(db.Boolean, default=True)
     mistake_count = db.Column(db.Integer, default=0)
     duration_ms = db.Column(db.Integer, default=0)
+
+
+class GameStep(db.Model):
+    """棋谱变着索引：某棋谱每步入栈前的局面与着法（派生数据，可重建）。"""
+
+    __tablename__ = "game_steps"
+
+    id = db.Column(db.Integer, primary_key=True)
+    collection = db.Column(db.String(100), nullable=False)
+    game_id = db.Column(
+        db.Integer, db.ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+    )
+    ply = db.Column(db.Integer, nullable=False)
+    fen_key = db.Column(db.String(150), nullable=False)
+    move = db.Column(db.String(20), default="")
+    next_fen = db.Column(db.String(150), nullable=False)
+
+    __table_args__ = (
+        db.Index("ix_game_steps_collection_fen", "collection", "fen_key"),
+        db.Index("ix_game_steps_collection_next", "collection", "next_fen"),
+        db.Index("ix_game_steps_game", "game_id"),
+    )

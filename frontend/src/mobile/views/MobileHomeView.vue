@@ -15,7 +15,7 @@
       :flipped="flipped"
       :can-start="canBack"
       :can-prev="canBack"
-      :can-next="canForward"
+      :can-next="canAdvance"
       :can-end="canForward"
       :can-edit="true"
       :can-scan="true"
@@ -27,7 +27,7 @@
       :show-recite="isReview && !reciteMode && moves.length > ply"
       @start="ply = 0"
       @prev="ply -= 1"
-      @next="ply += 1"
+      @next="onNext"
       @end="ply = moves.length"
       @flip="flipped = !flipped"
       @edit="editorOpen = true"
@@ -67,6 +67,13 @@
       @close="inferOpen = false"
     />
     <MobileGamePicker v-if="pickerOpen" @select="onOpenGame" @cancel="pickerOpen = false" />
+    <MobileVariationPicker
+      v-if="variationsOpen && branchInfo"
+      :branches="branchInfo.branches"
+      :plies="branchInfo.plies"
+      @select="onSelectVariation"
+      @cancel="variationsOpen = false"
+    />
     <div
       v-if="reciteConfirmOpen"
       class="settings-mask"
@@ -219,7 +226,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import ChessBoard from "../../components/ChessBoard.vue";
 import BoardControls from "../components/BoardControls.vue";
 import MobileBoardEditor from "../components/MobileBoardEditor.vue";
@@ -227,9 +234,10 @@ import MobileScanDialog from "../components/MobileScanDialog.vue";
 import MobileGamePicker from "../components/MobileGamePicker.vue";
 import MobileAnalysis from "../components/MobileAnalysis.vue";
 import MobileInferenceDialog from "../components/MobileInferenceDialog.vue";
+import MobileVariationPicker from "../components/MobileVariationPicker.vue";
 import { api } from "../../api";
 import { loadSettings, saveSettings } from "../settings";
-import { INITIAL_FEN, applyMove, fenToPieces } from "../../utils/chess";
+import { INITIAL_FEN, applyMove, fenToPieces, piecesToFen } from "../../utils/chess";
 
 const flipped = ref(false);
 const basePieces = ref(fenToPieces(INITIAL_FEN));
@@ -253,6 +261,11 @@ const reciteStartedAt = ref(0);
 const navSource = ref(null);
 const navConfirmOpen = ref(false);
 const navDirection = ref(1);
+const variationsOpen = ref(false);
+const branchInfo = ref(null);
+const branchInfoFen = ref("");
+const childrenCache = new Map();
+let childrenToken = 0;
 const COLLECTION_PREFIX = "古谱 · ";
 
 const engineSide = ref("none");
@@ -282,7 +295,21 @@ const position = computed(() => ({ pieces: pieces.value }));
 
 const canBack = computed(() => ply.value > 0);
 const canForward = computed(() => ply.value < moves.value.length);
+const canAdvance = computed(
+  () => ply.value < moves.value.length || (branchInfo.value?.branches?.length || 0) > 0
+);
 const moveSlice = computed(() => moves.value.slice(0, ply.value));
+
+const collectionName = computed(() => {
+  const category = currentGame.value?.category || "";
+  return category.startsWith(COLLECTION_PREFIX)
+    ? category.slice(COLLECTION_PREFIX.length)
+    : "";
+});
+
+const currentFen = computed(() =>
+  piecesToFen(pieces.value, sideAt(ply.value) === "red" ? "w" : "b")
+);
 
 const reciteMeta = computed(() => {
   const game = currentGame.value || {};
@@ -515,6 +542,119 @@ function normalizeSource(game, source) {
   return null;
 }
 
+async function queryChildren() {
+  if (reciteMode.value || !isReview.value) {
+    branchInfo.value = null;
+    branchInfoFen.value = "";
+    return;
+  }
+  const collection = collectionName.value;
+  if (!collection) {
+    branchInfo.value = null;
+    branchInfoFen.value = "";
+    return;
+  }
+  const fen = currentFen.value;
+  const token = ++childrenToken;
+  if (childrenCache.has(fen)) {
+    branchInfo.value = childrenCache.get(fen);
+    branchInfoFen.value = fen;
+    return;
+  }
+  try {
+    const data = await api.variationChildren({ collection, fen });
+    childrenCache.set(fen, data);
+    if (token === childrenToken) {
+      branchInfo.value = data;
+      branchInfoFen.value = fen;
+    }
+  } catch {
+    if (token === childrenToken) {
+      branchInfo.value = null;
+      branchInfoFen.value = "";
+    }
+  }
+}
+
+function sameFen(left, right) {
+  if (!left || !right) return false;
+  const key = (fen) => fen.split(" ").slice(0, 2).join(" ");
+  return key(left) === key(right);
+}
+
+async function onNext() {
+  if (isReview.value && !sameFen(branchInfoFen.value, currentFen.value)) {
+    await queryChildren();
+  }
+  const info = branchInfo.value;
+  if (isReview.value && info?.branchable && (info.branches?.length || 0) > 1) {
+    variationsOpen.value = true;
+    return;
+  }
+  if (ply.value < moves.value.length) {
+    ply.value += 1;
+    return;
+  }
+  const branches = info?.branches || [];
+  if (branches.length === 1) {
+    await onSelectVariation(branches[0]);
+  }
+}
+
+function locatePly(game, fen, move) {
+  const target = fen.split(" ")[0];
+  let board = fenToPieces(game.initial_fen || INITIAL_FEN);
+  const gameMoves = game.moves || [];
+  for (let i = 0; i < gameMoves.length; i += 1) {
+    if (piecesToFen(board).split(" ")[0] === target) {
+      const candidate = gameMoves[i];
+      if (
+        candidate.x1 === move.x1 &&
+        candidate.y1 === move.y1 &&
+        candidate.x2 === move.x2 &&
+        candidate.y2 === move.y2
+      ) {
+        return i;
+      }
+    }
+    board = applyMove(board, gameMoves[i]);
+  }
+  return -1;
+}
+
+async function onSelectVariation(branch) {
+  variationsOpen.value = false;
+  if (reciteMode.value) return;
+  const prefix = moves.value.slice(0, ply.value);
+  let suffix = [{ ...branch.move, check: false, gameOver: null }];
+  const lead = (branch.games || [])[0];
+  if (lead) {
+    try {
+      const game = await api.getGame(lead.id);
+      const at = locatePly(game, currentFen.value, branch.move);
+      if (at >= 0) {
+        suffix = game.moves
+          .slice(at)
+          .map((m, i) => (i === 0 ? { ...m, check: false, gameOver: null } : m));
+      }
+    } catch {
+      // 拉取失败时回退为仅追加该步
+    }
+  }
+  moves.value = [...prefix, ...suffix];
+  ply.value = prefix.length + 1;
+  branchInfo.value = null;
+  branchInfoFen.value = "";
+  selected.value = null;
+  engineToken += 1;
+  moveToken += 1;
+  queryChildren();
+}
+
+watch([currentFen, collectionName], () => {
+  queryChildren();
+});
+
 function openReciteConfirm() {
   if (!currentGame.value || ply.value >= moves.value.length) return;
   reciteConfirmOpen.value = true;
@@ -547,6 +687,9 @@ function onOpenGame(game, source = null) {
   currentGame.value = game;
   favorited.value = !!game.favorited;
   navSource.value = normalizeSource(game, source);
+  childrenCache.clear();
+  branchInfo.value = null;
+  variationsOpen.value = false;
   engineSide.value = "none";
   inferOpen.value = false;
   reciteMode.value = false;

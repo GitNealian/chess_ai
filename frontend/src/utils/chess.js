@@ -38,3 +38,27 @@ export function applyMove(pieces, move) {
   next.push({ ...moving, x: move.x2, y: move.y2 });
   return next;
 }
+
+export function piecesToFen(pieces, sideToMove = "w") {
+  const grid = new Map(pieces.map((p) => [`${p.x},${p.y}`, p]));
+  const rows = [];
+  for (let y = 9; y >= 0; y -= 1) {
+    let row = "";
+    let empty = 0;
+    for (let x = 0; x < 9; x += 1) {
+      const piece = grid.get(`${x},${y}`);
+      if (!piece) {
+        empty += 1;
+        continue;
+      }
+      if (empty) {
+        row += String(empty);
+        empty = 0;
+      }
+      row += piece.side === "red" ? piece.kind.toUpperCase() : piece.kind.toLowerCase();
+    }
+    if (empty) row += String(empty);
+    rows.push(row);
+  }
+  return `${rows.join("/")} ${sideToMove} - - 0 1`;
+}

@@ -33,6 +33,10 @@ vi.mock("../../../api", () => ({
     recognize: vi.fn(),
     checkMove: vi.fn(),
     submitReview: vi.fn().mockResolvedValue({}),
+    variationChildren: vi
+      .fn()
+      .mockResolvedValue({ branchable: false, plies: null, branches: [] }),
+    getGame: vi.fn(),
   },
   analyzeStream: vi.fn(),
   intentStream: vi.fn(),
@@ -46,6 +50,13 @@ describe("MobileHomeView", () => {
     api.validateMove.mockReset();
     api.bestMove.mockReset();
     api.recognize.mockReset();
+    api.variationChildren.mockReset();
+    api.variationChildren.mockResolvedValue({
+      branchable: false,
+      plies: null,
+      branches: [],
+    });
+    api.getGame.mockReset();
   });
 
   async function openPicker() {
@@ -199,6 +210,82 @@ describe("MobileHomeView", () => {
     });
     expect(api.openGame).toHaveBeenCalledWith(5);
     expect(events.at(-1)).toEqual({ shown: true, filled: false });
+  });
+
+  it("古谱集到达分叉局面点前进弹出变着选择", async () => {
+    api.listGames.mockResolvedValueOnce({
+      items: [
+        {
+          id: 11,
+          name: "甲",
+          category: "古谱 · 测试集",
+          initial_fen: INITIAL_FEN,
+          moves: [
+            { x1: 0, y1: 0, x2: 0, y2: 1 },
+            { x1: 0, y1: 9, x2: 0, y2: 8 },
+          ],
+        },
+      ],
+    });
+    api.variationChildren.mockResolvedValue({
+      fen: INITIAL_FEN,
+      branchable: true,
+      plies: { min: 5, max: 5 },
+      branches: [
+        {
+          move: { x1: 0, y1: 0, x2: 0, y2: 1, chinese: "车九进一" },
+          to_fen: "a",
+          games: [{ id: 11, name: "甲" }],
+          end_games: [],
+        },
+        {
+          move: { x1: 0, y1: 9, x2: 0, y2: 8, chinese: "车1进1" },
+          to_fen: "b",
+          games: [{ id: 12, name: "乙" }],
+          end_games: [],
+        },
+      ],
+    });
+    const wrapper = mount(MobileHomeView);
+    await openPicker();
+    await wrapper.find("[data-test='menu-other']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-game='11']").trigger("click");
+    await flushPromises();
+
+    expect(api.variationChildren).toHaveBeenCalled();
+    expect(wrapper.find("[data-test='ctrl-variation']").exists()).toBe(false);
+    await wrapper.find("[data-test='ctrl-next']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='variation-card']").exists()).toBe(true);
+
+    await wrapper.find("[data-variation='1']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='variation-card']").exists()).toBe(false);
+    expect(wrapper.find("[data-test='ctrl-prev']").attributes("disabled")).toBeUndefined();
+  });
+
+  it("非棋谱集点前进不弹变着", async () => {
+    api.listGames.mockResolvedValueOnce({
+      items: [
+        {
+          id: 21,
+          name: "普通",
+          initial_fen: INITIAL_FEN,
+          moves: [{ x1: 0, y1: 0, x2: 0, y2: 1 }],
+        },
+      ],
+    });
+    const wrapper = mount(MobileHomeView);
+    await openPicker();
+    await wrapper.find("[data-test='menu-other']").trigger("click");
+    await flushPromises();
+    await wrapper.find("[data-game='21']").trigger("click");
+    await flushPromises();
+    expect(api.variationChildren).not.toHaveBeenCalled();
+    await wrapper.find("[data-test='ctrl-next']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test='variation-card']").exists()).toBe(false);
   });
 
   it("已收藏的棋谱发布 filled=true", async () => {
