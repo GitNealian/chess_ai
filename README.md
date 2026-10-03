@@ -1,262 +1,69 @@
 # 象棋记谱 Web
 
-一个单用户本地使用的象棋棋谱管理与背谱工具：**棋谱库** + **背谱默写复习**，配合 **SM-2 间隔重复** 安排复习节奏。后端 Flask 提供 REST API 与纯 Python 规则引擎，前端 Vue 3 + Vite 自绘 SVG 棋盘。
+单用户、本地部署的中国象棋棋谱管理、背谱复习与 AI 对弈工具：棋谱录入与打谱、SM-2 间隔重复背谱、逐层加深的 AI 局面分析、对手意图推演、人人 / 人机对弈、变着树、摆子编辑与摄像头扫描识别。
+
+**技术栈**：Flask + SQLite ｜ 纯 Python 引擎（Cython / numba 双后端、Lazy SMP 并行搜索）｜ Vue 3 + Vite + Pinia（移动优先）｜ ONNX 棋盘识别
+
+## 界面预览
+
+| 打谱与 AI 分析 | 棋谱库菜单 | 设置面板 | 扫描识别局面 |
+| :---: | :---: | :---: | :---: |
+| <img width="220" src="docs/screenshots/01-main.png" alt="打谱与 AI 分析"> | <img width="220" src="docs/screenshots/02-library-menu.png" alt="棋谱库菜单"> | <img width="220" src="docs/screenshots/03-setting.png" alt="设置面板"> | <img width="220" src="docs/screenshots/04-scan.png" alt="扫描识别局面"> |
 
 ## 功能特性
 
-- **三种棋谱录入**
-  - 文本录入：粘贴中文记谱（如 `炮二平五`）或 ICCS 坐标（如 `h2e2`），实时解析预览。
-  - PGN 导入：识别 `[Event]`、`[Red]`、`[Black]`、`[Result]` 等头部标签，兼容中文/ICCS 着法。
-  - 棋盘摆子：点击走子自动记谱。
-- **打谱回放**：逐步回放、点击着法列表跳转、切换视角。
-- **背谱默写**：走对才前进，走错标红并计错，支持「看答案」；按红/黑/双方选择默写阵营。
-- **间隔重复（SM-2）**：按错误次数与是否看答案评分，更新 `ease_factor` / `interval` / `repetitions` / `lapses`，到期自动进入今日复习队列。
-- **棋谱库管理**：分类、关键字筛选，显示掌握度（新 / 学习中 / 已掌握）与下次复习日期。
-- **规则引擎**：完整合法性判定（蹩马腿、塞象眼、炮翻山、将帅照面、过河兵、将死/困毙），规则单一真相源在后端。
-- **人人对弈**：同屏双人轮流走子，支持翻转棋盘（黑方视角）、悔棋、每步自动 AI 分析；可从空白开局，也可从任意棋谱的当前步续下；对局可手动保存到棋谱库。
-- **AI 局面分析**：打谱与对弈时逐层加深实时打分，红优/黑优评分 + 优势条 + 棋盘箭头标注双方一步推演（最新结果置顶）。
-- **对手意图推演**：走子后先推演对手连招——底线威胁（若不理会）与圈套分支（若贪吃/随手棋中计），再进行 AI 评分分析。
-- **人机对战**：对弈页可让引擎执红或执黑（三档难度：简单 / 普通 / 困难），引擎计算后自动走子；保留实时分析 / 意图面板。
-- **局面编辑**：对弈页可手动摆子（棋子面板选取 + 点击落子 / 点击已有棋子移除，含清空棋盘与标准开局），摆子局面经后端完整摆子规则校验后选定行棋方直接开局。
-- **局面扫描**：移动端打开摄像头拍摄屏幕上的棋盘，或从相册选择截图，由后端自动识别为局面（支持任意象棋软件画面与本项目棋盘）；识别结果进入摆子编辑器核对修正后一键加载。
+- **棋谱管理**：文本（中文记谱 / ICCS 坐标）、PGN 导入、棋盘摆子三种录入方式；分类与关键字筛选，掌握度与下次复习日期一目了然。
+- **打谱回放**：逐步回放、点击着法列表跳转、切换视角，支持上一盘 / 下一盘连续浏览。
+- **背谱默写与间隔重复**：走对才前进，走错标红并计错，支持「看答案」与选择默写阵营；SM-2 调度自动生成今日复习队列。
+- **AI 局面分析**：迭代加深实时评分，优势条 + 棋盘箭头标注双方推演，打谱 / 对弈均可开启。
+- **对手意图推演**：走子后推演对手底线威胁与诱饵陷阱分支。
+- **人人对弈**：同屏双人轮流走子，支持翻转棋盘、悔棋、从任意局面续下，对局可保存入库。
+- **人机对战**：引擎执红或执黑，简单 / 普通 / 困难三档难度，保留实时分析与意图面板。
+- **变着树**：同一局面跨棋谱汇聚，列出全部变着分支并可一键跳转。
+- **局面编辑与扫描**：手动摆子，或拍摄屏幕 / 相册截图由 ONNX 模型识别局面，经规则校验后直接开局。
+- **规则引擎**：蹩马腿、塞象眼、炮翻山、将帅照面、将死 / 困毙等完整合法性判定，单一真相源在后端。
 
-## 目录结构
-
-```
-chess/
-├── backend/
-│   ├── app.py              # Flask 入口 + 蓝图注册 + 前端静态托管
-│   ├── config.py           # 配置（SQLite、测试配置）
-│   ├── models.py           # SQLAlchemy 模型：Game / Review / ReviewLog
-│   ├── chess_engine/       # 纯 Python 规则引擎（无 Flask 依赖）
-│   │   ├── board.py        # 9x10 棋盘、走子与合法性
-│   │   ├── fen.py          # 中国象棋 FEN
-│   │   ├── move.py         # 着法表示
-│   │   ├── notation.py     # 中文记谱生成/解析
-│   │   ├── rules.py        # 摆子合法性校验（validate_setup）
-│   │   └── parser.py       # 中文 / ICCS / PGN 解析
-│   ├── engine/             # numba 加速的 AI 引擎（位棋盘 + negaScout/PVS）
-│   │   ├── analysis.py     # 对外 analyze / warmup：迭代加深，每层 yield
-│   │   ├── search.py       # 置换表、杀手/历史启发、静态搜索、主搜索
-│   │   ├── movegen.py      # 着法生成、将军检测与合法性
-│   │   ├── position.py     # 局面状态与 make/unmake 增量维护
-│   │   ├── evaluate.py     # 中局 / 残局评估
-│   │   ├── bitboard.py     # 位棋盘原语（90 位打包为两个 int64）
-│   │   ├── tables.py       # 预生成基础表
-│   │   ├── eval_tables.py  # 自动生成的评估表（脚本提取自 Java 源码）
-│   │   ├── zobrist.py      # Zobrist 哈希（固定种子自生成）
-│   │   └── constants.py    # 常量与 site/(x,y) 坐标转换
-│   ├── srs.py              # SM-2 间隔重复调度
-│   ├── recognizer/         # 棋盘识别（ONNX：四角检测 + 10x9x16 布局分类）
-│   │   ├── pose.py         # 棋盘四角关键点检测（RTMPose / SimCC）
-│   │   ├── classifier.py   # 布局分类（90x16 argmax）
-│   │   └── pipeline.py     # 透视校正、棋子映射、警告聚合
-│   ├── weights/            # 识别模型（不入库，由 scripts/download_models.py 下载）
-│   ├── routes/
-│   │   ├── engine.py       # 引擎分析 NDJSON 流式接口 + 走子校验
-│   │   ├── games.py        # 棋谱 CRUD、解析、PGN 导入、走法校验
-│   │   ├── recognize.py    # 棋盘识别接口（multipart 上传）
-│   │   └── review.py       # 复习队列、提交、统计
-│   ├── scripts/            # 工具脚本（评估表提取、PGN 批量导入、识别模型下载）
-│   ├── tests/              # pytest 测试
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── components/     # ChessBoard.vue（SVG 自绘）、PiecePalette.vue（摆子面板）
-│   │   ├── views/          # Library / Editor / Practice / Review / Play
-│   │   ├── stores/         # Pinia：library / practice；play 对弈会话（reactive 工厂）
-│   │   ├── api/            # axios 封装
-│   │   ├── utils/          # 坐标与记谱工具
-│   │   └── router/         # Vue Router
-│   ├── package.json
-│   └── vite.config.js
-└── docs/plans/             # 设计文档与实现计划
-```
-
-## 环境要求
-
-- Python 3.11+
-- Node.js 18+
-- **引擎后端（Cython / numba）**：引擎有 Cython（AOT 扩展，**默认优先**）与 numba（njit，回退）两种后端，由环境变量 `ENGINE_BACKEND=cython|numba` 选择；未设置时优先 Cython，扩展不可用时自动回退 numba。Cython 后端**无需 JIT 预热**，启动即用；构建命令：
-  ```bash
-  cd backend && .venv/bin/python setup.py build_ext --inplace
-  ```
-  产物 `backend/engine/_cycore*.so`（已加入 `.gitignore`），构建前置为 C 编译器（gcc/clang）+ `Cython` / `setuptools`（见 `backend/requirements.txt`）。初始局面单线程 NPS：Cython ~1.5M、numba ~0.24M、Java 原版 ~0.88M（详见 `docs/perf-vs-java.md`）。跳过构建则自动回退 numba。
-- **numba 后端预热**：引擎依赖 `numba` / `numpy`（见 `backend/requirements.txt`）。首次启动时后台线程预热引擎：首次 JIT 约 20-35s（期间其他功能可正常使用），之后进程内即时。大部分引擎模块启用 numba 磁盘缓存（`backend/engine/__pycache__/`），编译产物可跨进程复用；但**搜索模块（`search.py`）因 numba 0.67「递归 + 跨函数调用 + 磁盘缓存」缺陷不使用磁盘缓存**，因此**每个新进程首次分析仍需 ~20-35s 预热**（仅在使用 numba 后端时）。建议部署后等预热线程完成（或先发一个浅层分析请求）再对外服务；gunicorn 多 worker 各自独立预热。
-- numba 缓存目录会随源码变更 / numba 升级累积历史编译产物而增长。运行一段时间后可安全删除 `backend/engine/__pycache__/`，代价是下次冷启动重新编译（即上述预热耗时）。
-- **并行搜索（Lazy SMP）**：引擎默认使用 `max(1, min(cpu_count-1, 8))` 个线程并行分析：主线程产出结果，辅助线程共享置换表互补搜索。可用环境变量 `ENGINE_THREADS`（如 `ENGINE_THREADS=1` 完全串行）或分析请求的 `threads` 字段（1..16）覆盖。并行模式下 `nodes` 只统计主线程；同一局面的分数/PV 在多次运行间可能微变（非确定性），属预期行为。本机实测（nproc=20 逻辑核，固定深度、`time_limit_ms=60000`、预热完成后测量（无额外基准负载，测量时系统 load≈0.5–1），每档重复 3 次取中位数，depth 8 / 10）：2 线程 1.5x / 1.6x，4 线程 1.9x / 2.1x；默认 8 线程档 1.9x / 2.6x（同批次 T1 基线 2.3s / 27.0s，T8 1.2s / 10.4s）。加速比随深度增长（并行线程相位错开、TT 互补需要一定深度才能摊薄启动开销）。
-- **`gunicorn --preload` 注意**：请在 gunicorn 配置的 `on_starting(server)` 钩子中同步调用 `engine.warmup()` 完成预热后再 fork worker（或直接不使用 `--preload`）。若在预热线程运行期间 fork，子进程可能继承 numba 自身的编译锁（本项目的 `_WARMUP_LOCK` 已做 fork 重建，numba 编译锁不能），导致子进程首次编译（含 `threads=1` 串行搜索）阻塞。
-- **棋盘识别模型（可选功能）**：移动端「扫描局面」依赖两个 ONNX 模型（约 42MB，来自开源项目 TheOne1006/chinese-chess-recognition），默认存放于 `backend/weights/`（已加入 `.gitignore`，不随仓库分发）。启动前执行 `cd backend && .venv/bin/python scripts/download_models.py` 下载（也可手动放置 `pose.onnx` / `layout.onnx`）。依赖 `opencv-python-headless` 与 `onnxruntime`（见 `backend/requirements.txt`）。模型缺失时识别接口返回 503，不影响其他功能。
-
-## 后端启动
+## 快速开始
 
 ```bash
+# 1. 后端依赖 + Cython 引擎扩展（未构建时自动回退 numba）
 cd backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python setup.py build_ext --inplace   # 构建 Cython 扩展（默认后端；跳过则回退 numba）
-.venv/bin/python scripts/download_models.py     # 可选：下载棋盘识别模型（约 42MB）
-.venv/bin/python app.py
+.venv/bin/python setup.py build_ext --inplace
+
+# 2. 构建前端（产物 frontend/dist 由后端托管）
+cd ../frontend && npm install && npm run build
+
+# 3. 启动（http://localhost:4098）
+cd ../backend && .venv/bin/python app.py
 ```
 
-默认监听所有网卡 `0.0.0.0:4098`（局域网可访问），本机访问 `http://localhost:4098`；如需仅本机监听，设置 `HOST=127.0.0.1`。数据库为 `backend/chess.db`（SQLite，首次启动自动建表）。
+环境要求：Python 3.11+、Node.js 18+，首次启动自动建库（SQLite）。
 
-### 密码登录（可选）
-
-默认免登录。设置环境变量 `AUTH_PASSWORD` 即启用单用户密码登录，保护除 `/api/health` 与 `/api/auth/*` 外的所有 `/api/*`：
-
-```bash
-cd backend && AUTH_PASSWORD=你的密码 .venv/bin/python app.py
-```
-
-会话由签名的 session cookie 保持，有效期 7 天。签名密钥优先取环境变量 `SECRET_KEY`，未设置则每次启动随机生成（重启后需重新登录）；如需跨重启保持登录，请一并设置 `SECRET_KEY`（任意长随机字符串）。配置样例见根目录 `.env.example`。
-
-## 前端启动（开发期）
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-开发服务器运行在 `http://localhost:5173`，Vite 将 `/api` 代理到 `http://localhost:4098`。
+- 可选：棋盘识别模型约 42MB，执行 `.venv/bin/python scripts/download_models.py` 下载后启用「扫描局面」。
+- 可选：设置 `AUTH_PASSWORD` 启用单用户密码登录；多 worker 部署需同时设置 `SECRET_KEY`。完整配置样例见 `.env.example`。
 
 ## 测试
 
 ```bash
-# 后端（564 项：默认 562 通过 + 2 跳过；设置 RECOGNIZE_TEST_IMAGE 后 563 通过 + 1 跳过）
-cd backend && .venv/bin/python -m pytest
-
-# 前端（324 项）
-cd frontend && npx vitest run
+cd backend && .venv/bin/python -m pytest    # 后端
+cd frontend && npx vitest run               # 前端
 ```
 
-默认 Cython 后端无 JIT 预热（扩展构建见「环境要求」）；回退 numba 后端时首次运行需等待 JIT 编译（搜索模块不使用磁盘缓存，每个新进程都要重新编译），整体约 40s；引擎预热耗时见「环境要求」。
+## 部署要点
 
-## 生产构建（单端口 4098）
+- 生产推荐 gunicorn 多 worker：`ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:4098 "app:create_app()"`。
+- 默认监听 `0.0.0.0:4098`，同一局域网手机可直接访问 `http://<电脑IP>:4098`；仅本机可设 `HOST=127.0.0.1`，端口可设 `PORT`。
 
-```bash
-cd frontend && npm run build      # 产物输出到 frontend/dist
-cd backend && .venv/bin/python app.py
+## 项目结构
+
+```
+chess/
+├── backend/      # Flask API、纯 Python 规则引擎、AI 引擎（Cython / numba）、ONNX 棋盘识别、SM-2 调度
+├── frontend/     # Vue 3 + Vite + Pinia 移动优先界面（自绘 SVG 棋盘）
+├── docs/plans/   # 设计文档与实现计划
+└── data/         # 示例棋谱数据
 ```
 
-Flask 检测到 `frontend/dist` 后会托管静态资源，访问 `http://localhost:4098/` 即可；非 `/api/*` 的未知路径回退到 `index.html`（支持前端路由）。
-
-### 手机 / 局域网访问
-
-前端已做移动端适配（移动优先响应式，手机竖屏可用）。后端默认监听所有网卡，直接启动即可在同一局域网用手机访问：
-
-```bash
-cd backend && .venv/bin/python app.py
-```
-
-然后在手机浏览器打开 `http://<电脑局域网IP>:4098`（如 `http://192.168.1.10:4098`）。查看 IP：Linux/macOS 用 `hostname -I` 或 `ip addr`，Windows 用 `ipconfig`。也可用环境变量 `PORT` 改端口（如 `PORT=8080`）。
-
-注意：默认监听所有网卡会向局域网暴露服务，请确保在可信网络，必要时设置 `AUTH_PASSWORD`；如需仅本机访问，设置 `HOST=127.0.0.1`。
-
-移动端棋盘工具栏的「扫描」入口可直接调起系统相机拍照，或从相册选择截图，上传后由后端识别成局面再进入编辑器核对。相机 / 相册调用走浏览器文件选择，不要求 HTTPS（局域网 HTTP 环境可用）；识别为 CPU 推理，单张约 0.1~0.3s（首次含模型加载约 1~2s）。
-
-### 生产部署（WSGI 服务器）
-
-推荐用 gunicorn 托管，多 worker 且无调试器：
-
-```bash
-cd backend && .venv/bin/python setup.py build_ext --inplace   # 构建 Cython 扩展
-ENGINE_BACKEND=cython .venv/bin/gunicorn -w 2 -b 0.0.0.0:4098 "app:create_app()"
-```
-
-`create_app()` 在应用工厂内自动建表（幂等），gunicorn 导入时即可完成初始化。
-
-> 启用认证时，**多 worker 部署必须显式设置 `SECRET_KEY`**：各 worker 进程若各自随机生成密钥，session cookie 在 worker 间验签失败，会出现反复掉登录。单进程（`python app.py`）可不设置。
-调试器默认关闭；仅在本地需要时通过环境变量开启：`FLASK_DEBUG=1 .venv/bin/python app.py`（切勿在生产启用）。
-
-## API 一览
-
-| 方法 | 路径 | 作用 |
-|---|---|---|
-| GET | `/api/health` | 健康检查 |
-| POST | `/api/auth/login` | 密码登录（请求体 `{password}`；成功写入会话 cookie） |
-| POST | `/api/auth/logout` | 登出（清除会话） |
-| GET | `/api/auth/me` | 返回 `{auth_required, authenticated}` |
-| GET | `/api/games` | 棋谱列表（`category` / `keyword` 筛选） |
-| POST | `/api/games` | 创建棋谱（保存前校验着法合法性） |
-| GET | `/api/games/:id` | 棋谱详情（含 `initial_fen` 与 `moves`） |
-| PUT | `/api/games/:id` | 更新棋谱 |
-| DELETE | `/api/games/:id` | 删除棋谱 |
-| POST | `/api/games/parse` | 解析文本棋谱（预览，不入库） |
-| POST | `/api/games/import-pgn` | PGN 导入 |
-| POST | `/api/games/:id/check-move` | 校验某步是否为正确着法 |
-| POST | `/api/engine/analyze` | 局面分析（NDJSON 流式，逐层返回；可选 threads 1..16） |
-| POST | `/api/engine/intent` | 对手意图推演（NDJSON 流式：rank/threat/bait 事件） |
-| POST | `/api/engine/validate-move` | 无状态走子校验（返回新局面 / 中文记谱 / 将军 / 终局） |
-| POST | `/api/engine/best-move` | 引擎最佳着法（一次性 JSON，三档难度，供人机对战） |
-| POST | `/api/engine/validate-position` | 摆子规则校验（返回合法 FEN 或错误列表） |
-| POST | `/api/recognize` | 棋盘识别（multipart 上传 `image`，返回棋子数组 / 布局 / 警告） |
-| GET | `/api/review/queue` | 今日复习队列 |
-| POST | `/api/review/:gameId/submit` | 提交复习结果并更新调度 |
-| GET | `/api/stats` | 掌握度统计 |
-
-错误统一返回 `{error, detail?, step?}`。
-
-启用 `AUTH_PASSWORD` 后，除上表三个 `/api/auth/*` 端点与 `/api/health` 外，所有 `/api/*` 需先登录，未登录返回 `401 {error:"未登录"}`。前端在收到 401 时自动跳转 `/login`。
-
-`POST /api/engine/analyze` 为 NDJSON 流式响应（`application/x-ndjson`，每行一个 JSON）：请求体可用 `fen`，或用 `initial_fen` + `moves` + `ply` 重放局面；可选 `start_depth`（默认 6）、`max_depth`（默认 16，上限 16）、`time_limit_ms`（默认 30000，范围 100–30000，层边界软时限：按「上一层耗时 × 1.5」外推下一层预算，通常完成时间不超过其 ~1.5 倍）、`threads`（可选，1..16，越界夹逼；缺省自动：环境变量 `ENGINE_THREADS` > `max(1, min(cpu_count-1, 8))`；`threads=1` 即串行）。流内依次可能出现：
-
-- `{"type":"result", ...}`：每完成一层一条，含 `depth` / `score_red` / `score_stm` / `mate` / `pv`（每步含 `x1,y1,x2,y2` / `chinese` / `iccs`）/ `time_ms` / `nodes` / `side_to_move`；
-- `{"type":"ping", "elapsed_ms": ...}`：约每 0.3s 的保活行，客户端可忽略；
-- `{"type":"done", "depth":..., "time_ms":..., "reason":...}`：正常结束（`reason` 为 `max_depth` / `time_limit` / `stop`）；
-- `{"type":"error", "message":...}`：参数、FEN 或着法错误。
-
-`POST /api/engine/validate-move` 为无状态走子校验（供人人对弈页调用）：请求体 `{ "initial_fen"?, "moves"?, "move" }`，重放 `initial_fen + moves`（缺省初始局面 / 空序列）后校验 `move`。合法返回 `{ "legal": true, "fen", "side_to_move", "chinese", "check", "game_over" }`，其中 `check` 为走子后对方是否被将军、`game_over` 为 `{ "winner", "reason": "checkmate" | "stalemate" }` 或 `null`（中国象棋困毙判负），`chinese` 生成失败时回退 ICCS；非法着法返回 200 `{ "legal": false, "reason" }`（"起点没有棋子" / "该棋子不属于行棋方" / "该棋子不能这样走" / "不能送将"）；参数、FEN 或重放序列错误返回 400 `{ "error", "detail"? }`（`moves` 上限 1024 步）。
-
-`POST /api/engine/intent` 为对手意图推演（供对弈 / 打谱页走子后调用）：定位局面的方式与 `/api/engine/analyze` 一致（`fen`，或 `initial_fen` + `moves` + `ply`）；可选 `time_limit_ms`（默认 1500，范围 500–5000，每条推演线的限时）与 `max_baits`（默认 2，范围 1–3，诱饵分支上限）。流内依次产出：
-
-- `{"type":"rank", ...}`：正着参考——`best` 与前 5 着法 `list`，每项含坐标 / `chinese` / `iccs` 及走子方视角 `score_stm`、红方视角 `score_red`；
-- `{"type":"threat", ...}`：底线威胁线——我方「完全不理会」时对手的最佳连招与结局；我方正被将军时 `line` 为空数组并带 `hint` 提示（必须应将）；
-- `{"type":"bait", ...}`：每条诱饵一个事件，`bait` 含着法与 `reason`（"贪吃" / "随手"），`line` 为对手惩罚连招，`outcome` 含 `mate` / `loss_piece` / `score_red`；
-- `{"type":"done"|"error"|"ping", ...}`：与 `/analyze` 语义一致。
-
-结局语义：`outcome.mate` 为正数表示我方 N 步内被绝杀；`loss_piece` 为该线终点我方损失的最大子力中文名；`score_red` 为该线终点红方视角引擎分。该接口与 `/analyze` 共享同一把分析锁——同刻只有一个引擎重任务流；前端走子后先发意图请求，意图流 `done` 后再发起评分分析（意图失败静默降级，不影响评分）。
-
-`POST /api/engine/best-move` 为引擎走子（供人机对战调用）：定位局面的方式与 `/api/engine/analyze` 一致（`fen`，或 `initial_fen` + `moves`；缺省初始局面），可选 `level`（`easy` / `normal` / `hard`，缺省或非法按 `normal`，分别映射搜索深度 5/7/11、层边界软时限 300/1000/2500ms）。返回 200 `{ "legal": true, "move": { "x1", "y1", "x2", "y2", "iccs", "chinese" }, "fen", "side_to_move", "check", "game_over" }`，语义与 `/validate-move` 一致；当前局面无合法着法或引擎未给出着法时返回 `{ "legal": false, "reason" }`；参数 / 局面错误返回 400。该接口持 `_ANALYZE_LOCK`，与 `/analyze`、`/intent` 互斥。
-
-`POST /api/engine/validate-position` 为摆子规则校验（供对弈页编辑局面调用）：请求体 `{ "pieces": [{ "x", "y", "side", "kind" }], "side_to_move" }`（`side ∈ red/black`，`kind ∈ K/A/B/N/R/C/P`；坐标不得重复，`pieces` 上限 32）。合法返回 `{ "valid": true, "fen" }`；不合法返回 `{ "valid": false, "errors": [...] }`。校验规则：帅 / 将各恰好一个，各兵种数量不超初始配置，帅 / 将士 / 仕在九宫内，相 / 象必须落在己方象位，兵 / 卒未过河时（红 y∈{3,4}、黑 y∈{5,6}）必须在初始偶数列上，不得照面，任何一方不得处于被将军状态，行棋方不得无合法着法（困毙）。参数结构错误返回 400。
-
-`POST /api/recognize` 为棋盘识别（供移动端「扫描局面」调用）：`multipart/form-data` 上传字段 `image`（图片，上限 8MB）。成功返回 `{ "pieces": [{ "x", "y", "side", "kind" }], "layout": ["10 行 x 9 列字符串"], "warnings": [...], "stats": { "pose_ms", "classify_ms", "keypoint_scores", "confidences" } }`；`layout` 第 0 行为黑方底线（与 FEN 同向），`x` 表示遮挡、`.` 表示空位；遮挡与低置信度格会写入 `warnings`（中文提示）。错误：400 `{ "error": "未检测到棋盘，请让棋盘完整入镜后重试" }` 或 `{ "error": "无法解析图片" }`，413 图片过大，503 识别模型未安装。识别为 CPU 推理，模块级锁串行执行；识别不出行棋方（`side_to_move` 不返回，前端默认红先）。
-
-## 已知限制
-
-- 前端「棋盘摆子」入口不校验着法合法性；后端保存时会校验并拒绝非法序列（错误信息带步号）。
-- 打谱 / 录入视图的着法列表显示坐标 `(x1,y1)→(x2,y2)`，而非中文记谱；中文记谱能力位于后端规则引擎，前端尚未接入转换接口。
-- 中文记谱的「前 / 后」仅处理同列两子，三子及以上不支持生成（生成端会明确报错）。
-- **合法落点提示未接入**：`ChessBoard` 组件已支持 `legalTargets` 渲染，但后端未提供「查询合法着法」接口，因此摆子与默写时暂无落点圆点提示。
-- `check-move` 在着法错误时仍会应用用户着法并返回其后的局面（前端目前未使用该接口，仅作预留）。
-- 部分设计承诺尚未落地：PGN 文件上传（当前仅支持粘贴内容）、文本解析的逐步高亮预览、打谱视角切换、默写手动评分（当前按错误次数与是否看答案自动评分）。
-- 掌握度阈值：`repetitions >= 3` 视为「已掌握」，与 `/api/stats` 的 `mastered` 口径一致。
-- 棋谱列表对每条棋谱的复习信息为惰性加载（本地单用户规模下可接受）。
-- 单用户、可选密码登录（环境变量 `AUTH_PASSWORD`，见「后端启动」）；数据存于 SQLite。
-- AI 分析接入打谱页与对弈页；录入 / 默写视图未接入。
-- 意图推演基于浅层搜索（固定深度 6、每线限时默认 1500ms），线路精度有限；诱饵筛选为启发式；「跳一手」威胁线结论仅在「我方完全不作为」前提下成立；推演与评分共享分析锁，前端先意图后评分串行触发。
-- 人人对弈为同屏双人，不联网、不自动保存（手动保存到棋谱库）；不判定长将、重复局面和棋；从棋谱续下的将军/终局提示由一次探测请求恢复，悔棋到该步之前时提示不恢复（着法合法性始终由后端保证）。
-- 人机对战为本地引擎自动走子，不联网；引擎思考期间棋盘锁定并显示提示；AI 模式悔棋会撤销到玩家回合（通常连带撤销引擎刚走的一步），不自动补走，引擎执红时保留引擎首着；引擎走子失败后点棋盘可重试；难度固定三档，不可自定义深度 / 时限。
-- `best-move` 为同步请求（持分析锁），前端在卸载 / 切换模式 / 悔棋时会 abort 等待，但服务端搜索仍会跑完该次请求（无客户端断开检测）；`hard` 档最坏约数秒。
-- 局面编辑不持久化（应用后仅作为当前对局初始局面，可手动保存到棋谱库）；摆子校验不含长将、重复局面等残局题特殊规则；进入编辑会清空当前对局（需确认）。
-- 棋盘识别基于开源预训练模型（真实场景照片 + 游戏棋盘画面），对屏幕画面效果最佳；倾斜角度过大、强反光、棋盘被遮挡或棋子样式差异会降低准确率。识别结果一律进入编辑器人工核对，遮挡与低置信度格会给出提示；无法识别行棋方（默认红先，可在编辑器切换）。该模型未附带明确开源许可，仅建议本地部署使用（模型不随仓库分发）。
-- 识别仅支持移动端入口；识别请求与引擎分析各自串行（识别占 CPU 但短暂），多 worker 部署时每个 worker 各加载一份识别模型（内存约增加 100MB）。
-- 搜索中断在毫秒级（层内逐节点检查停旗），客户端断开后服务端在下一个 ping 周期内停止；`time_limit_ms` 是层边界软时限，完成一层后按「上一层耗时 × 1.5」外推下一层预算，预判超支即不再开始下一层（通常完成时间不超过其 ~1.5 倍）；若下一层实际耗时相对上一层暴涨，仍可能超出。
-- 并行分析下 `nodes` 仅统计主线程，且结果非确定性（同局面多次分析的分数/PV 可能微变，将杀步数可能 ±1 ply 级偏差）。
-- 显式线程数（含环境变量 `ENGINE_THREADS`）不按核数降级（夹逼 1..16），低核机器上设大值会线程超订；不设时自动取 `max(1, min(cpu_count-1, 8))`，需要完全串行可用 `ENGINE_THREADS=1`。容器内 `os.cpu_count()` 返回宿主机可见逻辑核数、不感知 cgroup CPU 配额，自动档在容器中也可能超订，容器部署建议显式设置 `ENGINE_THREADS`。
-- Zobrist 哈希为自生成（固定种子），与 Java 版哈希值不兼容，仅保证引擎内部自洽。
-- mate 分数不入置换表（修正 Java 继承缺陷，避免深层杀步失真）。
-- 黑方着法生成顺序与 Java 版略有差异（按 site 升序扫描），不影响棋力。
-
-## 设计文档与实现计划
-
-- 棋谱练习（初版）：`docs/plans/2026-09-19-chess-practice-design.md` / `docs/plans/2026-09-19-chess-practice-implementation.md`
-- 移动端适配：`docs/plans/2026-09-19-mobile-responsive-design.md`
-- AI 引擎：`docs/plans/2026-09-20-ai-engine-design.md` / `docs/plans/2026-09-20-ai-engine-implementation.md`
-- 人人对弈：`docs/plans/2026-09-21-play-mode-design.md` / `docs/plans/2026-09-21-play-mode-implementation.md`
-- 人机对战与局面编辑：`docs/plans/2026-09-22-ai-play-and-board-editor-design.md` / `docs/plans/2026-09-22-ai-play-and-board-editor-implementation.md`
-- Lazy SMP 并行搜索：`docs/plans/2026-09-22-lazy-smp-design.md` / `docs/plans/2026-09-22-lazy-smp-implementation.md`
-- 单用户密码认证：`docs/plans/2026-09-24-single-user-auth-design.md` / `docs/plans/2026-09-24-single-user-auth-implementation.md`
-- 移动端摄像头扫描棋盘：`docs/plans/2026-09-27-board-scan-design.md` / `docs/plans/2026-09-27-board-scan.md`
+各功能的设计与实现细节见 `docs/plans/`。
