@@ -895,6 +895,69 @@ describe("MobileHomeView 背谱引擎执子", () => {
     await wrapper.find("[data-test='ctrl-recite']").trigger("click");
     expect(wrapper.find("[data-test='recite-engine-side']").exists()).toBe(false);
   });
+
+  it("引擎执红时进入背谱自动走第一步且不计错", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.engineSide = "red";
+    await enterRecite(wrapper);
+    expect(wrapper.vm.$.setupState.ply).toBe(0);
+    vi.advanceTimersByTime(500);
+    await nextTick();
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
+    expect(wrapper.vm.$.setupState.reciteMistakes).toBe(0);
+    expect(api.checkMove).not.toHaveBeenCalled();
+    expect(wrapper.findComponent(ChessBoard).props("lastMove")).toMatchObject({ x2: 0, y2: 4 });
+  });
+
+  it("引擎执红时用户走对后引擎自动接走最后一步并提交 SRS", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper, ENGINE_GAME);
+    wrapper.vm.$.setupState.engineSide = "red";
+    await enterRecite(wrapper);
+    vi.advanceTimersByTime(500);
+    await nextTick();
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 6);
+    board.vm.$emit("cell-click", 0, 5);
+    await flushPromises();
+    expect(api.checkMove).toHaveBeenCalledWith(1, {
+      ply: 1,
+      move: { x1: 0, y1: 6, x2: 0, y2: 5 },
+    });
+    expect(wrapper.vm.$.setupState.ply).toBe(2);
+    vi.advanceTimersByTime(500);
+    await nextTick();
+    expect(wrapper.vm.$.setupState.ply).toBe(3);
+    expect(api.submitReview).toHaveBeenCalledWith(1, {
+      mistake_count: 0,
+      duration_ms: expect.any(Number),
+      revealed: false,
+    });
+    expect(wrapper.vm.$.setupState.reciteMode).toBe(false);
+  });
+
+  it("引擎执黑时用户走完后引擎自动走完并提交 SRS", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.engineSide = "black";
+    await enterRecite(wrapper);
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 3);
+    board.vm.$emit("cell-click", 0, 4);
+    await flushPromises();
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
+    vi.advanceTimersByTime(500);
+    await nextTick();
+    expect(wrapper.vm.$.setupState.ply).toBe(2);
+    expect(api.submitReview).toHaveBeenCalledWith(1, {
+      mistake_count: 0,
+      duration_ms: expect.any(Number),
+      revealed: false,
+    });
+    expect(wrapper.vm.$.setupState.reciteMode).toBe(false);
+  });
 });
 
 describe("移动端路由", () => {

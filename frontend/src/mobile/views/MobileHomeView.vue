@@ -283,6 +283,9 @@ let pending = false;
 let moveToken = 0;
 let engineToken = 0;
 let navToken = 0;
+let reciteEngineTimer = null;
+let reciteEngineToken = 0;
+const RECITE_ENGINE_DELAY_MS = 500;
 
 function sideFromFen(fen) {
   return fen.split(" ")[1] === "b" ? "black" : "red";
@@ -379,6 +382,31 @@ async function runEngineMove() {
   }
 }
 
+function clearReciteEngineTimer() {
+  if (reciteEngineTimer !== null) {
+    clearTimeout(reciteEngineTimer);
+    reciteEngineTimer = null;
+  }
+  reciteEngineToken += 1;
+}
+
+function maybeEngineReciteMove() {
+  if (!reciteMode.value || engineSide.value === "none") return;
+  if (reciteEngineTimer !== null) return;
+  if (gameOver.value || ply.value >= moves.value.length) return;
+  if (sideToMove.value !== engineSide.value) return;
+  const token = ++reciteEngineToken;
+  reciteEngineTimer = setTimeout(() => {
+    reciteEngineTimer = null;
+    if (token !== reciteEngineToken) return;
+    if (!reciteMode.value || engineSide.value === "none") return;
+    if (gameOver.value || ply.value >= moves.value.length) return;
+    if (sideToMove.value !== engineSide.value) return;
+    advanceRecite();
+    maybeEngineReciteMove();
+  }, RECITE_ENGINE_DELAY_MS);
+}
+
 async function submitMove(move) {
   hint.value = "";
   pending = true;
@@ -438,7 +466,11 @@ async function submitReciteMove(move) {
 function advanceRecite() {
   ply.value += 1;
   selected.value = null;
-  if (ply.value >= moves.value.length) finishRecite();
+  if (ply.value >= moves.value.length) {
+    finishRecite();
+    return;
+  }
+  maybeEngineReciteMove();
 }
 
 function revealAnswer() {
@@ -450,6 +482,7 @@ function revealAnswer() {
 }
 
 function finishRecite() {
+  clearReciteEngineTimer();
   const game = currentGame.value;
   const duration = Math.max(0, Date.now() - reciteStartedAt.value);
   const mistakeCount = reciteMistakes.value;
@@ -682,6 +715,7 @@ function confirmRecite(fromStart) {
   moveToken += 1;
   engineToken += 1;
   engineThinking.value = false;
+  maybeEngineReciteMove();
 }
 
 function onOpenGame(game, source = null) {
