@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { createPinia } from "pinia";
@@ -500,6 +500,15 @@ const RECITE_GAME = {
   favorited: false,
 };
 
+const ENGINE_GAME = {
+  ...RECITE_GAME,
+  moves: [
+    { x1: 0, y1: 3, x2: 0, y2: 4 },
+    { x1: 0, y1: 6, x2: 0, y2: 5 },
+    { x1: 0, y1: 4, x2: 0, y2: 5 },
+  ],
+};
+
 async function openGameWithSource(
   wrapper,
   game = RECITE_GAME,
@@ -847,6 +856,44 @@ describe("MobileHomeView 背谱", () => {
     await flushPromises();
     expect(wrapper.vm.$.setupState.currentGame.id).toBe(3);
     expect(api.openGame).toHaveBeenLastCalledWith(3);
+  });
+});
+
+describe("MobileHomeView 背谱引擎执子", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    api.checkMove.mockReset();
+    api.checkMove.mockResolvedValue({ correct: true });
+    api.submitReview.mockReset();
+    api.submitReview.mockResolvedValue({});
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function enterRecite(wrapper) {
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    await wrapper.find("[data-test='recite-from-here']").trigger("click");
+  }
+
+  it("确认条显示引擎执子提示", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.engineSide = "red";
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    expect(wrapper.find("[data-test='recite-engine-side']").text()).toBe("引擎执红 · 你背黑方");
+    wrapper.vm.$.setupState.engineSide = "black";
+    await nextTick();
+    expect(wrapper.find("[data-test='recite-engine-side']").text()).toBe("引擎执黑 · 你背红方");
+  });
+
+  it("执子不启用时确认条不显示引擎提示", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    await wrapper.find("[data-test='ctrl-recite']").trigger("click");
+    expect(wrapper.find("[data-test='recite-engine-side']").exists()).toBe(false);
   });
 });
 

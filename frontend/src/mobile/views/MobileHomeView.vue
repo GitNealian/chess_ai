@@ -86,6 +86,13 @@
         <p class="recite-range" data-test="recite-range">
           将从第 {{ ply }} 步开始，背到第 {{ moves.length }} 步（共 {{ moves.length - ply }} 步）
         </p>
+        <p
+          v-if="engineSide !== 'none'"
+          class="recite-meta"
+          data-test="recite-engine-side"
+        >
+          {{ engineSide === "red" ? "引擎执红 · 你背黑方" : "引擎执黑 · 你背红方" }}
+        </p>
         <div class="settings-actions">
           <button
             v-if="ply > 0"
