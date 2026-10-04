@@ -66,12 +66,12 @@
 - 新增模块级变量：`let reciteEngineTimer = null; let reciteEngineToken = 0;`
 - 新增函数：
   - `clearReciteEngineTimer()`：`clearTimeout` + `reciteEngineToken += 1`。
-  - `maybeEngineReciteMove()`：条件 `reciteMode && engineSide !== 'none' && !gameOver && ply < moves.length && sideToMove === engineSide`；`setTimeout` 500ms，回调中校验 token、`reciteMode`、`sideToMove`、`ply` 后调 `advanceRecite()`，并再次调用自身。
+  - `maybeEngineReciteMove()`：条件 `reciteMode && engineSide !== 'none' && !gameOver && ply < moves.length && sideToMove === engineSide`；`setTimeout` 500ms 后 token 校验通过则 `advanceRecite()`；后续引擎接步由 `advanceRecite()` 统一调度。
 - 触发点：
   - `confirmRecite()` 末尾（进入背谱，起始轮到引擎方时）。
   - `submitReciteMove()` 走对推进后（在 `finally` 中 `pending=false` 之后）。
   - `revealAnswer()` 推进后。
-- 清理点：`exitRecite()`、`confirmRecite()` 开头、`finishRecite()`、`onOpenGame()`、`onApply()` 调用 `clearReciteEngineTimer()`。
+- 清理点：`exitRecite()`、`confirmRecite()` 开头、`finishRecite()`、`onOpenGame()`、`onApply()`、`onUnmounted()` 调用 `clearReciteEngineTimer()`。
 - `onCellClick()` 背谱分支开头新增拦截：`if (engineSide.value !== 'none' && sideToMove.value === engineSide.value) return;`。
 - 模板：确认条新增执子提示行（`data-test="recite-engine-side"`，`none` 时不渲染）。
 - 不修改 `BoardControls.vue`（控制栏按钮组不变）。
