@@ -403,7 +403,6 @@ function maybeEngineReciteMove() {
     if (gameOver.value || ply.value >= moves.value.length) return;
     if (sideToMove.value !== engineSide.value) return;
     advanceRecite();
-    maybeEngineReciteMove();
   }, RECITE_ENGINE_DELAY_MS);
 }
 
@@ -475,6 +474,7 @@ function advanceRecite() {
 
 function revealAnswer() {
   if (!reciteMode.value || ply.value >= moves.value.length) return;
+  if (engineSide.value !== "none" && sideToMove.value === engineSide.value) return;
   if (pending) return;
   reciteRevealed.value = true;
   hint.value = "已看答案";
@@ -701,6 +701,7 @@ function openReciteConfirm() {
 }
 
 function confirmRecite(fromStart) {
+  clearReciteEngineTimer();
   const start = fromStart ? 0 : ply.value;
   ply.value = start;
   reciteMistakes.value = 0;
@@ -885,6 +886,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  clearReciteEngineTimer();
   window.removeEventListener("mobile-open", onOpenEvent);
   window.removeEventListener("mobile-settings", onSettingsEvent);
   window.removeEventListener("mobile-toggle-favorite", toggleFavorite);

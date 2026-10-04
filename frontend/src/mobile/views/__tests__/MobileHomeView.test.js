@@ -958,6 +958,34 @@ describe("MobileHomeView 背谱引擎执子", () => {
     });
     expect(wrapper.vm.$.setupState.reciteMode).toBe(false);
   });
+
+  it("引擎回合点看答案不生效，引擎随后自动落子", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.engineSide = "red";
+    await enterRecite(wrapper);
+    await wrapper.find("[data-test='ctrl-reveal']").trigger("click");
+    expect(wrapper.vm.$.setupState.ply).toBe(0);
+    expect(wrapper.vm.$.setupState.reciteRevealed).toBe(false);
+    vi.advanceTimersByTime(500);
+    await nextTick();
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
+  });
+
+  it("引擎等待期间卸载组件不再自动落子", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.engineSide = "black";
+    await enterRecite(wrapper);
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 3);
+    board.vm.$emit("cell-click", 0, 4);
+    await flushPromises();
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
+    wrapper.unmount();
+    vi.advanceTimersByTime(1000);
+    expect(api.submitReview).not.toHaveBeenCalled();
+  });
 });
 
 describe("移动端路由", () => {
