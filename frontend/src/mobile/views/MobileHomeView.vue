@@ -394,14 +394,14 @@ function maybeEngineReciteMove() {
   if (!reciteMode.value || engineSide.value === "none") return;
   if (reciteEngineTimer !== null) return;
   if (gameOver.value || ply.value >= moves.value.length) return;
-  if (sideToMove.value !== engineSide.value) return;
+  if (!isEngineTurn.value) return;
   const token = ++reciteEngineToken;
   reciteEngineTimer = setTimeout(() => {
     reciteEngineTimer = null;
     if (token !== reciteEngineToken) return;
     if (!reciteMode.value || engineSide.value === "none") return;
     if (gameOver.value || ply.value >= moves.value.length) return;
-    if (sideToMove.value !== engineSide.value) return;
+    if (!isEngineTurn.value) return;
     advanceRecite();
   }, RECITE_ENGINE_DELAY_MS);
 }
@@ -474,7 +474,7 @@ function advanceRecite() {
 
 function revealAnswer() {
   if (!reciteMode.value || ply.value >= moves.value.length) return;
-  if (engineSide.value !== "none" && sideToMove.value === engineSide.value) return;
+  if (isEngineTurn.value) return;
   if (pending) return;
   reciteRevealed.value = true;
   hint.value = "已看答案";
@@ -526,7 +526,7 @@ function onCellClick(x, y) {
       return;
     }
   }
-  if (engineSide.value !== "none" && sideToMove.value === engineSide.value) return;
+  if (isEngineTurn.value) return;
   const piece = pieces.value.find((p) => p.x === x && p.y === y);
   if (selected.value) {
     if (piece && piece.side === sideToMove.value) {

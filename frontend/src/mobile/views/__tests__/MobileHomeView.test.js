@@ -1024,6 +1024,27 @@ describe("MobileHomeView 背谱引擎执子", () => {
     vi.advanceTimersByTime(200);
     expect(wrapper.vm.$.setupState.ply).toBe(1);
   });
+
+  it("用户回合看答案后引擎自动接走并提交 SRS", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper, ENGINE_GAME);
+    wrapper.vm.$.setupState.engineSide = "red";
+    await enterRecite(wrapper);
+    vi.advanceTimersByTime(500);
+    await nextTick();
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
+    await wrapper.find("[data-test='ctrl-reveal']").trigger("click");
+    expect(wrapper.vm.$.setupState.ply).toBe(2);
+    expect(wrapper.vm.$.setupState.reciteRevealed).toBe(true);
+    vi.advanceTimersByTime(500);
+    await nextTick();
+    expect(wrapper.vm.$.setupState.ply).toBe(3);
+    expect(api.submitReview).toHaveBeenCalledWith(1, {
+      mistake_count: 0,
+      duration_ms: expect.any(Number),
+      revealed: true,
+    });
+  });
 });
 
 describe("移动端路由", () => {
