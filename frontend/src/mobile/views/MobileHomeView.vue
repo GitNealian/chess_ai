@@ -504,6 +504,7 @@ function finishRecite() {
 }
 
 function exitRecite() {
+  clearReciteEngineTimer();
   reciteMode.value = false;
   reciteMistakes.value = 0;
   reciteRevealed.value = false;
@@ -525,6 +526,7 @@ function onCellClick(x, y) {
       return;
     }
   }
+  if (engineSide.value !== "none" && sideToMove.value === engineSide.value) return;
   const piece = pieces.value.find((p) => p.x === x && p.y === y);
   if (selected.value) {
     if (piece && piece.side === sideToMove.value) {
@@ -737,6 +739,7 @@ function onOpenGame(game, source = null) {
   reciteMode.value = false;
   reciteConfirmOpen.value = false;
   navConfirmOpen.value = false;
+  clearReciteEngineTimer();
   engineToken += 1;
   moveToken += 1;
   navToken += 1;
@@ -852,6 +855,7 @@ function onApply(next, fen) {
   reciteRevealed.value = false;
   reciteStartedAt.value = 0;
   publishFavoriteState();
+  clearReciteEngineTimer();
   engineToken += 1;
   moveToken += 1;
   navToken += 1;

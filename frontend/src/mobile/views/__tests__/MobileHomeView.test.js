@@ -986,6 +986,44 @@ describe("MobileHomeView 背谱引擎执子", () => {
     vi.advanceTimersByTime(1000);
     expect(api.submitReview).not.toHaveBeenCalled();
   });
+
+  it("引擎走子延迟期间退出背谱不再自动落子", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.engineSide = "red";
+    await enterRecite(wrapper);
+    await wrapper.find("[data-test='ctrl-exit-recite']").trigger("click");
+    vi.advanceTimersByTime(1000);
+    await nextTick();
+    expect(wrapper.vm.$.setupState.ply).toBe(0);
+    expect(wrapper.vm.$.setupState.reciteMode).toBe(false);
+  });
+
+  it("引擎回合点击棋盘不选中也不走子", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.engineSide = "red";
+    await enterRecite(wrapper);
+    const board = wrapper.findComponent(ChessBoard);
+    board.vm.$emit("cell-click", 0, 3);
+    board.vm.$emit("cell-click", 0, 4);
+    expect(wrapper.vm.$.setupState.selected).toBe(null);
+    expect(api.checkMove).not.toHaveBeenCalled();
+  });
+
+  it("引擎等待期退出后立即重进，引擎按新周期落子", async () => {
+    const wrapper = mount(MobileHomeView);
+    await openGameWithSource(wrapper);
+    wrapper.vm.$.setupState.engineSide = "red";
+    await enterRecite(wrapper);
+    vi.advanceTimersByTime(200);
+    await wrapper.find("[data-test='ctrl-exit-recite']").trigger("click");
+    await enterRecite(wrapper);
+    vi.advanceTimersByTime(300);
+    expect(wrapper.vm.$.setupState.ply).toBe(0);
+    vi.advanceTimersByTime(200);
+    expect(wrapper.vm.$.setupState.ply).toBe(1);
+  });
 });
 
 describe("移动端路由", () => {
